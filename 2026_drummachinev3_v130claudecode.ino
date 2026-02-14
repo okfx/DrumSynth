@@ -1,7 +1,7 @@
 // ============================================================================
-//  Drum Machine Firmware v127
+//  Drum Machine Firmware v130
 //  Teensy 4.0 (ARM Cortex-M7 @ 600MHz)
-//  Last modified: 2026-02-13 (Session 8 — ext clock sync improvements)
+//  Last modified: 2026-02-14 (Session 9 — v130, BPM display fix)
 //
 //  3 synthesized drum voices, 32 knobs (2x 16-ch mux), 16 step buttons,
 //  10 control buttons, 16 LEDs (shift register), 128x64 OLED over I2C,
@@ -29,7 +29,7 @@
 #include "bitmaps.h"
 #include "hw_setup.h"
 
-#define FIRMWARE_VERSION "127"
+#define FIRMWARE_VERSION ".130"
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -145,8 +145,7 @@ volatile bool wantSwitchToExt = false;
 //  ISR writes (externalClockISR / subdivISR / triggerStepFromISR):
 //    lastPulseMicros           — uint32_t, read in main loop with noInterrupts()
 //    lastPulseInterval         — uint32_t, ISR-only (subdivision scheduling)
-//    extIntervalEMA            — uint32_t, ISR-only (glitch filter threshold, alpha=0.5)
-//    extDisplayEMA             — uint32_t, read in main loop with noInterrupts() (BPM display, alpha~0.125)
+//    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM display)
 //    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
 //    extPulseCount             — uint8_t, atomic on ARM
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport()
@@ -171,8 +170,7 @@ volatile bool wantSwitchToExt = false;
 // ISR-written external clock state
 volatile uint32_t lastPulseMicros = 0;     // Timestamp of last valid pulse (ISR+main)
 volatile uint32_t lastPulseInterval = 0;   // Interval between last two accepted pulses (µs)
-volatile uint32_t extIntervalEMA = 0;      // Fast EMA (alpha=0.5) — glitch filter threshold
-volatile uint32_t extDisplayEMA = 0;       // Slow EMA (alpha~0.125) — stable BPM display
+volatile uint32_t extIntervalEMA = 0;      // Fast EMA (alpha=0.5) — glitch filter + BPM display source
 volatile uint32_t prevAcceptedInterval = 0; // Previous accepted interval — lock-in similarity check
 volatile uint8_t  extPulseCount = 0;       // Counts valid pulses (2 needed to switch to EXT)
 volatile uint8_t  extStepAcc = 0;          // Step accumulator (fractional step tracking)
@@ -561,19 +559,14 @@ void externalClockISR() {
     uint32_t ema = extIntervalEMA;
     if (ema > 0 && interval < (ema >> 2)) return;
 
-    // Accepted pulse — update raw interval, fast EMA, slow EMA
+    // Accepted pulse — update raw interval and fast EMA
     lastPulseInterval = interval;
 
-    // Fast EMA (alpha=0.5): glitch filter threshold. Responsive to tempo changes.
+    // Fast EMA (alpha=0.5): glitch filter threshold + BPM display source.
+    // Responsive to tempo changes; display-side smoothing handles jitter.
     extIntervalEMA = (ema == 0)
         ? interval
         : ema + (((int32_t)(interval - ema)) >> 1);
-
-    // Slow EMA (alpha ~0.125 via >>3): stable BPM display, resists jitter.
-    uint32_t dEma = extDisplayEMA;
-    extDisplayEMA = (dEma == 0)
-        ? interval
-        : dEma + (((int32_t)(interval - dEma)) >> 3);
   }
 
   // Good pulse — record timestamp
@@ -1033,14 +1026,21 @@ void loop() {
     applyMasterGainFromState();
   }
 
-  // Derive EXT BPM from slow display EMA — stable readout, resists jitter.
-  // Runs whether playing or not, so display shows tempo as soon as ext clock detected.
+  // Derive EXT BPM from the fast EMA (alpha=0.5) — same interval the engine
+  // uses for glitch filtering, so the display matches what the engine hears.
+  // Light display-side smoothing (alpha=0.25) damps jitter without the long
+  // settle time the old slow EMA had.
   if (tstate == RUN_EXT) {
     noInterrupts();
-    uint32_t dispEmaCopy = extDisplayEMA;
+    uint32_t emaCopy = extIntervalEMA;
     interrupts();
-    if (dispEmaCopy > 0) {
-      extBpmDisplay = 60000000.0f / ((float)dispEmaCopy * (float)ppqn);
+    if (emaCopy > 0) {
+      float rawBpm = 60000000.0f / ((float)emaCopy * (float)ppqn);
+      if (extBpmDisplay <= 0.0f) {
+        extBpmDisplay = rawBpm;           // First reading — snap immediately
+      } else {
+        extBpmDisplay += 0.25f * (rawBpm - extBpmDisplay);  // Light smoothing
+      }
     }
   }
 
@@ -1117,7 +1117,6 @@ static inline void resetExternalClockState() {
   lastPulseMicros = 0;
   lastPulseInterval = 0;
   extIntervalEMA = 0;
-  extDisplayEMA = 0;
   prevAcceptedInterval = 0;
   ledUpdatePending = false;
   lastD1TriggerUs = 0;
@@ -3134,7 +3133,7 @@ void updateDisplay() {
       display.setTextSize(1);
       const int bottomY = 56;
       if (param1Snap[0]) {
-        drawOutlinedText(3, bottomY, param1Snap);
+        drawOutlinedText(5, bottomY, param1Snap);
       }
       if (param2Snap[0]) {
         int16_t x1, y1;
