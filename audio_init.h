@@ -1,5 +1,13 @@
 #ifndef AUDIO_INIT_H
 #define AUDIO_INIT_H
+// ============================================================================
+//  Audio Init — audio_init.h
+//
+//  One-time initialization of mixer gains, envelope parameters, filter
+//  settings, and delay tap times. Called from setup() after Audio.begin().
+//
+//  Include AFTER: audiotool.h (AudioStream objects)
+// ============================================================================
 
 // Globals coming from the main file that we use for initial mixer volumes
 extern float d1Vol;
@@ -202,7 +210,7 @@ inline void audioInit() {
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
-  clapDelay1.delay(1, 10);  // Changed from 5 because it was duplicated across both delay lines. -- Jan 8, 2026
+  clapDelay1.delay(1, 10);  // Offset from clapDelay2 to avoid identical taps
   clapDelay1.delay(2, 22);
   clapDelay1.delay(3, 55);
 

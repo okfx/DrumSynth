@@ -1,5 +1,11 @@
 #ifndef AUDIOTOOL_H
 #define AUDIOTOOL_H
+// ============================================================================
+//  Audio Graph — audiotool.h
+//
+//  Auto-generated Teensy Audio Design Tool graph plus manual additions.
+//  Declares all AudioStream objects, connections, and the output DAC.
+// ============================================================================
 
 #include <Audio.h>
 #include <Wire.h>

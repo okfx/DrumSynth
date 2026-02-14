@@ -39,14 +39,14 @@ enum Track : uint8_t {
 };
 
 // overlay and debounce timing
-const uint16_t parameterOverlayDurationTicks = 500;
-const uint16_t debounceDelayTicks = 10;  // 10ms — fast response for sync
+const uint16_t parameterOverlayDurationMs = 500;
+const uint16_t debounceDelayMs = 10;  // 10ms — fast response for sync
 
 // D3 accent LED preview state — Main-loop only, no ISR access
 bool accentPreviewActive = false;
 uint32_t accentPreviewUntilTick = 0;
 uint16_t accentPreviewMask = 0;  // 16-bit mask, bit15 = step0 ... bit0 = step15
-const uint16_t accentPreviewDurationTicks = 2000;
+const uint16_t accentPreviewDurationMs = 2000;
 
 // PPQN selection mode state — main-loop only
 bool ppqnModeActive = false;
@@ -56,8 +56,8 @@ static constexpr uint32_t PPQN_MODE_TIMEOUT_MS = 5000;
 static constexpr uint32_t PPQN_LONG_PRESS_MS = 5000;
 
 // PPQN options table
-static const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 24, 48, 96};
-static constexpr uint8_t PPQN_OPTION_COUNT = 6;
+const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 24, 48, 96};
+constexpr uint8_t PPQN_OPTION_COUNT = 6;
 
 // sequences
 byte drum1Sequence[numSteps] = {
@@ -81,38 +81,6 @@ byte drum3Sequence[numSteps] = {
   0, 0, 0, 0
 };
 
-// pattern persistence flag
-bool patternDirty = false;
-
-// pattern struct for EEPROM
-struct PatternStore {
-  byte drum1[numSteps];
-  byte drum2[numSteps];
-  byte drum3[numSteps];
-};
-
-// EEPROM save slots
-const uint16_t EEPROM_MAGIC = 0x4242;
-
-struct EepromSlot {
-  uint16_t magic;
-  uint16_t seq;
-  PatternStore patterns;
-  uint8_t reserved0;
-  //  uint8_t reserved[3];  // Can be used for future features (swing, pattern chaining, etc)
-};
-
-const uint8_t SAVE_SLOT_COUNT = 10;
-const int EEPROM_BASE_ADDR = 0;
-const int EEPROM_SLOT_SIZE = sizeof(EepromSlot);
-
-// PPQN stored after all save slots: address = 10 * sizeof(EepromSlot)
-static const int EEPROM_PPQN_ADDR = SAVE_SLOT_COUNT * EEPROM_SLOT_SIZE;
-static const uint8_t EEPROM_PPQN_MAGIC = 0xAA;  // Validate stored value
-// Layout: [EEPROM_PPQN_ADDR] = magic byte, [EEPROM_PPQN_ADDR+1] = PPQN value
-
-uint16_t eepromSeq = 0;
-uint8_t activeSaveSlot = 0;
 // timers
 IntervalTimer tickTimer1k;
 IntervalTimer stepTimer;
@@ -136,97 +104,28 @@ enum TransportState : uint8_t {
 volatile TransportState tstate = STOPPED;  // Read by stepISR, externalClockISR
 volatile bool sequencePlaying = false;     // Read by stepISR, externalClockISR
 
-// ISR→main-loop handoff: ISR sets this flag, main loop acts on it
-volatile bool wantSwitchToExt = false;
-
-// ============================================================================
-//  CONCURRENCY CONTRACT — External Clock
-//
-//  ISR writes (externalClockISR / subdivISR / triggerStepFromISR):
-//    lastPulseMicros           — uint32_t, read in main loop with noInterrupts()
-//    lastPulseInterval         — uint32_t, ISR-only (subdivision scheduling)
-//    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM display)
-//    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
-//    extPulseCount             — uint8_t, atomic on ARM
-//    extStepAcc                — uint8_t, written by ISR, reset by setTransport()
-//    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears
-//    pendingStepCount          — uint8_t, atomic on ARM, written by stepISR only
-//    currentStep               — int (32-bit aligned), atomic on ARM, ISR writes via triggerStepFromISR
-//    ledUpdatePending          — bool, atomic on ARM, ISR sets, main loop clears
-//    lastD1/D2/D3TriggerUs     — uint32_t, written by both ISR and main loop
-//    subdivRemaining           — uint8_t, ISR-only (externalClockISR + subdivISR, same priority)
-//    subdivIntervalUs          — uint32_t, ISR-only (externalClockISR writes, subdivISR reads)
-//
-//  Main loop writes (read by ISR):
-//    tstate                    — uint8_t, atomic on ARM, safe for ISR to read
-//    sequencePlaying           — bool, atomic on ARM, safe for ISR to read
-//    drum1/2/3Sequence[]       — byte arrays, atomic reads from ISR, written by main loop (button presses)
-//    ppqn                      — volatile uint8_t, main loop writes (PPQN mode), ISR reads (externalClockISR). Atomic on ARM.
-//
-//  Rule: All multi-byte (>1 byte) shared variables must be read/written
-//  inside noInterrupts()/interrupts() blocks.
-// ============================================================================
-
-// ISR-written external clock state
-volatile uint32_t lastPulseMicros = 0;     // Timestamp of last valid pulse (ISR+main)
-volatile uint32_t lastPulseInterval = 0;   // Interval between last two accepted pulses (µs)
-volatile uint32_t extIntervalEMA = 0;      // Fast EMA (alpha=0.5) — glitch filter + BPM display source
-volatile uint32_t prevAcceptedInterval = 0; // Previous accepted interval — lock-in similarity check
-volatile uint8_t  extPulseCount = 0;       // Counts valid pulses (2 needed to switch to EXT)
-volatile uint8_t  extStepAcc = 0;          // Step accumulator (fractional step tracking)
-volatile uint8_t  pendingStepCount = 0;    // For internal clock (stepISR), capped at 255
-volatile bool     ledUpdatePending = false; // ISR sets after step trigger, main loop updates LEDs
-
-// Per-voice retrigger timestamps — ISR-written, used to avoid noteOff()
-// killing a just-triggered envelope when two steps fire in rapid succession
-volatile uint32_t lastD1TriggerUs = 0;
-volatile uint32_t lastD2TriggerUs = 0;
-volatile uint32_t lastD3TriggerUs = 0;
-static constexpr uint32_t MIN_RETRIGGER_US = 2000;  // 2ms — skip noteOff if retriggered faster
-
-// BPM derived from external clock interval (main loop only, not volatile)
-float extBpmDisplay = 0.0f;
-
-// Hard floor for glitch rejection: 300µs catches contact bounce / electrical noise
-static constexpr uint32_t EXT_GLITCH_US = 300;
-
-// Timeout: if no pulse for 2 seconds, fall back to internal clock
-static constexpr uint32_t EXT_TIMEOUT_US = 2000000;
-
 // PPQN for external clock — loaded from EEPROM at boot, selectable via UI.
 // ISR reads (externalClockISR), main loop writes (PPQN selection mode).
 // uint8_t is atomic on ARM Cortex-M7 — no interrupt guards needed.
 volatile uint8_t ppqn = 2;
 
-// Subdivision timer state — for ppqn < 4, the external clock ISR fires Step A
-// immediately, then arms stepTimer to fire the remaining steps (B, C, D) at
-// evenly-spaced intervals derived from lastPulseInterval (measured, not EMA).
-// Both ISRs (externalClockISR + subdivISR) run at the same ARM priority — they
-// cannot preempt each other, so no race conditions between them.
-volatile uint8_t  subdivRemaining = 0;     // Deferred steps still to fire (0 = idle, max 3)
-volatile uint32_t subdivIntervalUs = 0;    // Microseconds between subdivision steps
-
-// Debug pulse counter
-#ifdef DEBUG_MODE
-volatile uint32_t extClockDebugPulseCount = 0;
-#endif
+// External clock sync — ISRs, state variables, glitch filter, EMA, helpers
+// (must be included after TransportState, stepTimer, bpm, ppqn, sequences, triggers)
+#include "ext_sync.h"
 
 // OLED watchdog and frame timing
 // Written: main loop (updateDisplay). Read: sysTickISR (watchdog), main loop (frame limiter).
 volatile uint32_t lastFrameDrawTick = 0;
-const uint32_t oledWatchdogTimeoutTicks = 750;
-const uint32_t oledFrameIntervalTicks = 67;  // ~15 fps
+const uint32_t oledWatchdogTimeoutMs = 750;
+const uint32_t oledFrameIntervalMs = 67;  // ~15 fps
 volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main loop
 
-// Oscilloscope (AC waveform via AudioRecordQueue)
-#define SCOPE_DISPLAY_WIDTH 124
-#define SCOPE_DISPLAY_HEIGHT 40
-float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
-uint8_t scopeBufferWriteIndex = 0;
+// Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
+#include "oscilloscope.h"
 
 // master UI values
 float masterVolumeDisp = 10.0f;  // consistent with masterNominalGain default
-int masterLPFDisp = 78;
+int masterLPFBarX = 78;
 
 // drum decays
 float d1DecayBase = 75.0f;
@@ -239,6 +138,12 @@ int chokeOffsetMs = 0;
 
 // D2 noise and clap bases
 float clapDecayBase = 120.0f;
+float clapEffDecay = 120.0f;  // Cached: clapDecayBase + chokeOffsetMs, floored at 10
+
+// D1 cached envelope params (updated on knob change / choke change)
+float d1CachedAttackMs = 0.5f;
+float d1CachedHoldMs = 56.25f;   // d1Decay * 0.75f
+float d1CachedDecayMs = 75.0f;   // d1Decay
 
 // parameter overlay text — Main-loop only, no ISR access
 char displayParameter1[24] = "";
@@ -259,6 +164,10 @@ enum RailMode : uint8_t {
 };
 
 RailMode activeRail = RAIL_NONE;
+
+// EEPROM persistence — structs, constants, save/load functions
+// (must be included after sequences, ppqn, PPQN_OPTIONS, RailMode, UI overlay vars)
+#include "eeprom.h"
 
 // delay ratios (in quarter-note units)
 static constexpr float quantizeRatios[] = {
@@ -436,30 +345,19 @@ void updateDisplay();
 void selectSequence(int index);
 void playSequence();
 void playSequenceCore();
-void triggerStepFromISR();
 void triggerD1();
 void triggerD2();
 void triggerD3();
-void rearmStepTimer();
 inline int readKnobRaw(byte idx);
 inline void updateParameterDisplay(byte idx, int knobValue);
 inline void applyKnobToEngine(byte idx, int knobValue);
 void updateKnobs();
-static inline void setTransport(TransportState s);
+void setTransport(TransportState s);
 inline void updateDrumDelayGains();
 void initKnobsFromHardware();
 inline void applyMasterGainFromState();
 void applyChokeToDecays();
-void updateScopeData();
-void drawScopeWaveform(int x, int y, int w, int h);
 void drawOutlinedText(int x, int y, const char* text);
-void externalClockISR();
-void subdivISR();
-static inline void resetExternalClockState();
-
-// EEPROM state
-bool loadStateFromEEPROM(uint8_t slotIndex);
-void saveStateToEEPROM(uint8_t slotIndex);
 
 // accent evaluation
 static inline bool isAccent(uint8_t mode, uint8_t step) {
@@ -494,36 +392,6 @@ static inline uint32_t atomicReadU32(volatile uint32_t& v) {
 }
 
 // timers and interrupts
-void sysTickISR();
-
-void stepISR() {
-  // Internal clock step generation — only active when in RUN_INT mode
-  if (tstate == RUN_INT && sequencePlaying) {
-    if (pendingStepCount < 255) {
-      pendingStepCount++;
-    }
-  }
-}
-
-// Subdivision timer ISR — fires deferred steps for ppqn < 4.
-// Called by stepTimer at subdivIntervalUs intervals during RUN_EXT.
-// Runs at same priority as externalClockISR (no preemption between them).
-void subdivISR() {
-  // Guard: if ppqn was changed to >= 4 while subdivisions were in flight, stop
-  if (ppqn >= 4 || subdivRemaining == 0) {
-    stepTimer.end();
-    subdivRemaining = 0;
-    return;
-  }
-
-  triggerStepFromISR();
-  subdivRemaining--;
-
-  if (subdivRemaining == 0) {
-    // All subdivision steps fired — stop the timer
-    stepTimer.end();
-  }
-}
 
 void sysTickISR() {
   uint32_t now = sysTickMs + 1;
@@ -532,124 +400,9 @@ void sysTickISR() {
   // stable read of lastFrameDrawTick (handles non atomic 32 bit on some MCUs)
   uint32_t lastDraw = atomicReadU32(lastFrameDrawTick);
 
-  if ((uint32_t)(now - lastDraw) > oledWatchdogTimeoutTicks) {
+  if ((uint32_t)(now - lastDraw) > oledWatchdogTimeoutMs) {
     requestOledReinit = true;
   }
-}
-
-// External clock ISR — attached to EXT_CLK_PIN (pin 12) rising edge
-// Pure pulse-driven: every accepted pulse triggers audio directly.
-// Two-part glitch filter (hard floor + relative). Lock-in requires
-// two consecutive similar intervals. Subdivision uses measured interval.
-void externalClockISR() {
-  uint32_t nowUs = micros();
-  uint32_t prevUs = lastPulseMicros;
-
-  // Two-part glitch filter:
-  //   1. Hard floor: reject < 300µs (contact bounce / electrical noise)
-  //   2. Relative: reject < 25% of EMA (absurdly fast edges only)
-  // Less aggressive than old 45% — allows swing clocks, jittery analog clocks.
-  if (prevUs != 0) {
-    uint32_t interval = nowUs - prevUs;
-
-    // Part 1: hard floor — always applies
-    if (interval < EXT_GLITCH_US) return;
-
-    // Part 2: relative — only when EMA is seeded
-    uint32_t ema = extIntervalEMA;
-    if (ema > 0 && interval < (ema >> 2)) return;
-
-    // Accepted pulse — update raw interval and fast EMA
-    lastPulseInterval = interval;
-
-    // Fast EMA (alpha=0.5): glitch filter threshold + BPM display source.
-    // Responsive to tempo changes; display-side smoothing handles jitter.
-    extIntervalEMA = (ema == 0)
-        ? interval
-        : ema + (((int32_t)(interval - ema)) >> 1);
-  }
-
-  // Good pulse — record timestamp
-  lastPulseMicros = nowUs;
-
-  if (extPulseCount < 255) extPulseCount++;
-
-  // Lock-in: switch to RUN_EXT after 2 consecutive intervals within 25%.
-  // Prevents a noise spike + real pulse from false lock-in.
-  // prevAcceptedInterval holds previous pulse's interval;
-  // lastPulseInterval holds current (0 if this is pulse #1).
-  if (extPulseCount >= 2 && tstate != RUN_EXT) {
-    uint32_t prev = prevAcceptedInterval;
-    uint32_t curr = lastPulseInterval;
-    if (prev > 0 && curr > 0) {
-      uint32_t diff = (curr > prev) ? (curr - prev) : (prev - curr);
-      if (diff < (prev >> 2)) {
-        wantSwitchToExt = true;
-      }
-    }
-  }
-
-  // Update previous interval for next lock-in comparison
-  prevAcceptedInterval = lastPulseInterval;
-
-  // Step generation — trigger audio directly on each accepted pulse edge.
-  // Fires both in steady-state RUN_EXT and on the locking pulse
-  // so the first step aligns with a real pulse, not a synthesized main-loop call.
-  bool canStep = (tstate == RUN_EXT || wantSwitchToExt);
-  if (canStep && sequencePlaying) {
-
-    if (ppqn >= 4) {
-      // --- STANDARD PATH (ppqn >= 4): accumulator, at most 1 step per pulse ---
-      uint8_t acc = extStepAcc + 4;
-      while (acc >= ppqn) {
-        acc -= ppqn;
-        triggerStepFromISR();
-      }
-      extStepAcc = acc;
-
-    } else {
-      // --- SUBDIVISION PATH (ppqn 1 or 2): fire Step A now, defer the rest ---
-      // Without this, all steps would bunch at the pulse edge (e.g., ppqn=2
-      // fires 2 steps in the same microsecond instead of spacing them out).
-
-      // Cancel any in-flight subdivision from the previous pulse (PLL-like)
-      stepTimer.end();
-      subdivRemaining = 0;
-
-      // Step A fires immediately on the pulse edge (zero latency)
-      triggerStepFromISR();
-
-      // Calculate how many more steps to fire between now and the next pulse:
-      //   ppqn=2 → stepsPerPulse=2 → 1 deferred step  (B)
-      //   ppqn=1 → stepsPerPulse=4 → 3 deferred steps (B, C, D)
-      uint8_t stepsPerPulse = 4 / ppqn;
-      uint8_t deferred = stepsPerPulse - 1;
-
-      // Arm subdivision timer using the measured interval (not EMA).
-      // Direct: subdivisions match the current pulse spacing immediately,
-      // no EMA lag when tempo changes.
-      uint32_t measuredInterval = lastPulseInterval;
-      if (deferred > 0 && measuredInterval > 0) {
-        // Subdivide the pulse interval evenly:
-        //   ppqn=2: subInterval = interval / 2  (one step halfway)
-        //   ppqn=1: subInterval = interval / 4  (three steps at 1/4, 2/4, 3/4)
-        uint32_t subInterval = measuredInterval / stepsPerPulse;
-
-        // Safety floor: don't fire faster than MIN_RETRIGGER_US (2ms)
-        if (subInterval < MIN_RETRIGGER_US) subInterval = MIN_RETRIGGER_US;
-
-        subdivRemaining = deferred;
-        subdivIntervalUs = subInterval;
-        stepTimer.begin(subdivISR, subInterval);
-      }
-      // If measuredInterval == 0 (first pulse, no interval yet), only Step A fires.
-      // Subsequent pulses will have a valid interval and will arm subdivisions.
-    }
-  }
-
-#ifdef DEBUG_MODE
-  extClockDebugPulseCount++;
-#endif
 }
 
 // audio helpers
@@ -684,6 +437,14 @@ inline void applyMasterGainFromState() {
   masterAmp.gain(g);
 }
 
+// Recompute cached D1 envelope params from d1Decay and d1AttackAmt.
+// Call whenever either changes (choke offset, decay knob, or attack knob).
+static inline void updateD1EnvelopeCache() {
+  d1CachedAttackMs = 0.5f + 20.0f * d1AttackAmt;
+  d1CachedHoldMs = d1Decay * 0.75f + 12.0f * d1AttackAmt;
+  d1CachedDecayMs = d1Decay * (1.0f - 0.25f * d1AttackAmt);
+}
+
 // choke application on all relevant decays
 
 void applyChokeToDecays() {
@@ -692,9 +453,12 @@ void applyChokeToDecays() {
   if (eff1 < 17.0f) eff1 = 17.0f;
   d1Decay = eff1;
 
+  // Update D1 envelope cache
+  updateD1EnvelopeCache();
+
   AudioNoInterrupts();
-  d1AmpEnv.hold(d1Decay * 0.75f);
-  d1AmpEnv.decay(d1Decay);
+  d1AmpEnv.hold(d1CachedHoldMs);
+  d1AmpEnv.decay(d1CachedDecayMs);
   AudioInterrupts();
 
   // D2 main decay using helper
@@ -705,102 +469,15 @@ void applyChokeToDecays() {
   drum2.length(base2 * 0.25f);
   AudioInterrupts();
 
-  // D2 clap family
-  float clapEff = clapDecayBase + chokeOffsetMs;
-  if (clapEff < 10.0f) clapEff = 10.0f;
+  // D2 clap family — cache the effective value
+  clapEffDecay = clapDecayBase + chokeOffsetMs;
+  if (clapEffDecay < 10.0f) clapEffDecay = 10.0f;
 
   AudioNoInterrupts();
-  clap1AmpEnv.decay(clapEff);
-  clap2AmpEnv.decay(clapEff);
-  clapMasterEnv.decay(clapEff);
+  clap1AmpEnv.decay(clapEffDecay);
+  clap2AmpEnv.decay(clapEffDecay);
+  clapMasterEnv.decay(clapEffDecay);
   AudioInterrupts();
-}
-
-// EEPROM load/save
-
-bool loadStateFromEEPROM(uint8_t slotIndex) {
-  if (slotIndex >= SAVE_SLOT_COUNT) return false;
-
-  // Calculate and verify address (type-safe)
-  size_t addr = (size_t)EEPROM_BASE_ADDR + (size_t)slotIndex * sizeof(EepromSlot);
-  if (addr + sizeof(EepromSlot) > EEPROM.length()) return false;
-
-  // Read slot from EEPROM
-  EepromSlot slot;
-  EEPROM.get((int)addr, slot);
-
-  // Verify magic number
-  if (slot.magic != EEPROM_MAGIC) return false;
-
-  // Load pattern data
-  for (int step = 0; step < numSteps; step++) {
-    drum1Sequence[step] = slot.patterns.drum1[step];
-    drum2Sequence[step] = slot.patterns.drum2[step];
-    drum3Sequence[step] = slot.patterns.drum3[step];
-  }
-
-  // Refresh step LEDs so they reflect the loaded pattern
-  updateLEDs();
-
-  // Update sequence number (keep monotonic for debugging)
-  if (slot.seq > eepromSeq) {
-    eepromSeq = slot.seq;
-  }
-
-  patternDirty = false;
-
-  // Show "PATTERN LOADED" overlay message
-  activeRail = RAIL_NONE;
-  lastActiveKnob = 255;  // sentinel: no active knob
-  snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
-  snprintf(displayParameter2, sizeof(displayParameter2), "LOADED");
-
-  // Start overlay timer atomically
-  noInterrupts();
-  parameterOverlayStartTick = sysTickMs;
-  interrupts();
-
-  return true;
-}
-
-void saveStateToEEPROM(uint8_t slotIndex) {
-  if (slotIndex >= SAVE_SLOT_COUNT) return;
-
-  // Should be size_t, not int
-  size_t addr = (size_t)EEPROM_BASE_ADDR + (size_t)slotIndex * sizeof(EepromSlot);
-  if (addr + sizeof(EepromSlot) > EEPROM.length()) return;
-
-  EepromSlot slot = {};
-  slot.magic = EEPROM_MAGIC;
-  slot.seq = eepromSeq + 1;
-
-  for (int step = 0; step < numSteps; step++) {
-    slot.patterns.drum1[step] = drum1Sequence[step];
-    slot.patterns.drum2[step] = drum2Sequence[step];
-    slot.patterns.drum3[step] = drum3Sequence[step];
-  }
-
-  EEPROM.put((int)addr, slot);  // Cast to int here for EEPROM.put()
-
-  eepromSeq++;
-  patternDirty = false;
-}
-
-void loadPpqnFromEEPROM() {
-  uint8_t magic = EEPROM.read(EEPROM_PPQN_ADDR);
-  if (magic == EEPROM_PPQN_MAGIC) {
-    uint8_t val = EEPROM.read(EEPROM_PPQN_ADDR + 1);
-    // Validate: must be one of the allowed values
-    for (uint8_t i = 0; i < PPQN_OPTION_COUNT; i++) {
-      if (PPQN_OPTIONS[i] == val) { ppqn = val; return; }
-    }
-  }
-  ppqn = 2;  // Default if nothing saved or invalid
-}
-
-void savePpqnToEEPROM(uint8_t val) {
-  EEPROM.update(EEPROM_PPQN_ADDR, EEPROM_PPQN_MAGIC);
-  EEPROM.update(EEPROM_PPQN_ADDR + 1, val);
 }
 
 void setup() {
@@ -863,7 +540,7 @@ void setup() {
   displayParameter2[0] = 0;
 
   noInterrupts();
-  parameterOverlayStartTick = sysTickMs - parameterOverlayDurationTicks - 1;
+  parameterOverlayStartTick = sysTickMs - parameterOverlayDurationMs - 1;
   interrupts();
 
   // Load saved PPQN from EEPROM (defaults to 2 if nothing saved)
@@ -958,49 +635,11 @@ void loop() {
   }
 
   // ============================================================================
-  // EXTERNAL CLOCK: ISR→main-loop handoff
+  // EXTERNAL CLOCK: lock-in handoff + timeout detection (ext_clock.h)
   // ============================================================================
 
-  {
-    bool switchToExt = false;
-    noInterrupts();
-    if (wantSwitchToExt) {
-      wantSwitchToExt = false;
-      switchToExt = true;
-    }
-    interrupts();
-
-    if (switchToExt) {
-      // The ISR already fired the first step on the locking pulse (extPulseCount == 2).
-      // Main loop just needs to formalize the transport state. Don't reset currentStep
-      // here — ISR already advanced it. Only reset extStepAcc if the ISR hasn't
-      // touched it yet (it has, so we leave it alone).
-      setTransport(RUN_EXT);
-    }
-  }
-
-  // ============================================================================
-  // EXTERNAL CLOCK: timeout detection — fall back to internal or stop
-  // ============================================================================
-
-  if (tstate == RUN_EXT) {
-    uint32_t now = micros();
-    uint32_t lastPulseCopy;
-
-    noInterrupts();
-    lastPulseCopy = lastPulseMicros;
-    interrupts();
-
-    if ((now - lastPulseCopy) > EXT_TIMEOUT_US) {
-      if (sequencePlaying) {
-        setTransport(RUN_INT);
-      } else {
-        setTransport(STOPPED);
-        applyMasterGainFromState();
-      }
-      resetExternalClockState();
-    }
-  }
+  checkExtClockLockIn();
+  checkExtClockTimeout();
 
   // ============================================================================
   // SEQUENCER STEP PROCESSING (before input polling to minimize latency)
@@ -1026,23 +665,7 @@ void loop() {
     applyMasterGainFromState();
   }
 
-  // Derive EXT BPM from the fast EMA (alpha=0.5) — same interval the engine
-  // uses for glitch filtering, so the display matches what the engine hears.
-  // Light display-side smoothing (alpha=0.25) damps jitter without the long
-  // settle time the old slow EMA had.
-  if (tstate == RUN_EXT) {
-    noInterrupts();
-    uint32_t emaCopy = extIntervalEMA;
-    interrupts();
-    if (emaCopy > 0) {
-      float rawBpm = 60000000.0f / ((float)emaCopy * (float)ppqn);
-      if (extBpmDisplay <= 0.0f) {
-        extBpmDisplay = rawBpm;           // First reading — snap immediately
-      } else {
-        extBpmDisplay += 0.25f * (rawBpm - extBpmDisplay);  // Light smoothing
-      }
-    }
-  }
+  updateExtBpmDisplay();
 
   // ============================================================================
   // USER INPUT POLLING
@@ -1069,13 +692,13 @@ void loop() {
   lastDrawCopy = lastFrameDrawTick;
   interrupts();
 
-  if ((uint32_t)(tickCopy - lastDrawCopy) >= oledFrameIntervalTicks) {
+  if ((uint32_t)(tickCopy - lastDrawCopy) >= oledFrameIntervalMs) {
     updateDisplay();
   }
 }
 
 // transport helpers — v126 pattern: clean state transitions
-static inline void setTransport(TransportState s) {
+void setTransport(TransportState s) {
   if (tstate == s) return;
   tstate = s;
 
@@ -1103,31 +726,6 @@ static inline void setTransport(TransportState s) {
   }
 }
 
-void rearmStepTimer() {
-  float stepPeriodUs = 60000000.0f / (bpm * 4.0f);
-  if (stepPeriodUs < 500.0f) stepPeriodUs = 500.0f;
-  stepTimer.end();
-  stepTimer.begin(stepISR, (uint32_t)stepPeriodUs);
-}
-
-static inline void resetExternalClockState() {
-  noInterrupts();
-  extPulseCount = 0;
-  extStepAcc = 0;
-  lastPulseMicros = 0;
-  lastPulseInterval = 0;
-  extIntervalEMA = 0;
-  prevAcceptedInterval = 0;
-  ledUpdatePending = false;
-  lastD1TriggerUs = 0;
-  lastD2TriggerUs = 0;
-  lastD3TriggerUs = 0;
-  subdivRemaining = 0;
-  subdivIntervalUs = 0;
-  interrupts();
-  extBpmDisplay = 0.0f;
-}
-
 // sequencing and triggers
 
 void playSequence() {
@@ -1145,22 +743,6 @@ void playSequence() {
   while (toDo--) {
     playSequenceCore();
   }
-}
-
-// Called from externalClockISR() — triggers audio directly for zero-latency.
-// Uses same triggerD1/D2/D3 helpers as playSequenceCore(), but sets
-// ledUpdatePending instead of calling updateLEDs() (SPI unsafe from ISR).
-void triggerStepFromISR() {
-  if (currentStep < 0 || currentStep >= numSteps) {
-    currentStep = numSteps - 1;
-  }
-  currentStep = (currentStep + 1) % numSteps;
-
-  if (drum1Sequence[currentStep]) triggerD1();
-  if (drum2Sequence[currentStep]) triggerD2();
-  if (drum3Sequence[currentStep]) triggerD3();
-
-  ledUpdatePending = true;
 }
 
 // playSequenceCore — used by internal clock path (main loop context).
@@ -1184,14 +766,11 @@ void triggerD1() {
   bool skipNoteOff = (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
   lastD1TriggerUs = now;
 
-  float attackMs = 0.5f + 20.0f * d1AttackAmt;
-  float holdMs = d1Decay * 0.75f + 12.0f * d1AttackAmt;
-  float decayMs = d1Decay * (1.0f - 0.25f * d1AttackAmt);
-
+  // Use pre-computed envelope params (updated by applyChokeToDecays / attack knob)
   AudioNoInterrupts();
-  d1AmpEnv.attack(attackMs);
-  d1AmpEnv.hold(holdMs);
-  d1AmpEnv.decay(decayMs);
+  d1AmpEnv.attack(d1CachedAttackMs);
+  d1AmpEnv.hold(d1CachedHoldMs);
+  d1AmpEnv.decay(d1CachedDecayMs);
   AudioInterrupts();
 
   if (!skipNoteOff) {
@@ -1210,18 +789,17 @@ void triggerD2() {
   bool skipNoteOff = (now - lastD2TriggerUs) < MIN_RETRIGGER_US;
   lastD2TriggerUs = now;
 
+  // Use pre-computed clap decay (updated by applyChokeToDecays)
   float applyDecay2 = d2EffectiveBaseDecay();
-  float clapEff = clapDecayBase + chokeOffsetMs;
-  if (clapEff < 10.0f) clapEff = 10.0f;
 
   AudioNoInterrupts();
   d2AmpEnv.hold(applyDecay2 * 0.5f);
   d2AmpEnv.decay(applyDecay2);
   drum2.length(applyDecay2 * 0.25f);
 
-  clap1AmpEnv.decay(clapEff);
-  clap2AmpEnv.decay(clapEff);
-  clapMasterEnv.decay(clapEff);
+  clap1AmpEnv.decay(clapEffDecay);
+  clap2AmpEnv.decay(clapEffDecay);
+  clapMasterEnv.decay(clapEffDecay);
   AudioInterrupts();
 
   if (!skipNoteOff) {
@@ -1292,7 +870,7 @@ void updateOtherButtons() {
     otherButtonsMux.channel(i);
     delayMicroseconds(5);
 
-    bool rawPressed = !otherButtonsMux.read(i);
+    bool rawPressed = !otherButtonsMux.read();  // no arg — use channel already set above
 
     if (rawPressed != lastState[i]) {
       lastDebounceTick[i] = nowTick;
@@ -1345,7 +923,7 @@ void updateOtherButtons() {
           case 1: selectSequence(1); break;
           case 2: selectSequence(2); break;
 
-          case 3: break;
+          case 3: break;  // Buttons 3-5: hardware-present but unassigned
           case 4: break;
           case 5: break;
 
@@ -1446,8 +1024,8 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
   switch (mode) {
     case ALT_HALF: return 0b1000000010000000;     // steps 0 and 8
     case ALT_QUARTER: return 0b1000100010001000;  // steps 0,4,8,12
-    case ALT_EIGHT: return 0b1010101010101010;
-    case ALT_EIGHTUP: return 0b0101010101010101;  // steps 1,3,5,7,9,11,13,15
+    case ALT_EIGHT: return 0b1010101010101010;      // even steps (eighth-note pattern)
+    case ALT_EIGHTUP: return 0b0101010101010101;  // odd steps (eighth-note upbeat)
     case ALT_VARI1: return PAT_VARI1;
     case ALT_VARI2: return PAT_VARI2;
     case ALT_VARI3: return PAT_VARI3;
@@ -1514,13 +1092,13 @@ void updateStepButtons() {
   for (int i = 0; i < stepButtonCount; i++) {
     stepButtonsMux.channel(i);
     delayMicroseconds(5);
-    bool rawPressed = !stepButtonsMux.read(i);
+    bool rawPressed = !stepButtonsMux.read();  // no arg — use channel already set above
 
     if (rawPressed != lastState[i]) {
       lastDebounceTick[i] = nowTick;
     }
 
-    if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceDelayTicks && (rawPressed != state[i])) {
+    if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceDelayMs && (rawPressed != state[i])) {
 
       state[i] = rawPressed;
       if (state[i]) {
@@ -1539,11 +1117,11 @@ inline int readKnobRaw(byte idx) {
   if (idx < 16) {
     knobMux1.channel(idx);
     delayMicroseconds(5);
-    raw = knobMux1.read(idx);
+    raw = knobMux1.read();  // no arg — use channel already set above
   } else {
     knobMux2.channel(idx - 16);
     delayMicroseconds(5);
-    raw = knobMux2.read(idx - 16);
+    raw = knobMux2.read();  // no arg — use channel already set above
   }
   // Clamp ADC edges: pots rarely hit true 0/1023 — map the reliable
   // range to the full 0-1023 so both extremes are always reachable.
@@ -1558,6 +1136,98 @@ inline void setOverlayTimer(byte idx) {
   t = sysTickMs;
   interrupts();
   parameterOverlayStartTick = t;
+}
+
+// ============================================================================
+//  Shared curve helpers — used by both display and engine switch blocks
+//  to keep the mapping in one place.
+// ============================================================================
+
+// D1 Decay curve: piecewise 50–70 ms (low range) then 70–1000 ms (high range)
+static inline float d1DecayCurve(int knobValue) {
+  float norm = normKnob(knobValue);
+  if (norm <= 0.25f) {
+    float blend = norm / 0.25f;
+    return 50.0f + (70.0f - 50.0f) * blend;
+  } else {
+    float blend = (norm - 0.25f) / 0.75f;
+    return 70.0f + (1000.0f - 70.0f) * blend;
+  }
+}
+
+// D1 Pitch curve: piecewise 60–105 Hz (low) then 105–500 Hz (high)
+static inline float d1PitchCurve(int knobValue) {
+  float norm = normKnob(knobValue);
+  if (norm <= 0.33f) {
+    float blend = norm / 0.33f;
+    return 60.0f + (105.0f - 60.0f) * blend;
+  } else {
+    float blend = (norm - 0.33f) / 0.67f;
+    return 105.0f + (500.0f - 105.0f) * blend;
+  }
+}
+
+// D2 Decay curve: piecewise 50–300 ms (low half) then 300–1000 ms (high half)
+static inline float d2DecayCurve(int knobValue) {
+  return (float)((knobValue < 512)
+      ? map(knobValue, 0, 511, 50, 300)
+      : map(knobValue, 512, 1023, 300, 1000));
+}
+
+// BPM curve: piecewise 60–240 (first 60%) then 240–1000 (remaining 40%), rounded to 0.5
+static inline float bpmFromKnob(int knobValue) {
+  float norm = normKnob(knobValue);
+  float bpmValue;
+  if (norm <= 0.60f) {
+    float blend = norm / 0.60f;
+    bpmValue = 60.0f + blend * (240.0f - 60.0f);
+  } else {
+    float blend = (norm - 0.60f) / 0.40f;
+    bpmValue = 240.0f + blend * (1000.0f - 240.0f);
+  }
+  return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
+}
+
+// Accent mode from knob position — maps knob to one of 13 accent patterns
+static inline uint8_t accentModeFromKnob(int knobValue) {
+  const int ACCENT_DEADBAND = 24;
+  if (knobValue <= ACCENT_DEADBAND) {
+    return ALT_OFF;
+  }
+  int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 12);
+  switch (zone) {
+    case 1: return ALT_HALF;
+    case 2: return ALT_QUARTER;
+    case 3: return ALT_EIGHT;
+    case 4: return ALT_EIGHTUP;
+    case 5: return ALT_VARI1;
+    case 6: return ALT_VARI2;
+    case 7: return ALT_VARI3;
+    case 8: return ALT_VARI4;
+    case 9: return ALT_ALT5;
+    case 10: return ALT_ALT6;
+    case 11: return ALT_ALT7;
+    case 12: return ALT_ALT8;
+    default: return ALT_ALT9;
+  }
+}
+
+// Delay ratio index from knob — finds the closest beat-synced ratio within delay limit
+static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
+  float msPerBeat = 60000.0f / currentBpm;
+  float maxRatio = 1400.0f / msPerBeat;
+
+  int maxIdx = 0;
+  for (int i = 0; i < numRatios; i++) {
+    if (quantizeRatios[i] <= maxRatio) {
+      maxIdx = i;
+    } else {
+      break;
+    }
+  }
+
+  int ratioIdx = (int)((knobValue / 1023.0f) * maxIdx + 0.5f);
+  return constrain(ratioIdx, 0, maxIdx);
 }
 
 // parameter overlay text
@@ -1582,7 +1252,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 1:  // D1 Waveform Shape (uses rail display)
       {
-        snprintf(displayParameter1, sizeof(displayParameter1), "");
+        displayParameter1[0] = 0;
         displayParameter2[0] = 0;
         activeRail = RAIL_D1_SHAPE;
         uiMixD1Shape = normKnob(knobValue);
@@ -1591,17 +1261,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 2:  // D1 Decay
       {
-        float norm = normKnob(knobValue);
-        float decayMs;
-
-        if (norm <= 0.25f) {
-          float blend = norm / 0.25f;
-          decayMs = 50.0f + (70.0f - 50.0f) * blend;
-        } else {
-          float blend = (norm - 0.25f) / 0.75f;
-          decayMs = 71.0f + (1000.0f - 71.0f) * blend;
-        }
-
+        float decayMs = d1DecayCurve(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DECAY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
         break;
@@ -1609,18 +1269,8 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
-        float norm = normKnob(knobValue);
-        float freqHz;
-
-        if (norm <= 0.33f) {
-          float blend = norm / 0.33f;
-          freqHz = 60.0f + (105.0f - 60.0f) * blend;
-        } else {
-          float blend = (norm - 0.33f) / 0.67f;
-          freqHz = 106.0f + (500.0f - 106.0f) * blend;
-        }
-
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 FREQ");
+        float freqHz = d1PitchCurve(knobValue);
+        snprintf(displayParameter1, sizeof(displayParameter1), "D1 FREQUENCY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
         break;
       }
@@ -1652,8 +1302,9 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 7:  // D1 Delay Send
       {
+        // Capped at 75% to prevent feedback runaway
         int percent = (int)map(knobValue, 0, 1023, 0, 75);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DLY SND");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1665,22 +1316,22 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
     case 8:  // D2 Pitch
       {
         float freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 FREQ");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 FREQUENCY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
         break;
       }
 
     case 9:  // D2 Decay
       {
-        int percent = (int)map(knobValue, 0, 1023, 1, 100);
+        float decayMs = d2DecayCurve(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 DECAY");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
         break;
       }
 
     case 10:  // D2 Voice Mix - Snare/Clap (uses rail display)
       {
-        snprintf(displayParameter1, sizeof(displayParameter1), "");
+        displayParameter1[0] = 0;
         displayParameter2[0] = 0;
         activeRail = RAIL_D2_VOICE;
         uiMixD2Voice = normKnob(knobValue);
@@ -1698,8 +1349,9 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 12:  // D2 Delay Send
       {
+        // Capped at 75% to prevent feedback runaway
         int percent = (int)map(knobValue, 0, 1023, 0, 75);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 DLY SND");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1707,9 +1359,9 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
     case 13:  // D2 Reverb
       {
         float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f);
+        int percent = (int)(norm * 100.0f + 0.5f);
 
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 VERB");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 REVERB");
 
         if (percent < 5) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
@@ -1762,7 +1414,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 18:  // D3 Voice Mix - 3-way (uses rail display)
       {
-        snprintf(displayParameter1, sizeof(displayParameter1), "");
+        displayParameter1[0] = 0;
         displayParameter2[0] = 0;
         activeRail = RAIL_D3_VOICE;
         uiMixD3Voice = normKnob(knobValue);
@@ -1779,8 +1431,9 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 20:  // D3 Delay Send
       {
-        int percent = (int)map(knobValue, 0, 1023, 0, 100);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D3 DLY SND");
+        // Capped at 75% to prevent feedback runaway (same as D1/D2)
+        int percent = (int)map(knobValue, 0, 1023, 0, 75);
+        snprintf(displayParameter1, sizeof(displayParameter1), "D3 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1791,40 +1444,17 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
         float normSq = norm * norm;
         float cutoffHz = 4500.0f + normSq * (8000.0f - 4500.0f);
 
-        snprintf(displayParameter1, sizeof(displayParameter1), "D3 LPF");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
         break;
       }
 
     case 22:  // D3 Accent Pattern
       {
-        const int ACCENT_DEADBAND = 24;
-        uint8_t mode;
+        uint8_t mode = accentModeFromKnob(knobValue);
         const char* label;
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 ACCENT");
-
-        // Determine mode from knob position
-        if (knobValue <= ACCENT_DEADBAND) {
-          mode = ALT_OFF;
-        } else {
-          int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 12);
-          switch (zone) {
-            case 1: mode = ALT_HALF; break;
-            case 2: mode = ALT_QUARTER; break;
-            case 3: mode = ALT_EIGHT; break;
-            case 4: mode = ALT_EIGHTUP; break;
-            case 5: mode = ALT_VARI1; break;
-            case 6: mode = ALT_VARI2; break;
-            case 7: mode = ALT_VARI3; break;
-            case 8: mode = ALT_VARI4; break;
-            case 9: mode = ALT_ALT5; break;
-            case 10: mode = ALT_ALT6; break;
-            case 11: mode = ALT_ALT7; break;
-            case 12: mode = ALT_ALT8; break;
-            default: mode = ALT_ALT9; break;
-          }
-        }
 
         // Map mode to display label
         switch (mode) {
@@ -1863,22 +1493,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
 
     case 24:  // Master Delay Time (quantized to tempo)
       {
-        float msPerBeat = 60000.0f / bpm;
-        float maxRatio = 1400.0f / msPerBeat;
-
-        // Find maximum available ratio index within delay time limit
-        int maxIdx = 0;
-        for (int i = 0; i < numRatios; i++) {
-          if (quantizeRatios[i] <= maxRatio) {
-            maxIdx = i;
-          } else {
-            break;
-          }
-        }
-
-        int ratioIdx = (int)((knobValue / 1023.0f) * maxIdx + 0.5f);
-        ratioIdx = constrain(ratioIdx, 0, maxIdx);
-
+        int ratioIdx = delayRatioFromKnob(knobValue, bpm);
         snprintf(displayParameter1, sizeof(displayParameter1), "DELAY TIME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", ratioLabels[ratioIdx]);
         break;
@@ -1889,7 +1504,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
         float norm = normKnob(knobValue);
         float freqHz = 40.0f + norm * (1000.0f - 40.0f);
 
-        snprintf(displayParameter1, sizeof(displayParameter1), "WAVFLD FRQ");
+        snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FRQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%.0f Hz", freqHz);
         break;
       }
@@ -1897,7 +1512,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
     case 26:  // Master Lowpass Filter
       {
         int freqHz = (int)map(knobValue, 0, 1023, 1000, 7500);
-        snprintf(displayParameter1, sizeof(displayParameter1), "LPF");
+        snprintf(displayParameter1, sizeof(displayParameter1), "MASTER LPF");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", freqHz);
         break;
       }
@@ -1925,19 +1540,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
           break;
         }
 
-        float norm = normKnob(knobValue);
-        float bpmValue;
-
-        if (norm <= 0.60f) {
-          float blend = norm / 0.60f;
-          bpmValue = 60.0f + blend * (240.0f - 60.0f);
-        } else {
-          float blend = (norm - 0.60f) / 0.40f;
-          bpmValue = 240.0f + blend * (1000.0f - 240.0f);
-        }
-
-        // Round to nearest 0.5
-        bpmValue = floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
+        float bpmValue = bpmFromKnob(knobValue);
 
         snprintf(displayParameter1, sizeof(displayParameter1), "BPM");
         snprintf(displayParameter2, sizeof(displayParameter2), "%.1f", bpmValue);
@@ -1958,7 +1561,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
         float norm = normKnob(knobValue);
         int percent = (int)((norm - 0.5f) * 200.0f);  // -100 to +100
 
-        snprintf(displayParameter1, sizeof(displayParameter1), "DCAY OFFST");
+        snprintf(displayParameter1, sizeof(displayParameter1), "DECAY OFFST");
         snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", percent);
         break;
       }
@@ -1972,7 +1575,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
         // Mirror the engine's half-split + deadband + quadratic curve
         float drive;
         if (norm <= 0.5f) {
-          shapeName = "SIN";
+          shapeName = "SINE";
           drive = norm / 0.5f;
         } else {
           shapeName = "SAW";
@@ -1987,7 +1590,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
           percent = (int)(driveNorm * driveNorm * 100.0f + 0.5f);
         }
 
-        snprintf(displayParameter1, sizeof(displayParameter1), "WF %s", shapeName);
+        snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD %s", shapeName);
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1995,7 +1598,7 @@ inline void updateParameterDisplay(byte idx, int knobValue) {
     case 31:  // Master Delay Mix/Feedback
       {
         int percent = (int)map(knobValue, 0, 1023, 0, 100);
-        snprintf(displayParameter1, sizeof(displayParameter1), "DLY AMOUNT");
+        snprintf(displayParameter1, sizeof(displayParameter1), "DELAY AMT");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -2077,36 +1680,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 2:  // D1 Decay
       {
-        float norm = normKnob(knobValue);
-        float decayMs;
-
-        if (norm <= 0.25f) {
-          float blend = norm / 0.25f;
-          decayMs = 50.0f + (70.0f - 50.0f) * blend;
-        } else {
-          float blend = (norm - 0.25f) / 0.75f;
-          decayMs = 71.0f + (1000.0f - 71.0f) * blend;
-        }
-
-        d1DecayBase = decayMs;
+        d1DecayBase = d1DecayCurve(knobValue);
         applyChokeToDecays();
         break;
       }
 
     case 3:  // D1 Pitch
       {
-        float norm = normKnob(knobValue);
-        float freqHz;
-
-        if (norm <= 0.33f) {
-          float blend = norm / 0.33f;
-          freqHz = 60.0f + (105.0f - 60.0f) * blend;
-        } else {
-          float blend = (norm - 0.33f) / 0.67f;
-          freqHz = 106.0f + (500.0f - 106.0f) * blend;
-        }
-
-        d1BaseFreq = freqHz;
+        d1BaseFreq = d1PitchCurve(knobValue);
         applyD1Freq();
         break;
       }
@@ -2132,8 +1713,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float transientGain = 0.85f + (0.15f * norm);
         d1Mixer.gain(1, transientGain);
 
-        // Store for envelope shaping in triggerD1()
+        // Store and update cached envelope params
         d1AttackAmt = norm;
+        updateD1EnvelopeCache();
         break;
       }
 
@@ -2163,6 +1745,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 7:  // D1 Delay Send
       {
+        // Capped at 75% to prevent feedback runaway
         float delaySend = map(knobValue, 0, 1023, 0, 75) * 0.01f;
         d1DelaySend = delaySend;
         updateDrumDelayGains();
@@ -2183,10 +1766,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 9:  // D2 Decay
       {
-        float decayMs = (knobValue < 512)
-                          ? map(knobValue, 0, 511, 50, 300) * 0.1f
-                          : map(knobValue, 512, 1023, 300, 1000) * 0.1f;
-        d2DecayBase = decayMs * 10.0f;
+        d2DecayBase = d2DecayCurve(knobValue);
         applyChokeToDecays();
         break;
       }
@@ -2267,6 +1847,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 12:  // D2 Delay Send
       {
+        // Capped at 75% to prevent feedback runaway
         float delaySend = map(knobValue, 0, 1023, 0, 75) * 0.01f;
         d2DelaySend = delaySend;
         updateDrumDelayGains();
@@ -2286,11 +1867,10 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           // Active reverb
           float blend = (norm - 0.05f) / 0.95f;
           float roomSize = 0.3f + blend * 0.6f;
-          float damping = 1.0f;
 
           AudioNoInterrupts();
           d2Verb.roomsize(roomSize);
-          d2Verb.damping(damping);
+          d2Verb.damping(1.0f);  // Damping always maxed — absorbs high frequencies
           d2MasterMixer.gain(1, blend);
           AudioInterrupts();
         }
@@ -2342,7 +1922,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        // --- Voice 1 (606-ish hats) tuning ---
+        // --- Shared pitch bend curve (both voices use the same shape) ---
         const float BEND_START = 0.25f;
         float pitchBend;
 
@@ -2354,6 +1934,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           pitchBend = 0.60f + 0.40f * (blend * blend);
         }
 
+        // --- Voice 1 (606-ish hats) tuning ---
         const float hatMinBaseHz = 400.0f;
         const float hatMaxBaseHz = 6000.0f;
         const float hatCurve = pitchBend * pitchBend;
@@ -2363,30 +1944,22 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
         const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
 
-        // --- Voice 2 (FM hats) tuning ---
-        float fmBend;
-        if (norm <= BEND_START) {
-          fmBend = 0.60f * (norm / BEND_START);
-        } else {
-          float blend = (norm - BEND_START) / (1.0f - BEND_START);
-          fmBend = 0.60f + 0.40f * (blend * blend);
-        }
-
+        // --- Voice 2 (FM hats) tuning — reuses pitchBend from above ---
         const float c1Min = 400.0f, c1Max = 2400.0f;
         const float c2Min = 600.0f, c2Max = 4200.0f;
         const float r1Min = 2.0f, r1Max = 4.0f;
         const float r2Min = 4.0f, r2Max = 6.0f;
 
-        const float carrier1Hz = c1Min * powf(c1Max / c1Min, fmBend);
-        const float carrier2Hz = c2Min * powf(c2Max / c2Min, fmBend);
-        const float ratio1 = r1Min * powf(r1Max / r1Min, fmBend);
-        const float ratio2 = r2Min * powf(r2Max / r2Min, fmBend);
+        const float carrier1Hz = c1Min * powf(c1Max / c1Min, pitchBend);
+        const float carrier2Hz = c2Min * powf(c2Max / c2Min, pitchBend);
+        const float ratio1 = r1Min * powf(r1Max / r1Min, pitchBend);
+        const float ratio2 = r2Min * powf(r2Max / r2Min, pitchBend);
         const float modulator1Hz = carrier1Hz * ratio1;
         const float modulator2Hz = carrier2Hz * ratio2;
 
         // FM depth: slightly more at the top end, but still capped
-        const float depth1 = 0.06f + 0.52f * (fmBend * fmBend);
-        const float depth2 = 0.04f + 0.44f * (fmBend * fmBend);
+        const float depth1 = 0.06f + 0.52f * (pitchBend * pitchBend);
+        const float depth2 = 0.04f + 0.44f * (pitchBend * pitchBend);
 
         AudioNoInterrupts();
 
@@ -2495,7 +2068,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 20:  // D3 Delay Send
       {
-        float delaySend = map(knobValue, 0, 1023, 0, 33) * 0.1f;
+        // Capped at 75% to prevent feedback runaway (same as D1/D2)
+        float delaySend = map(knobValue, 0, 1023, 0, 75) * 0.01f;
         d3DelaySend = delaySend;
         updateDrumDelayGains();
         break;
@@ -2522,29 +2096,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 22:  // D3 Accent Pattern
       {
         uint8_t prevMode = d3AltMode;
-        const int ACCENT_DEADBAND = 24;
-
-        // Determine mode from knob position
-        if (knobValue <= ACCENT_DEADBAND) {
-          d3AltMode = ALT_OFF;
-        } else {
-          int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 12);
-          switch (zone) {
-            case 1: d3AltMode = ALT_HALF; break;
-            case 2: d3AltMode = ALT_QUARTER; break;
-            case 3: d3AltMode = ALT_EIGHT; break;
-            case 4: d3AltMode = ALT_EIGHTUP; break;
-            case 5: d3AltMode = ALT_VARI1; break;
-            case 6: d3AltMode = ALT_VARI2; break;
-            case 7: d3AltMode = ALT_VARI3; break;
-            case 8: d3AltMode = ALT_VARI4; break;
-            case 9: d3AltMode = ALT_ALT5; break;
-            case 10: d3AltMode = ALT_ALT6; break;
-            case 11: d3AltMode = ALT_ALT7; break;
-            case 12: d3AltMode = ALT_ALT8; break;
-            default: d3AltMode = ALT_ALT9; break;
-          }
-        }
+        d3AltMode = accentModeFromKnob(knobValue);
 
         // Update D3 base decay to be coherent with new mode
         {
@@ -2565,7 +2117,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           nowTick = sysTickMs;  // sysTickMs is ISR-written
           interrupts();
 
-          accentPreviewUntilTick = nowTick + accentPreviewDurationTicks;
+          accentPreviewUntilTick = nowTick + accentPreviewDurationMs;
           accentPreviewActive = true;  // Main-loop only — no guard needed
 
           updateLEDs();
@@ -2590,21 +2142,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 24:  // Master Delay Time (quantized to tempo)
       {
+        int ratioIdx = delayRatioFromKnob(knobValue, bpm);
         float msPerBeat = 60000.0f / bpm;
-        float maxRatio = 1400.0f / msPerBeat;
-
-        // Find maximum available ratio index within delay time limit
-        int maxIdx = 0;
-        for (int i = 0; i < numRatios; i++) {
-          if (quantizeRatios[i] <= maxRatio) {
-            maxIdx = i;
-          } else {
-            break;
-          }
-        }
-
-        int ratioIdx = (int)((knobValue / 1023.0f) * maxIdx + 0.5f);
-        ratioIdx = constrain(ratioIdx, 0, maxIdx);
 
         float delayMs = msPerBeat * quantizeRatios[ratioIdx];
         if (delayMs > 1400.0f) delayMs = 1400.0f;
@@ -2625,7 +2164,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 26:  // Master Lowpass Filter
       {
         int freqHz = map(knobValue, 0, 1023, 1000, 7500);
-        masterLPFDisp = map(knobValue, 0, 1023, 70, 78);
+        masterLPFBarX = map(knobValue, 0, 1023, 70, 78);
         masterLowPass.frequency(freqHz);
         break;
       }
@@ -2635,19 +2174,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (ppqnModeActive) break;     // Don't change BPM while selecting PPQN
         if (tstate == RUN_EXT) break;  // Ignore knob when ext clock drives tempo
 
-        float norm = normKnob(knobValue);
-        float bpmValue;
-
-        if (norm <= 0.60f) {
-          float blend = norm / 0.60f;
-          bpmValue = 60.0f + blend * (240.0f - 60.0f);
-        } else {
-          float blend = (norm - 0.60f) / 0.40f;
-          bpmValue = 240.0f + blend * (1000.0f - 240.0f);
-        }
-
-        // Round to nearest 0.5
-        bpm = floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
+        bpm = bpmFromKnob(knobValue);
 
         // If internal clock is currently running, retime it
         if (tstate == RUN_INT) {
@@ -2813,82 +2340,6 @@ void updateKnobs() {
   knobScanGroup = (knobScanGroup + 1) & 3;  // 0,1,2,3 → cycle through 4 groups
 }
 
-// Oscilloscope functions — AC waveform from AudioRecordQueue
-
-void updateScopeData() {
-  static uint8_t blockSkipCounter = 0;
-  const uint8_t BLOCKS_TO_SKIP = 8;
-  const int SAMPLE_DECIMATION = 16;
-
-  while (scopeQueue.available() >= 1) {
-    int16_t* samples = scopeQueue.readBuffer();
-
-    if (++blockSkipCounter < BLOCKS_TO_SKIP) {
-      scopeQueue.freeBuffer();
-      continue;
-    }
-    blockSkipCounter = 0;
-
-    for (int i = 0; i < 128 / SAMPLE_DECIMATION && scopeBufferWriteIndex < SCOPE_DISPLAY_WIDTH; i++) {
-      scopeBuffer[scopeBufferWriteIndex] = samples[i * SAMPLE_DECIMATION] / 32768.0f;
-      scopeBufferWriteIndex = (scopeBufferWriteIndex + 1) % SCOPE_DISPLAY_WIDTH;
-    }
-
-    scopeQueue.freeBuffer();
-    break;
-  }
-}
-
-// Draw text with a 1-pixel black outline for readability over the scope.
-// Draws the string 8 times in black at surrounding offsets, then once in white.
-void drawOutlinedText(int x, int y, const char* text) {
-  static const int8_t dx[] = {-1, 0, 1, -1, 1, -1, 0, 1};
-  static const int8_t dy[] = {-1, -1, -1, 0, 0, 1, 1, 1};
-  for (uint8_t i = 0; i < 8; i++) {
-    display.setTextColor(0);
-    display.setCursor(x + dx[i], y + dy[i]);
-    display.print(text);
-  }
-  display.setTextColor(1);
-  display.setCursor(x, y);
-  display.print(text);
-}
-
-void drawScopeWaveform(int x, int y, int w, int h) {
-  // Find min/max for AC auto-scaling (signed signal)
-  float minVal = 0.0f, maxVal = 0.0f;
-  for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
-    if (scopeBuffer[i] < minVal) minVal = scopeBuffer[i];
-    if (scopeBuffer[i] > maxVal) maxVal = scopeBuffer[i];
-  }
-
-  float range = maxVal - minVal;
-  if (range < 0.001f) return;           // nothing to draw
-  if (range < 0.01f) range = 0.01f;     // floor for very quiet signals
-
-  float vScale = (h * 0.9f) / range;
-
-  // Snapshot write index so it doesn't change mid-render
-  uint8_t writeSnap = scopeBufferWriteIndex;
-
-  // Draw waveform (scrolling, AC-coupled — shows peaks and valleys)
-  for (int i = 0; i < SCOPE_DISPLAY_WIDTH - 1; i++) {
-    int i1 = (writeSnap + i) % SCOPE_DISPLAY_WIDTH;
-    int i2 = (writeSnap + i + 1) % SCOPE_DISPLAY_WIDTH;
-
-    int y1 = y + h / 2 - (int)((scopeBuffer[i1] - minVal) * vScale - range * vScale / 2);
-    int y2 = y + h / 2 - (int)((scopeBuffer[i2] - minVal) * vScale - range * vScale / 2);
-
-    y1 = constrain(y1, y, y + h - 1);
-    y2 = constrain(y2, y, y + h - 1);
-
-    int x1 = x + (i * w) / SCOPE_DISPLAY_WIDTH;
-    int x2 = x + ((i + 1) * w) / SCOPE_DISPLAY_WIDTH;
-
-    display.drawLine(x1, y1, x2, y2, 1);
-  }
-}
-
 // UI helpers
 
 static inline void drawCaretRail(int x, int y, int w, int h, int caretX) {
@@ -2954,18 +2405,6 @@ void renderVoiceRails() {
   }
 }
 
-// Track last drawn state
-static int lastDrawnBpm10 = -1;
-static uint8_t lastDrawnTrack = 255;
-static int lastDrawnLPF = -1;
-static uint8_t lastDrawnSlot = 255;
-static bool lastDrawnPlaying = false;
-static uint32_t lastDrawnOverlayStart = 0;
-static uint8_t lastDrawnKnob = 255;
-static uint8_t lastDrawnRail = 255;
-static char lastDrawnParam1[32] = { 0 };
-static char lastDrawnParam2[32] = { 0 };
-
 // OLED drawing
 void updateDisplay() {
   // Snapshot time first
@@ -3022,7 +2461,7 @@ void updateDisplay() {
   // Main-loop only — no ISR access, safe without guards
   bpmSnap = bpm;
   trackSnap = activeTrack;
-  lpfSnap = masterLPFDisp;
+  lpfSnap = masterLPFBarX;
   slotSnap = activeSaveSlot;
   overlayStartSnap = parameterOverlayStartTick;
   knobSnap = lastActiveKnob;
@@ -3036,25 +2475,7 @@ void updateDisplay() {
 
   // Overlay state
   bool overlayActiveNow =
-    ((uint32_t)(nowMs - overlayStartSnap) < parameterOverlayDurationTicks);
-
-  bool overlayActiveLastDraw =
-    ((uint32_t)(nowMs - lastDrawnOverlayStart) < parameterOverlayDurationTicks);
-
-  // Compare BPM by what we actually display (1 decimal place)
-  int bpm10 = (int)(bpmSnap * 10.0f + 0.5f);
-
-  // Check if anything changed
-  bool somethingChanged =
-    (lastDrawnBpm10 != bpm10) || (lastDrawnTrack != trackSnap) || (lastDrawnLPF != lpfSnap) || (lastDrawnSlot != slotSnap) || (lastDrawnPlaying != playingSnap) || (overlayActiveNow != overlayActiveLastDraw) || (lastDrawnKnob != knobSnap) || (lastDrawnRail != railSnap) || (strcmp(lastDrawnParam1, param1Snap) != 0) || (strcmp(lastDrawnParam2, param2Snap) != 0);
-
-  // Always redraw — scope is always visible and animating
-  somethingChanged = true;
-
-  // If nothing changed, skip the redraw
-  if (!somethingChanged) {
-    return;
-  }
+    ((uint32_t)(nowMs - overlayStartSnap) < parameterOverlayDurationMs);
 
   display.clearDisplay();
 
@@ -3148,22 +2569,6 @@ void updateDisplay() {
   }
 
   display.display();
-
-  // Remember what we just drew
-  lastDrawnBpm10 = bpm10;
-  lastDrawnTrack = trackSnap;
-  lastDrawnLPF = lpfSnap;
-  lastDrawnSlot = slotSnap;
-  lastDrawnPlaying = playingSnap;
-  lastDrawnOverlayStart = overlayStartSnap;
-  lastDrawnKnob = knobSnap;
-  lastDrawnRail = railSnap;
-
-  strncpy(lastDrawnParam1, param1Snap, sizeof(lastDrawnParam1) - 1);
-  lastDrawnParam1[sizeof(lastDrawnParam1) - 1] = 0;
-
-  strncpy(lastDrawnParam2, param2Snap, sizeof(lastDrawnParam2) - 1);
-  lastDrawnParam2[sizeof(lastDrawnParam2) - 1] = 0;
 
   // Update OLED watchdog timestamp only after a successful draw
   noInterrupts();
