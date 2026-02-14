@@ -1,0 +1,407 @@
+#ifndef AUDIO_INIT_H
+#define AUDIO_INIT_H
+
+// Globals coming from the main file that we use for initial mixer volumes
+extern float d1Vol;
+extern float d2Vol;
+extern float d3Vol;
+
+inline void audioInit() {
+
+  // ============================================================================
+  // SGTL5000 CODEC SETUP
+  // ============================================================================
+
+  sgtl5000_1.disable();
+  sgtl5000_1.enable();
+
+  // Analog output staging
+  sgtl5000_1.volume(0.75f);     // Headphone amp gain (0.8 ~= max clean)
+  sgtl5000_1.lineOutLevel(29);  // Line out voltage swing (Teensy default)
+
+  // Enable DAP (required for EQ / AVC on output)
+  sgtl5000_1.audioPostProcessorEnable();
+
+  // Digital trim before DAC (useful if you ever need extra headroom)
+  sgtl5000_1.dacVolumeRamp();  // Smooth dacVolume changes
+  sgtl5000_1.dacVolume(1.0f);  // Unity gain
+
+  // 5-band graphic EQ: 115Hz, 330Hz, 990Hz, 3kHz, 9.9kHz
+  // Range: 1.00 ~= +12 dB, -1.00 ~= -11.75 dB
+  sgtl5000_1.eqBands(
+    0.25f,   // 115 Hz: slight bass lift
+    -0.20f,  // 330 Hz: mud cut
+    -0.10f,  // 990 Hz: mild box cut
+    0.05f,   // 3 kHz: attack / presence
+    0.05f    // 9.9 kHz: sparkle
+  );
+
+  // Auto Volume Control used as a safety limiter (no makeup gain)
+  sgtl5000_1.autoVolumeControl(
+    0,      // maxGain: 0 dB
+    2,      // response: 50 ms integration
+    1,      // hardLimit: limiter mode
+    -6.0f,  // threshold: dBFS
+    80.0f,  // attack: dB/s
+    300.0f  // decay: dB/s
+  );
+  sgtl5000_1.autoVolumeEnable();
+
+  // ============================================================================
+  // D1 - KICK DRUM
+  // ============================================================================
+
+  // D1 oscillators
+  d1.begin(WAVEFORM_SINE);
+  d1.amplitude(0.85f);
+  d1.frequencyModulation(4);
+
+  d1b.begin(WAVEFORM_SAWTOOTH);
+  d1b.amplitude(0.85f);
+  d1b.frequencyModulation(4);
+
+  d1c.begin(WAVEFORM_SQUARE);
+  d1c.amplitude(0.85f);
+  d1c.frequencyModulation(4);
+
+  d1d.begin(WAVEFORM_TRIANGLE);
+  d1d.amplitude(0.85f);
+  d1d.frequencyModulation(4);
+
+  // D1 oscillator mixer
+  d1OscMixer.gain(0, 0.9f);
+  d1OscMixer.gain(1, 0.0f);
+  d1OscMixer.gain(2, 0.0f);
+  d1OscMixer.gain(3, 0.0f);
+
+  // D1 pitch envelope and modulation
+  d1DC.amplitude(0.25f);
+  d1PitchEnv.decay(25.0f);
+  d1PitchEnv.sustain(0.0f);
+
+  // D1 amplitude envelope
+  d1AmpEnv.decay(100.0f);
+  d1AmpEnv.sustain(0.0f);
+
+  // D1 drum voice (transient layer)
+  drum1.frequency(150.0f);
+  drum1.length(15.0f);
+  drum1.pitchMod(1.0f);
+  drum1Amp.gain(2.0f);
+
+  // D1 voice mixer (dry oscillators + drum transient + wavefolder)
+  d1Mixer.gain(0, 0.3f);
+  d1Mixer.gain(1, 0.9f);
+  d1Mixer.gain(2, 0.25f);
+  d1Mixer.gain(3, 0.25f);
+
+  // D1 filters
+  d1LowPass.frequency(3000.0f);
+  d1LowPass.resonance(2.0f);
+
+  d1Filter.frequency(85.0f);
+  d1Filter.resonance(2.0f);
+
+  // D1 EQ — pass-through by default; set at runtime by knob 6 (D1 Body)
+
+  // D1 output amp
+  d1Amp.gain(0.8f);
+
+  // ============================================================================
+  // D2 - SNARE / CLAP
+  // ============================================================================
+
+  // D2 main oscillators
+  d2.begin(WAVEFORM_SINE);
+  d2.amplitude(0.75f);
+  d2.frequency(200.0f);
+  d2.frequencyModulation(1);
+
+  d2b.begin(WAVEFORM_SINE);
+  d2b.amplitude(1.0f);
+  d2b.frequency(1000.0f);
+
+  // D2 amplitude envelopes
+  d2bAmpEnv.hold(20.0f);
+  d2bAmpEnv.decay(20.0f);
+  d2bAmpEnv.sustain(0.0f);
+
+  d2AmpEnv.decay(75.0f);
+  d2AmpEnv.hold(20.0f);
+  d2AmpEnv.sustain(0.0f);
+
+  // D2 attack transient
+  d2Attack.frequency(1000);
+  d2Attack.length(15);
+  d2Attack.pitchMod(0.6f);
+
+  d2AttackFilter.frequency(2000);
+  d2AttackFilter.resonance(4);
+
+  // D2 noise layer
+  d2Noise.amplitude(0.75f);
+
+  d2NoiseEnvelope.attack(10.0f);
+  d2NoiseEnvelope.decay(100.0f);
+  d2NoiseEnvelope.sustain(0.0f);
+
+  d2NoiseFilter.frequency(5000.0f);
+  d2NoiseFilter.resonance(2.0f);
+
+  // D2 drum transient (snare body click)
+  drum2.frequency(200.0f);
+  drum2.length(15.0f);
+  drum2.pitchMod(0.5f);
+
+  // D2 voice mixer (oscillator + drum transient + noise + attack)
+  d2Mixer.gain(0, 0.33f);
+  d2Mixer.gain(1, 0.1f);
+  d2Mixer.gain(2, 0.1f);
+  d2Mixer.gain(3, 0.2f);
+
+  // D2 main filter
+  d2Filter.frequency(400.0f);
+  d2Filter.resonance(1.25f);
+
+  // D2 wavefolder
+  d2WfSine.amplitude(1);
+  d2WfSine.frequency(20);
+
+  d2WfAmp.gain(1);
+
+  d2WfLowpass.frequency(3500);
+  d2WfLowpass.resonance(2);
+
+  // D2 reverb
+  d2Verb.damping(1.0f);
+  d2Verb.roomsize(0.3f);
+
+  // --- Clap effects ---
+
+  // Clap noise sources
+  clapNoise1.amplitude(0.75f);
+  clapNoise2.amplitude(0.75f);
+
+  // Clap filters
+  clap1Filter.frequency(400.0f);
+  clap1Filter.resonance(3.0f);
+
+  clap2Filter.frequency(200.0f);
+  clap2Filter.resonance(3.0f);
+
+  // Clap envelopes
+  clap1AmpEnv.attack(5.0f);
+  clap1AmpEnv.hold(20.0f);
+  clap1AmpEnv.decay(50.0f);
+  clap1AmpEnv.release(0.0f);
+
+  clap2AmpEnv.attack(7.0f);
+  clap2AmpEnv.hold(22.0f);
+  clap2AmpEnv.decay(50.0f);
+  clap2AmpEnv.release(0.0f);
+
+  // Clap delay lines
+  clapDelay1.delay(0, 0);
+  clapDelay1.delay(1, 10);  // Changed from 5 because it was duplicated across both delay lines. -- Jan 8, 2026
+  clapDelay1.delay(2, 22);
+  clapDelay1.delay(3, 55);
+
+  clapDelay2.delay(0, 5);
+  clapDelay2.delay(1, 25);
+  clapDelay2.delay(2, 45);
+  clapDelay2.delay(3, 40);
+
+  // Clap delay mixers
+  clapMixer1.gain(0, 0.2f);
+  clapMixer1.gain(1, 0.1f);
+  clapMixer1.gain(2, 0.2f);
+  clapMixer1.gain(3, 0.1f);
+
+  clapMixer2.gain(0, 0.1f);
+  clapMixer2.gain(1, 0.2f);
+  clapMixer2.gain(2, 0.2f);
+  clapMixer2.gain(3, 0.1f);
+
+  // Clap master filter and envelope
+  clapMasterFilter.frequency(1250.0f);
+  clapMasterFilter.resonance(2.75f);
+
+  clapMasterEnv.attack(10.0f);
+  clapMasterEnv.hold(1.0f);
+  clapMasterEnv.decay(50.0f);
+  clapMasterEnv.release(0.0f);
+  clapMasterEnv.sustain(0.0f);
+
+  clapAmp.gain(2.0f);
+
+  // --- D2 output mixing ---
+
+  // Snare / clap mixer (feeds D2 FX and delay)
+  // in0: snare body (from d2Filter)
+  // in1: clap envelope (from clapMasterEnv)
+  // in2 / in3: spare or extra tone if you want later
+  snareClapMixer.gain(0, 0.6f);
+  snareClapMixer.gain(1, 0.6f);
+  snareClapMixer.gain(2, 0.0f);
+  snareClapMixer.gain(3, 0.0f);
+
+  // D2 master mixer: dry bus, verb return, wavefolder output
+  // in0: snareClapMixer dry
+  // in1: d2Verb
+  // in2: d2Wavefolder
+  // in3: unused
+  d2MasterMixer.gain(0, 0.7f);  // dry
+  d2MasterMixer.gain(1, 0.5f);  // verb
+  d2MasterMixer.gain(2, 0.4f);  // wavefolder
+  d2MasterMixer.gain(3, 0.0f);  // unused
+
+  // ============================================================================
+  // D3 - HI-HAT
+  // ============================================================================
+
+  // --- D3 Voice 1: 606-style 6-oscillator bank ---
+
+  float d3606baseFreq = 350.0f;
+
+  d3606W1.begin(0.5f, d3606baseFreq * 1.00f, WAVEFORM_SQUARE);  // 350.0
+  d3606W2.begin(0.5f, d3606baseFreq * 1.08f, WAVEFORM_SQUARE);  // 378.0
+  d3606W3.begin(0.5f, d3606baseFreq * 1.17f, WAVEFORM_SQUARE);  // 409.5
+  d3606W4.begin(0.5f, d3606baseFreq * 1.26f, WAVEFORM_SQUARE);  // 441.0
+  d3606W5.begin(0.5f, d3606baseFreq * 1.36f, WAVEFORM_SQUARE);  // 476.0
+  d3606W6.begin(0.5f, d3606baseFreq * 1.48f, WAVEFORM_SQUARE);  // 518.0
+
+  d3606Mixer1.gain(0, 0.25f);
+  d3606Mixer1.gain(1, 0.25f);
+  d3606Mixer1.gain(2, 0.25f);
+  d3606Mixer1.gain(3, 0.25f);
+
+  d3606Mixer2.gain(0, 0.25f);
+  d3606Mixer2.gain(1, 0.25f);
+  d3606Mixer2.gain(2, 0.25f);
+  d3606Mixer2.gain(3, 0.25f);
+
+  d3606MasterMixer.gain(0, 1.0f);
+  d3606MasterMixer.gain(1, 1.0f);
+
+  d3606HPF.frequency(1000.0f);
+  d3606HPF.resonance(1.25f);
+
+  d3606BPF.frequency(5000.0f);
+  d3606BPF.resonance(1.25f);
+
+  d3606AmpEnv.delay(0.0f);
+  d3606AmpEnv.attack(1.0f);
+  d3606AmpEnv.hold(0.0f);
+  d3606AmpEnv.decay(45.0f);
+  d3606AmpEnv.sustain(0.0f);
+  d3606AmpEnv.release(0.0f);
+
+  // --- D3 Voice 2: FM hats ---
+
+  const float c1 = 500.0f;
+  const float c2 = 850.0f;
+  const float r1 = 7.13f;
+  const float r2 = 9.41f;
+  const float m1 = c1 * r1;
+  const float m2 = c2 * r2;
+
+  d3W1.begin(0.28f, c1, WAVEFORM_SINE);
+  d3W1.frequencyModulation(6);  // 4..8 is a good hat range
+
+  d3W3.begin(0.28f, c2, WAVEFORM_SINE);
+  d3W3.frequencyModulation(6);
+
+  d3W2.begin(0.25f, m1, WAVEFORM_SINE);  // depth = amplitude here
+  d3W4.begin(0.20f, m2, WAVEFORM_SINE);
+
+  d3Mixer1.gain(0, 0.5f);
+  d3Mixer1.gain(1, 0.0f);
+  d3Mixer1.gain(2, 0.0f);
+  d3Mixer1.gain(3, 0.0f);
+
+  d3Mixer2.gain(0, 0.0f);
+  d3Mixer2.gain(1, 0.0f);
+  d3Mixer2.gain(2, 0.0f);
+  d3Mixer2.gain(3, 0.0f);
+
+  d3MasterMixer.gain(0, 0.5f);
+  d3MasterMixer.gain(1, 0.5f);
+
+  d3AmpEnv.delay(0.0f);
+  d3AmpEnv.attack(1.0f);
+  d3AmpEnv.hold(0.0f);
+  d3AmpEnv.decay(45.0f);
+  d3AmpEnv.sustain(0.0f);
+  d3AmpEnv.release(0.0f);
+
+  // --- D3 Voice 3: Noise-based hat ---
+
+  drum3.pitchMod(0.5f);
+  drum3.frequency(700.0f);
+  drum3.length(15.0f);
+
+  // --- D3 output mixing ---
+
+  // D3 wavefolder mixer (voice 1 + voice 2 + voice 3)
+  d3WfMixer.gain(0, 0.25f);
+  d3WfMixer.gain(1, 0.25f);
+  d3WfMixer.gain(2, 0.25f);
+
+  // D3 final mixer (dry + wavefolder)
+  d3Mixer.gain(0, 0.25f);
+  d3Mixer.gain(1, 0.25f);
+  d3Mixer.gain(2, 0.25f);
+  d3Mixer.gain(3, 0.12f);
+
+  // D3 master filter
+  d3MasterFilter.frequency(3000.0f);
+  d3MasterFilter.resonance(1.0f);
+
+  // ============================================================================
+  // MASTER EFFECTS AND ROUTING
+  // ============================================================================
+
+  // Drum bus mixer (D1, D2, D3 → master)
+  drumMixer.gain(0, d1Vol);  // D1 bus
+  drumMixer.gain(1, d2Vol);  // D2 bus (from d2MasterMixer)
+  drumMixer.gain(2, d3Vol);  // D3 bus
+  drumMixer.gain(3, 0.0f);   // unused with new D2 routing
+
+  // Master wavefolder
+  masterWfWaveform.begin(WAVEFORM_SINE);
+  masterWfWaveform.amplitude(0.1f);
+  masterWfWaveform.frequency(40.0f);
+
+  // Master mixer (dry drums + wavefolder + delay return)
+  masterMixer.gain(0, 1.0f);  // dry drums
+  masterMixer.gain(1, 1.0f);  // master wavefolder
+  masterMixer.gain(2, 1.0f);  // delay return
+  masterMixer.gain(3, 1.0f);  // spare
+
+  // Master delay
+  masterDelay.delay(0, 0);
+
+  delayFilter.frequency(4000.0f);
+  delayFilter.resonance(2.5f);
+
+  delayAmp.gain(1.5f);
+
+  // Delay mixer and feedback
+  delayMixer.gain(0, 0.0f);  // D1 send
+  delayMixer.gain(1, 0.0f);  // D2 send from snareClapMixer
+  delayMixer.gain(2, 0.0f);  // D3 send
+  delayMixer.gain(3, 0.0f);  // feedback tap
+
+  // Master filters
+  masterHiPass.resonance(1.5f);
+  masterHiPass.frequency(60.0f);
+
+  masterLowPass.resonance(0.25f);
+  masterLowPass.frequency(7500.0f);
+
+  masterBandPass.resonance(1.0f);
+
+  finalFilter.setHighShelf(0, 3500.0f, 0.5f, 5.0f);
+}
+
+#endif
