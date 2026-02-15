@@ -12,25 +12,6 @@ A 3-voice drum synthesizer built on Teensy 4.0.
 - **Clock:** Internal BPM (60-1000) with external pulse sync on pin 12
 - **Storage:** 10 EEPROM pattern save/load slots
 
-## Voices
-
-| Voice | Type | Description |
-|-------|------|-------------|
-| **D1** | Kick | FM synthesis — 3 modulated oscillators + SimpleDrum, pitch envelope, wavefolder |
-| **D2** | Snare/Clap | Dual noise channels with filters and delays, crossfadable snare-to-clap mix |
-| **D3** | Hi-Hat | 3 selectable modes: 606-style (6-osc bank), FM hats, noise-based |
-
-## Features
-
-- 16-step sequencer with play/stop transport
-- 13 accent pattern modes
-- Choke control (linked decay offset across all 3 voices)
-- Master wavefolder with frequency and intensity controls
-- Master bandpass filter
-- External clock sync with zero-latency ISR triggering and glitch filter
-- Real-time oscilloscope waveform on OLED
-- Per-voice volume, decay, frequency, and tone controls
-
 ## File Structure
 
 | File | Purpose |
