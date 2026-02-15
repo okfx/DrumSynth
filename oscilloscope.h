@@ -12,10 +12,13 @@
 
 #include <Arduino.h>
 
-// Display dimension for scope area
+// Display dimensions for scope area (used by .ino when calling drawScopeWaveform)
 static constexpr int SCOPE_DISPLAY_WIDTH  = 124;
 static constexpr int SCOPE_DISPLAY_HEIGHT = 40;
-static constexpr float INV_32768 = 1.0f / 32768.0f;
+
+// Audio constants
+static constexpr int   AUDIO_BLOCK_SIZE   = 128;   // Teensy audio library block size
+static constexpr float INV_32768          = 1.0f / 32768.0f;
 
 // Circular buffer holding one screen-width of normalized samples (-1..+1)
 float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
@@ -36,6 +39,7 @@ void updateScopeData() {
   static uint8_t blockSkipCounter = 0;
   const uint8_t BLOCKS_TO_SKIP = 8;
   const int SAMPLE_DECIMATION = 16;
+  const int SAMPLES_PER_BLOCK = AUDIO_BLOCK_SIZE / SAMPLE_DECIMATION;
 
   while (scopeQueue.available() >= 1) {
     int16_t* samples = scopeQueue.readBuffer();
@@ -46,7 +50,7 @@ void updateScopeData() {
     }
     blockSkipCounter = 0;
 
-    for (int i = 0; i < 128 / SAMPLE_DECIMATION; i++) {
+    for (int i = 0; i < SAMPLES_PER_BLOCK; i++) {
       scopeBuffer[scopeBufferWriteIndex] = samples[i * SAMPLE_DECIMATION] * INV_32768;
       scopeBufferWriteIndex = (scopeBufferWriteIndex + 1) % SCOPE_DISPLAY_WIDTH;
     }
@@ -70,12 +74,12 @@ void drawScopeWaveform(int x, int y, int w, int h) {
 
   float range = maxVal - minVal;
 
-  // #3: Higher noise floor — keeps the scope visually quiet during silence
+  // Noise floor — keeps the scope visually quiet during silence
   // instead of amplifying background noise to fill the screen.
   const float NOISE_FLOOR = 0.05f;
   if (range < 0.001f) return;              // nothing to draw
 
-  // #2: Smoothed auto-scale with attack/release.
+  // Smoothed auto-scale with attack/release.
   // Jumps instantly to louder signals (attack), but releases slowly (5% per frame)
   // so the waveform doesn't jitter between frames as drum tails decay.
   if (range > scopePeakRange) {
@@ -90,9 +94,11 @@ void drawScopeWaveform(int x, int y, int w, int h) {
   // Snapshot write index so it doesn't change mid-render
   uint8_t writeSnap = scopeBufferWriteIndex;
 
-  // Precompute y-coordinates for all samples
+  // Precompute y-coordinates for all samples.
+  // midOffset centers the waveform vertically: scopePeakRange * vScale cancels
+  // to h * 0.9, so midOffset = h * 0.45.
   int ys[SCOPE_DISPLAY_WIDTH];
-  float midOffset = scopePeakRange * vScale * 0.5f;
+  float midOffset = h * 0.45f;
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
     int idx = (writeSnap + i) % SCOPE_DISPLAY_WIDTH;
     int py = y + h / 2 - (int)((scopeBuffer[idx] - minVal) * vScale - midOffset);
@@ -101,19 +107,17 @@ void drawScopeWaveform(int x, int y, int w, int h) {
 
   // Draw waveform (scrolling, AC-coupled — shows peaks and valleys)
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH - 1; i++) {
-    int x1 = x + (i * w) / SCOPE_DISPLAY_WIDTH;
-    int x2 = x + ((i + 1) * w) / SCOPE_DISPLAY_WIDTH;
+    int px = x + i;
 
-    display.drawLine(x1, ys[i], x2, ys[i + 1], 1);
+    display.drawLine(px, ys[i], px + 1, ys[i + 1], 1);
 
-    // #4: Fill vertical gaps on sharp transients (>5px jump).
+    // Fill vertical gaps on sharp transients (>5px jump).
     // Makes drum attacks look bold and punchy instead of thin diagonals.
-    int gap = ys[i + 1] - ys[i];
-    if (gap < 0) gap = -gap;
+    int gap = abs(ys[i + 1] - ys[i]);
     if (gap > 5) {
-      int top = (ys[i] < ys[i + 1]) ? ys[i] : ys[i + 1];
-      int bot = (ys[i] > ys[i + 1]) ? ys[i] : ys[i + 1];
-      display.drawLine(x2, top, x2, bot, 1);
+      int top = min(ys[i], ys[i + 1]);
+      int bot = max(ys[i], ys[i + 1]);
+      display.drawLine(px + 1, top, px + 1, bot, 1);
     }
   }
 }
