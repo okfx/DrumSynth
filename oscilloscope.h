@@ -5,7 +5,7 @@
 //
 //  AC-coupled scrolling waveform display from AudioRecordQueue.
 //  Decimates and block-skips to show a readable waveform on the 128x64 OLED.
-//  Auto-scales to signal amplitude.
+//  Auto-scales to signal amplitude with smoothed peak hold.
 //
 //  Include AFTER: audiotool.h (scopeQueue), hw_setup.h (display)
 // ============================================================================
@@ -20,6 +20,9 @@ static constexpr float INV_32768 = 1.0f / 32768.0f;
 // Circular buffer holding one screen-width of normalized samples (-1..+1)
 float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
 uint8_t scopeBufferWriteIndex = 0;
+
+// Smoothed auto-scale state — peak hold with slow release
+float scopePeakRange = 0.05f;  // starts at noise floor
 
 // External dependencies
 extern AudioRecordQueue scopeQueue;            // from audiotool.h
@@ -66,29 +69,52 @@ void drawScopeWaveform(int x, int y, int w, int h) {
   }
 
   float range = maxVal - minVal;
-  if (range < 0.001f) return;           // nothing to draw
-  if (range < 0.01f) range = 0.01f;     // floor for very quiet signals
 
-  float vScale = (h * 0.9f) / range;
+  // #3: Higher noise floor — keeps the scope visually quiet during silence
+  // instead of amplifying background noise to fill the screen.
+  const float NOISE_FLOOR = 0.05f;
+  if (range < 0.001f) return;              // nothing to draw
+
+  // #2: Smoothed auto-scale with attack/release.
+  // Jumps instantly to louder signals (attack), but releases slowly (5% per frame)
+  // so the waveform doesn't jitter between frames as drum tails decay.
+  if (range > scopePeakRange) {
+    scopePeakRange = range;                 // instant attack
+  } else {
+    scopePeakRange *= 0.95f;               // slow release (~5% per frame)
+    if (scopePeakRange < NOISE_FLOOR) scopePeakRange = NOISE_FLOOR;
+  }
+
+  float vScale = (h * 0.9f) / scopePeakRange;
 
   // Snapshot write index so it doesn't change mid-render
   uint8_t writeSnap = scopeBufferWriteIndex;
 
+  // Precompute y-coordinates for all samples
+  int ys[SCOPE_DISPLAY_WIDTH];
+  float midOffset = scopePeakRange * vScale * 0.5f;
+  for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
+    int idx = (writeSnap + i) % SCOPE_DISPLAY_WIDTH;
+    int py = y + h / 2 - (int)((scopeBuffer[idx] - minVal) * vScale - midOffset);
+    ys[i] = constrain(py, y, y + h - 1);
+  }
+
   // Draw waveform (scrolling, AC-coupled — shows peaks and valleys)
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH - 1; i++) {
-    int i1 = (writeSnap + i) % SCOPE_DISPLAY_WIDTH;
-    int i2 = (writeSnap + i + 1) % SCOPE_DISPLAY_WIDTH;
-
-    int y1 = y + h / 2 - (int)((scopeBuffer[i1] - minVal) * vScale - range * vScale / 2);
-    int y2 = y + h / 2 - (int)((scopeBuffer[i2] - minVal) * vScale - range * vScale / 2);
-
-    y1 = constrain(y1, y, y + h - 1);
-    y2 = constrain(y2, y, y + h - 1);
-
     int x1 = x + (i * w) / SCOPE_DISPLAY_WIDTH;
     int x2 = x + ((i + 1) * w) / SCOPE_DISPLAY_WIDTH;
 
-    display.drawLine(x1, y1, x2, y2, 1);
+    display.drawLine(x1, ys[i], x2, ys[i + 1], 1);
+
+    // #4: Fill vertical gaps on sharp transients (>5px jump).
+    // Makes drum attacks look bold and punchy instead of thin diagonals.
+    int gap = ys[i + 1] - ys[i];
+    if (gap < 0) gap = -gap;
+    if (gap > 5) {
+      int top = (ys[i] < ys[i + 1]) ? ys[i] : ys[i + 1];
+      int bot = (ys[i] > ys[i + 1]) ? ys[i] : ys[i + 1];
+      display.drawLine(x2, top, x2, bot, 1);
+    }
   }
 }
 
