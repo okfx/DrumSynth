@@ -128,12 +128,12 @@ inline void audioInit() {
   d2AmpEnv.sustain(0.0f);
 
   // D2 attack transient
-  d2Attack.frequency(1000);
-  d2Attack.length(15);
+  d2Attack.frequency(1000.0f);
+  d2Attack.length(15.0f);
   d2Attack.pitchMod(0.6f);
 
-  d2AttackFilter.frequency(2000);
-  d2AttackFilter.resonance(4);
+  d2AttackFilter.frequency(2000.0f);
+  d2AttackFilter.resonance(4.0f);
 
   // D2 noise layer
   d2Noise.amplitude(0.75f);
@@ -161,13 +161,13 @@ inline void audioInit() {
   d2Filter.resonance(1.25f);
 
   // D2 wavefolder
-  d2WfSine.amplitude(1);
-  d2WfSine.frequency(20);
+  d2WfSine.amplitude(1.0f);
+  d2WfSine.frequency(20.0f);
 
-  d2WfAmp.gain(1);
+  d2WfAmp.gain(1.0f);
 
-  d2WfLowpass.frequency(3500);
-  d2WfLowpass.resonance(2);
+  d2WfLowpass.frequency(3500.0f);
+  d2WfLowpass.resonance(2.0f);
 
   // D2 reverb
   d2Verb.damping(1.0f);

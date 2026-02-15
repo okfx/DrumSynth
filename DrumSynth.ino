@@ -40,7 +40,9 @@ enum Track : uint8_t {
 
 // overlay and debounce timing
 const uint16_t parameterOverlayDurationMs = 500;
-const uint16_t debounceDelayMs = 10;  // 10ms — fast response for sync
+const uint16_t debounceDelayMs = 10;       // 10ms — fast response for sync
+const uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
+const uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
 
 // D3 accent LED preview state — Main-loop only, no ISR access
 bool accentPreviewActive = false;
@@ -263,10 +265,9 @@ static inline float mapf(int v, int inMin, int inMax, float outMin, float outMax
 }
 
 static inline float normKnob(int v) {
-  float t = float(v) / 1023.0f;
-  if (t < 0.0f) return 0.0f;
-  if (t > 1.0f) return 1.0f;
-  return t;
+  if (v < 0) v = 0;
+  if (v > 1023) v = 1023;
+  return float(v) / 1023.0f;
 }
 
 // D1 osc and pitch
@@ -288,26 +289,27 @@ float d1AttackAmt = 0.0f;
 static inline int chokeOffsetFromKnob(int v) {
   const int CENTER = 512;
   const int DEADBAND = 50;
-  const int MAX_NEG = -40;  // slightly more extreme CCW
+  const int MAX_NEG = -40;
   const int MAX_POS = 150;
 
+  // Deadband: center ±50 ADC counts → offset 0ms
   if (v >= CENTER - DEADBAND && v <= CENTER + DEADBAND) {
     return 0;
   }
 
+  // Left of deadband: full CCW → -40ms
   if (v < CENTER - DEADBAND) {
     int lowEnd = CENTER - DEADBAND;
-    float t = float(lowEnd - v) / float(lowEnd - 0);
-    if (t < 0.0f) t = 0.0f;
-    if (t > 1.0f) t = 1.0f;
+    // t is 0..1 by construction: v is in [0, lowEnd), so numerator ∈ (0, lowEnd]
+    float t = float(lowEnd - v) / float(lowEnd);
     return (int)(MAX_NEG * t);
-  } else {
-    int highStart = CENTER + DEADBAND;
-    float t = float(v - highStart) / float(1023 - highStart);
-    if (t < 0.0f) t = 0.0f;
-    if (t > 1.0f) t = 1.0f;
-    return (int)(MAX_POS * t);
   }
+
+  // Right of deadband: full CW → +150ms
+  int highStart = CENTER + DEADBAND;
+  // t is 0..1 by construction: v is in (highStart, 1023], so numerator ∈ (0, 1023-highStart]
+  float t = float(v - highStart) / float(1023 - highStart);
+  return (int)(MAX_POS * t);
 }
 
 // D3 decay helper (includes choke and a small accent boost)
@@ -378,7 +380,8 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
   }
 }
 
-// Accent evaluation — delegates to accentMaskFromMode (single implementation)
+// Accent evaluation — delegates to accentMaskFromMode (single implementation).
+// Bit 15 = step 0, bit 0 = step 15; extract the bit for this step.
 static inline bool isAccent(uint8_t mode, uint8_t step) {
   return (accentMaskFromMode(mode) >> (15 - (step & 15))) & 1;
 }
@@ -747,8 +750,8 @@ void playSequence() {
   }
 }
 
-// playSequenceCore — used by internal clock path (main loop context).
-// Same triggerD1/D2/D3 helpers, but safe to call updateLEDs() directly.
+// Advance one step and trigger active drums.
+// Called from main loop context (internal clock path), so safe to call updateLEDs().
 void playSequenceCore() {
   if (currentStep < 0 || currentStep >= numSteps) {
     currentStep = numSteps - 1;
@@ -785,24 +788,12 @@ void triggerD1() {
 }
 
 // Trigger D2 (snare/clap) — shared by ISR and main-loop step functions.
-// Handles retrigger guard, decay application, envelope noteOff/noteOn.
+// Handles retrigger guard and envelope noteOff/noteOn.
+// Decay values are already set by applyChokeToDecays() when choke or decay knob changes.
 void triggerD2() {
   uint32_t now = micros();
   bool skipNoteOff = (now - lastD2TriggerUs) < MIN_RETRIGGER_US;
   lastD2TriggerUs = now;
-
-  // Compute D2 effective decay (base + choke, floored at 15ms)
-  float applyDecay2 = d2EffectiveBaseDecay();
-
-  AudioNoInterrupts();
-  d2AmpEnv.hold(applyDecay2 * 0.5f);
-  d2AmpEnv.decay(applyDecay2);
-  drum2.length(applyDecay2 * 0.25f);
-
-  clap1AmpEnv.decay(clapEffDecay);
-  clap2AmpEnv.decay(clapEffDecay);
-  clapMasterEnv.decay(clapEffDecay);
-  AudioInterrupts();
 
   if (!skipNoteOff) {
     d2AmpEnv.noteOff();
@@ -876,8 +867,7 @@ void updateOtherButtons() {
       lastDebounceTick[i] = nowTick;
     }
 
-    // Play button (6) gets minimal debounce for sync; others get standard debounce
-    uint16_t debounceTicks = (i == 6) ? 2 : 25;
+    uint16_t debounceTicks = (i == 6) ? PLAY_DEBOUNCE_MS : BUTTON_DEBOUNCE_MS;
     if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceTicks && (rawPressed != state[i])) {
 
       state[i] = rawPressed;
@@ -916,6 +906,7 @@ void updateOtherButtons() {
         }
       }
 
+      // Button 7 (MEM) handled separately — see continuous-hold block above
       if (state[i] && i != 7) {
         switch (i) {
 
@@ -2121,16 +2112,23 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float norm = normKnob(knobValue);
         float baseFreq = 40.0f + norm * (1000.0f - 40.0f);
 
-        // 0–50%: both oscillators locked to baseFreq
-        // 50–100%: saw diverges upward toward 2× baseFreq (octave)
-        float octaveBlend = 0.0f;
-        if (norm > 0.5f) {
-          float divergeAmount = (norm - 0.5f) / 0.5f;       // 0→1 over upper half
-          octaveBlend = divergeAmount * divergeAmount;        // quadratic — gentle then accelerating
-        }
+        float sineFreq, sawFreq;
 
-        float sawFreq  = baseFreq;
-        float sineFreq = baseFreq * (1.0f + octaveBlend);    // 1× → 2× baseFreq
+        if (norm <= 0.5f) {
+          // 0–50%: sine at baseFreq, saw one octave below (baseFreq / 2)
+          sineFreq = baseFreq;
+          sawFreq  = baseFreq * 0.5f;
+        } else if (norm <= 0.75f) {
+          // 50–75%: saw locks to baseFreq, sine diverges up to 2× baseFreq
+          float blend = (norm - 0.5f) / 0.25f;               // 0→1 over this zone
+          sawFreq  = baseFreq;
+          sineFreq = baseFreq * (1.0f + blend);               // 1× → 2× baseFreq
+        } else {
+          // 75–100%: sine locks to baseFreq, saw diverges up to 4× baseFreq
+          float blend = (norm - 0.75f) / 0.25f;              // 0→1 over this zone
+          sineFreq = baseFreq;
+          sawFreq  = baseFreq * (1.0f + blend * 3.0f);       // 1× → 4× baseFreq
+        }
 
         wfSine.frequency(sineFreq);
         wfSaw.frequency(sawFreq);
@@ -2191,8 +2189,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           wfMixer.gain(0, 0.0f);
           wfMixer.gain(1, 0.0f);
           masterWfComp = 1.0f;
-          masterMixer.gain(0, 1.0f);  // dry
-          masterMixer.gain(1, 1.0f);  // wavefolder return
+          masterMixer.gain(0, 1.0f);  // dry at unity
+          masterMixer.gain(1, 0.0f);  // wavefolder return off
           AudioInterrupts();
 
           applyMasterGainFromState();
@@ -2212,25 +2210,21 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // Drive fraction for compensation (0→1)
         float drive = activeSq;
 
-        // Dry bus: slight boost to keep drums present
-        float dryBoost = 1.0f + 0.08f * drive;
-        if (dryBoost > 1.08f) dryBoost = 1.08f;
+        // Dry bus: pull down slightly to make room (1.0 → 0.92)
+        float dryLevel = 1.0f - 0.08f * drive;
 
-        // Wavefolder return: pull down as drive rises
-        float wfReturn = 1.0f - 0.45f * drive;
-        if (wfReturn < 0.55f) wfReturn = 0.55f;
+        // Wavefolder return: ramp up with drive (0.3 → 0.5)
+        float wfReturn = 0.3f + 0.2f * drive;
 
-        // Loudness compensation — gentle curve that plateaus past 80%.
-        // Reaches ~0.68 at drive=0.64 (80% knob) and stays flat above.
-        const float compFloor = 0.68f;
-        float comp = 1.0f / (1.0f + 0.70f * drive);
-        if (comp < compFloor) comp = compFloor;
+        // Loudness compensation — single gentle curve (1.0 → 0.85)
+        float comp = 1.0f - 0.15f * drive;
+        if (comp < 0.85f) comp = 0.85f;
         masterWfComp = comp;
 
         AudioNoInterrupts();
         wfMixer.gain(0, sineGain);
         wfMixer.gain(1, sawGain);
-        masterMixer.gain(0, dryBoost);
+        masterMixer.gain(0, dryLevel);
         masterMixer.gain(1, wfReturn);
         AudioInterrupts();
 
