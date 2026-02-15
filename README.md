@@ -24,7 +24,7 @@ A 3-voice drum synthesizer built on Teensy 4.0.
 
 - 16-step sequencer with play/stop transport
 - 13 accent pattern modes
-- D2/D3 choke control (linked decay modulation)
+- Choke control (linked decay offset across all 3 voices)
 - Master wavefolder with frequency and intensity controls
 - Master bandpass filter
 - External clock sync with zero-latency ISR triggering and glitch filter
