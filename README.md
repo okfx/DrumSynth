@@ -20,6 +20,42 @@ A 3-voice drum synthesizer built on Teensy 4.0.
 | **D2** | Snare/Clap | Dual noise channels with filters and delays, crossfadable snare-to-clap mix |
 | **D3** | Hi-Hat | 3 selectable modes: 606-style (6-osc bank), FM hats, noise-based |
 
+## OLED Interface
+
+128x64 monochrome OLED showing real-time oscilloscope, status bar, parameter overlays, and voice selection rails.
+
+### Main View
+| Stopped | Playing (D1 Kick) |
+|---------|-------------------|
+| ![Stopped](images/01_main_stopped.png) | ![Playing D1](images/02_main_playing_d1.png) |
+
+| Playing (D2 Snare) | Playing (D3 Hat) |
+|---------------------|------------------|
+| ![Playing D2](images/03_main_playing_d2.png) | ![Playing D3](images/04_main_playing_d3.png) |
+
+### Parameter Overlays
+Appear for 500ms when a knob is turned, overlaid on the waveform with outlined text.
+
+| D1 Decay | Master Volume | Wavefold Intensity |
+|----------|---------------|-------------------|
+| ![D1 Decay](images/05_param_d1_decay.png) | ![Master Vol](images/06_param_master_vol.png) | ![Wavefold](images/07_param_wavefold_int.png) |
+
+### Voice Selection Rails
+Slider-style selectors with caret indicator and outlined labels.
+
+| D1 Shape (SIN/SAW/SQR) | D2 Voice (CLAP/SNARE) | D3 Voice (1/2/3) |
+|-------------------------|----------------------|-------------------|
+| ![D1 Shape](images/08_rail_d1_shape.png) | ![D2 Voice](images/09_rail_d2_voice.png) | ![D3 Voice](images/10_rail_d3_voice.png) |
+
+### Other Screens
+| External Clock | LPF Active | Pattern Saved |
+|----------------|------------|---------------|
+| ![Ext Clock](images/11_ext_clock.png) | ![LPF](images/15_lpf_active.png) | ![Saved](images/12_pattern_saved.png) |
+
+| Boot Splash | PPQN Selection |
+|-------------|----------------|
+| ![Boot](images/13_splash_boot.png) | ![PPQN](images/14_ppqn_select.png) |
+
 ## Features
 
 - 16-step sequencer with play/stop transport
