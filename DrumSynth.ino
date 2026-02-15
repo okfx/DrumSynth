@@ -1,5 +1,5 @@
 // ============================================================================
-//  Drum Machine Firmware v130
+//  DrumSynth
 //  Teensy 4.0 (ARM Cortex-M7 @ 600MHz)
 //  Last modified: 2026-02-14 (Session 9 — v130, BPM display fix)
 //
