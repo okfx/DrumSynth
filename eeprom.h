@@ -31,8 +31,8 @@ extern const uint8_t PPQN_OPTIONS[];
 // UI overlay feedback (for "PATTERN LOADED" / "SAVED" messages)
 extern RailMode activeRail;
 extern int lastActiveKnob;
-extern char displayParameter1[];
-extern char displayParameter2[];
+extern char displayParameter1[24];
+extern char displayParameter2[24];
 extern uint32_t parameterOverlayStartTick;
 extern volatile uint32_t sysTickMs;
 
@@ -53,7 +53,7 @@ struct EepromSlot {
   uint16_t magic;
   uint16_t seq;
   PatternStore patterns;
-  uint8_t reserved0;
+  uint8_t reserved0;  // reserved for future use (e.g., per-slot BPM)
 };
 
 // ============================================================================
@@ -126,6 +126,7 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   return true;
 }
 
+// NOTE: Caller handles the "SAVED" overlay text (unlike loadStateFromEEPROM which sets its own).
 void saveStateToEEPROM(uint8_t slotIndex) {
   if (slotIndex >= SAVE_SLOT_COUNT) return;
 

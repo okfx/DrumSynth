@@ -72,18 +72,15 @@ inline void audioInit() {
   d1c.amplitude(0.85f);
   d1c.frequencyModulation(4);
 
-  d1d.begin(WAVEFORM_TRIANGLE);
-  d1d.amplitude(0.85f);
-  d1d.frequencyModulation(4);
-
-  // D1 oscillator mixer
+  // D1 oscillator mixer (ch0=sine, ch1=saw, ch2=square; ch3 unused)
   d1OscMixer.gain(0, 0.9f);
   d1OscMixer.gain(1, 0.0f);
   d1OscMixer.gain(2, 0.0f);
-  d1OscMixer.gain(3, 0.0f);
 
   // D1 pitch envelope and modulation
   d1DC.amplitude(0.25f);
+  d1DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
+  d3DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
   d1PitchEnv.decay(25.0f);
   d1PitchEnv.sustain(0.0f);
 
@@ -125,15 +122,7 @@ inline void audioInit() {
   d2.frequency(200.0f);
   d2.frequencyModulation(1);
 
-  d2b.begin(WAVEFORM_SINE);
-  d2b.amplitude(1.0f);
-  d2b.frequency(1000.0f);
-
-  // D2 amplitude envelopes
-  d2bAmpEnv.hold(20.0f);
-  d2bAmpEnv.decay(20.0f);
-  d2bAmpEnv.sustain(0.0f);
-
+  // D2 amplitude envelope
   d2AmpEnv.decay(75.0f);
   d2AmpEnv.hold(20.0f);
   d2AmpEnv.sustain(0.0f);
@@ -327,13 +316,8 @@ inline void audioInit() {
   d3Mixer1.gain(2, 0.0f);
   d3Mixer1.gain(3, 0.0f);
 
-  d3Mixer2.gain(0, 0.0f);
-  d3Mixer2.gain(1, 0.0f);
-  d3Mixer2.gain(2, 0.0f);
-  d3Mixer2.gain(3, 0.0f);
-
   d3MasterMixer.gain(0, 0.5f);
-  d3MasterMixer.gain(1, 0.5f);
+  d3MasterMixer.gain(1, 0.0f);  // d3Mixer2 removed in wavefoldermixer graph
 
   d3AmpEnv.delay(0.0f);
   d3AmpEnv.attack(1.0f);
@@ -375,10 +359,22 @@ inline void audioInit() {
   drumMixer.gain(2, d3Vol);  // D3 bus
   drumMixer.gain(3, 0.0f);   // unused with new D2 routing
 
-  // Master wavefolder
-  masterWfWaveform.begin(WAVEFORM_SINE);
-  masterWfWaveform.amplitude(0.1f);
-  masterWfWaveform.frequency(40.0f);
+  // Master wavefolder oscillators (wfSine + wfSaw → wfMixer → masterWf input 1)
+  wfSine.begin(WAVEFORM_SINE);
+  wfSine.amplitude(1.0f);
+  wfSine.frequency(80.0f);
+
+  wfSaw.begin(WAVEFORM_SAWTOOTH);
+  wfSaw.amplitude(1.0f);
+  wfSaw.frequency(80.0f);
+
+  wfMixer.gain(0, 0.0f);          // sine channel — knob 30 controls mix
+  wfMixer.gain(1, 0.0f);          // saw channel
+  wfMixer.gain(2, 0.0f);
+  wfMixer.gain(3, 0.0f);
+
+  // Final output amplifier
+  finalAmp.gain(3.0f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
@@ -407,6 +403,7 @@ inline void audioInit() {
   masterLowPass.resonance(0.25f);
   masterLowPass.frequency(7500.0f);
 
+  masterBandPass.frequency(1000.0f);  // 1kHz bandpass — intentional coloring of master output
   masterBandPass.resonance(1.0f);
 
   finalFilter.setHighShelf(0, 3500.0f, 0.5f, 5.0f);

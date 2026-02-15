@@ -13,7 +13,9 @@
 #include <Arduino.h>
 
 // Display dimension for scope area
-static constexpr int SCOPE_DISPLAY_WIDTH = 124;
+static constexpr int SCOPE_DISPLAY_WIDTH  = 124;
+static constexpr int SCOPE_DISPLAY_HEIGHT = 40;
+static constexpr float INV_32768 = 1.0f / 32768.0f;
 
 // Circular buffer holding one screen-width of normalized samples (-1..+1)
 float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
@@ -41,8 +43,8 @@ void updateScopeData() {
     }
     blockSkipCounter = 0;
 
-    for (int i = 0; i < 128 / SAMPLE_DECIMATION && scopeBufferWriteIndex < SCOPE_DISPLAY_WIDTH; i++) {
-      scopeBuffer[scopeBufferWriteIndex] = samples[i * SAMPLE_DECIMATION] / 32768.0f;
+    for (int i = 0; i < 128 / SAMPLE_DECIMATION; i++) {
+      scopeBuffer[scopeBufferWriteIndex] = samples[i * SAMPLE_DECIMATION] * INV_32768;
       scopeBufferWriteIndex = (scopeBufferWriteIndex + 1) % SCOPE_DISPLAY_WIDTH;
     }
 
