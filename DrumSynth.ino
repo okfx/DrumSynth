@@ -552,7 +552,7 @@ void setup() {
   // AUDIO SYSTEM INITIALIZATION
   // ============================================================================
 
-  AudioMemory(750);  // Extra headroom for long delay times (RAM2 only, no CPU cost)
+  AudioMemory(1200);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
   tickTimer1k.begin(sysTickISR, 1000);
   audioInit();
   scopeQueue.begin();
