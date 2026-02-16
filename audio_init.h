@@ -95,10 +95,10 @@ inline void audioInit() {
   drum1Amp.gain(2.0f);
 
   // D1 voice mixer (dry oscillators + drum transient + wavefolder)
-  d1Mixer.gain(0, 0.3f);
-  d1Mixer.gain(1, 0.9f);
-  d1Mixer.gain(2, 0.25f);
-  d1Mixer.gain(3, 0.25f);
+  d1Mixer.gain(0, 0.3f);   // d1LowPass (dry osc)
+  d1Mixer.gain(1, 0.9f);   // drum1Amp (transient)
+  // input 2: unconnected
+  d1Mixer.gain(3, 0.25f);  // d1Wavefolder (wet)
 
   // D1 filters
   d1LowPass.frequency(3000.0f);
@@ -343,10 +343,9 @@ inline void audioInit() {
   d3WfMixer.gain(2, 0.25f);
 
   // D3 final mixer (dry + wavefolder)
-  d3Mixer.gain(0, 0.25f);
-  d3Mixer.gain(1, 0.25f);
-  d3Mixer.gain(2, 0.25f);
-  d3Mixer.gain(3, 0.12f);
+  d3Mixer.gain(0, 0.25f);  // d3WfMixer (dry)
+  d3Mixer.gain(1, 0.25f);  // d3Wavefolder (wet)
+  // inputs 2–3: unconnected
 
   // D3 master filter
   d3MasterFilter.frequency(3000.0f);

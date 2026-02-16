@@ -134,7 +134,8 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   if (addr + sizeof(EepromSlot) > EEPROM.length()) return;
 
   EepromSlot slot = {};
-  eepromSeq++;
+  if (eepromSeq == 0xFFFF) eepromSeq = 1;  // Wrap to 1, skip 0 (fresh EEPROM sentinel)
+  else eepromSeq++;
 
   slot.magic = EEPROM_MAGIC;
   slot.seq = eepromSeq;

@@ -20,7 +20,7 @@
 // ============================================================================
 
 // Transport & sequencer state
-extern volatile TransportState tstate;
+extern volatile TransportState transportState;
 extern volatile bool sequencePlaying;
 extern float bpm;
 extern volatile uint8_t ppqn;
@@ -62,7 +62,7 @@ extern void applyMasterGainFromState();
 //    subdivIntervalUs          — uint32_t, ISR-only (externalClockISR writes, subdivISR reads)
 //
 //  Main loop writes (read by ISR):
-//    tstate                    — uint8_t, atomic on ARM, safe for ISR to read
+//    transportState                    — uint8_t, atomic on ARM, safe for ISR to read
 //    sequencePlaying           — bool, atomic on ARM, safe for ISR to read
 //    drum1/2/3Sequence[]       — byte arrays, atomic reads from ISR, written by main loop (button presses)
 //    ppqn                      — volatile uint8_t, main loop writes (PPQN mode), ISR reads. Atomic on ARM.
@@ -112,9 +112,7 @@ static constexpr uint32_t EXT_TIMEOUT_US = 2000000;
 volatile uint8_t  subdivRemaining = 0;     // Deferred steps still to fire (0 = idle, max 3)
 volatile uint32_t subdivIntervalUs = 0;    // Microseconds between subdivision steps
 
-#ifdef DEBUG_MODE
-volatile uint32_t extClockDebugPulseCount = 0;
-#endif
+// (DEBUG_MODE pulse counter removed — unused)
 
 // ============================================================================
 //  ISR Functions
@@ -124,6 +122,8 @@ volatile uint32_t extClockDebugPulseCount = 0;
 // Uses same triggerD1/D2/D3 helpers as playSequenceCore(), but sets
 // ledUpdatePending instead of calling updateLEDs() (SPI unsafe from ISR).
 void triggerStepFromISR() {
+  // Guard against corruption: clamp to valid range, then advance.
+  // Setting to numSteps-1 means the +1 below wraps to step 0 (clean restart).
   if (currentStep < 0 || currentStep >= numSteps) {
     currentStep = numSteps - 1;
   }
@@ -138,7 +138,7 @@ void triggerStepFromISR() {
 
 // Internal clock step generation — only active when in RUN_INT mode
 void stepISR() {
-  if (tstate == RUN_INT && sequencePlaying) {
+  if (transportState == RUN_INT && sequencePlaying) {
     if (pendingStepCount < 255) {
       pendingStepCount++;
     }
@@ -209,7 +209,7 @@ void externalClockISR() {
   // Prevents a noise spike + real pulse from false lock-in.
   // prevAcceptedInterval holds previous pulse's interval;
   // lastPulseInterval holds current (0 if this is pulse #1).
-  if (extPulseCount >= 2 && tstate != RUN_EXT) {
+  if (extPulseCount >= 2 && transportState != RUN_EXT) {
     uint32_t prev = prevAcceptedInterval;
     uint32_t curr = lastPulseInterval;
     if (prev > 0 && curr > 0) {
@@ -226,7 +226,7 @@ void externalClockISR() {
   // Step generation — trigger audio directly on each accepted pulse edge.
   // Fires both in steady-state RUN_EXT and on the locking pulse
   // so the first step aligns with a real pulse, not a synthesized main-loop call.
-  bool canStep = (tstate == RUN_EXT || wantSwitchToExt);
+  bool canStep = (transportState == RUN_EXT || wantSwitchToExt);
   if (canStep && sequencePlaying) {
 
     if (ppqn >= 4) {
@@ -278,9 +278,7 @@ void externalClockISR() {
     }
   }
 
-#ifdef DEBUG_MODE
-  extClockDebugPulseCount++;
-#endif
+  // (DEBUG_MODE counter removed)
 }
 
 // ============================================================================
@@ -338,7 +336,7 @@ void checkExtClockLockIn() {
 
 // Detect external clock timeout — fall back to internal or stop
 void checkExtClockTimeout() {
-  if (tstate == RUN_EXT) {
+  if (transportState == RUN_EXT) {
     uint32_t now = micros();
     uint32_t lastPulseCopy;
 
@@ -363,7 +361,7 @@ void checkExtClockTimeout() {
 // Light display-side smoothing (alpha=0.25) damps jitter without the long
 // settle time the old slow EMA had.
 void updateExtBpmDisplay() {
-  if (tstate == RUN_EXT) {
+  if (transportState == RUN_EXT) {
     noInterrupts();
     uint32_t emaCopy = extIntervalEMA;
     interrupts();
