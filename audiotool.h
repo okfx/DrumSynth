@@ -56,6 +56,7 @@ AudioFilterStateVariable d2NoiseFilter;  //xy=1056.625,510
 AudioSynthSimpleDrum     drum2;          //xy=1076.625,455
 AudioMixer4              clapMixer1;     //xy=1078.625,758
 AudioMixer4              clapMixer2;     //xy=1082.625,880
+AudioMixer4              clapMixerMaster;
 AudioFilterStateVariable d2AttackFilter; //xy=1130.625,622
 AudioSynthSimpleDrum     drum1;          //xy=1198.625,166
 AudioSynthWaveformDc     d1DCwf;         //xy=1232.625,261
@@ -155,8 +156,9 @@ AudioConnection          patchCord54(d1LowPass, 0, d1Mixer, 0);
 AudioConnection          patchCord55(d3606AmpEnv, 0, d3WfMixer, 0);
 AudioConnection          patchCord56(d2NoiseFilter, 2, d2Mixer, 2);
 AudioConnection          patchCord57(drum2, 0, d2Mixer, 1);
-AudioConnection          patchCord58(clapMixer1, 0, clapMasterFilter, 0);
-AudioConnection          patchCord59(clapMixer2, 0, clapMasterFilter, 0);
+AudioConnection          patchCord58(clapMixer1, 0, clapMixerMaster, 0);
+AudioConnection          patchCord59(clapMixer2, 0, clapMixerMaster, 1);
+AudioConnection          patchCordClapSum(clapMixerMaster, 0, clapMasterFilter, 0);
 AudioConnection          patchCord60(d2AttackFilter, 1, d2Mixer, 3);
 AudioConnection          patchCord61(drum1, drum1Amp);
 AudioConnection          patchCord62(d1DCwf, 0, d1Wavefolder, 1);

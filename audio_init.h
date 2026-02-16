@@ -180,56 +180,59 @@ inline void audioInit() {
   clapNoise2.amplitude(0.75f);
 
   // Clap filters
-  clap1Filter.frequency(400.0f);
-  clap1Filter.resonance(3.0f);
+  clap1Filter.frequency(1100.0f);
+  clap1Filter.resonance(1.8f);
 
-  clap2Filter.frequency(200.0f);
-  clap2Filter.resonance(3.0f);
+  clap2Filter.frequency(900.0f);
+  clap2Filter.resonance(1.8f);
 
   // Clap envelopes
-  clap1AmpEnv.attack(5.0f);
-  clap1AmpEnv.hold(20.0f);
-  clap1AmpEnv.decay(50.0f);
+  clap1AmpEnv.attack(0.5f);
+  clap1AmpEnv.hold(4.0f);
+  clap1AmpEnv.decay(20.0f);
   clap1AmpEnv.release(0.0f);
 
-  clap2AmpEnv.attack(7.0f);
-  clap2AmpEnv.hold(22.0f);
-  clap2AmpEnv.decay(50.0f);
+  clap2AmpEnv.attack(0.5f);
+  clap2AmpEnv.hold(5.0f);
+  clap2AmpEnv.decay(24.0f);
   clap2AmpEnv.release(0.0f);
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
-  clapDelay1.delay(1, 10);  // Offset from clapDelay2 to avoid identical taps
-  clapDelay1.delay(2, 22);
-  clapDelay1.delay(3, 55);
+  clapDelay1.delay(1, 18);
+  clapDelay1.delay(2, 36);
+  clapDelay1.delay(3, 62);
 
-  clapDelay2.delay(0, 5);
+  clapDelay2.delay(0, 7);
   clapDelay2.delay(1, 25);
-  clapDelay2.delay(2, 45);
-  clapDelay2.delay(3, 40);
+  clapDelay2.delay(2, 48);
+  clapDelay2.delay(3, 70);
 
-  // Clap delay mixers
-  clapMixer1.gain(0, 0.2f);
-  clapMixer1.gain(1, 0.1f);
-  clapMixer1.gain(2, 0.2f);
-  clapMixer1.gain(3, 0.1f);
+  // Clap delay mixers (tapering gains — first hits louder)
+  clapMixer1.gain(0, 0.30f);
+  clapMixer1.gain(1, 0.25f);
+  clapMixer1.gain(2, 0.20f);
+  clapMixer1.gain(3, 0.15f);
 
-  clapMixer2.gain(0, 0.1f);
-  clapMixer2.gain(1, 0.2f);
-  clapMixer2.gain(2, 0.2f);
-  clapMixer2.gain(3, 0.1f);
+  clapMixer2.gain(0, 0.25f);
+  clapMixer2.gain(1, 0.20f);
+  clapMixer2.gain(2, 0.15f);
+  clapMixer2.gain(3, 0.10f);
+
+  clapMixerMaster.gain(0, 1.0f);
+  clapMixerMaster.gain(1, 1.0f);
 
   // Clap master filter and envelope
   clapMasterFilter.frequency(1250.0f);
-  clapMasterFilter.resonance(2.75f);
+  clapMasterFilter.resonance(1.8f);
 
-  clapMasterEnv.attack(10.0f);
+  clapMasterEnv.attack(0.5f);
   clapMasterEnv.hold(1.0f);
-  clapMasterEnv.decay(50.0f);
+  clapMasterEnv.decay(200.0f);
   clapMasterEnv.release(0.0f);
   clapMasterEnv.sustain(0.0f);
 
-  clapAmp.gain(2.0f);
+  clapAmp.gain(1.5f);
 
   // --- D2 output mixing ---
 

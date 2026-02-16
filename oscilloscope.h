@@ -37,7 +37,7 @@ extern Adafruit_SH1106G display;               // from hw_setup.h
 
 void updateScopeData() {
   static uint8_t blockSkipCounter = 0;
-  const uint8_t BLOCKS_TO_SKIP = 8;
+  const uint8_t BLOCKS_TO_SKIP = 12;
   const int SAMPLE_DECIMATION = 16;
   const int SAMPLES_PER_BLOCK = AUDIO_BLOCK_SIZE / SAMPLE_DECIMATION;
 

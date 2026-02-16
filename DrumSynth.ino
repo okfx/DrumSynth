@@ -29,7 +29,7 @@
 #include "bitmaps.h"
 #include "hw_setup.h"
 
-#define FIRMWARE_VERSION ".130"
+#define FIRMWARE_VERSION ".130a"
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -138,8 +138,7 @@ float d3DecayBase = 25.0f;
 int chokeOffsetMs = 0;
 
 // D2 noise and clap bases
-float clapDecayBase = 120.0f;
-float clapEffDecay = 120.0f;  // Cached: clapDecayBase + chokeOffsetMs, floored at 10
+float clapEffDecay = 120.0f;  // Cached: clap decay (from D2 decay) + chokeOffsetMs, floored at 10
 
 // D1 cached envelope params (updated on knob change / choke change)
 float d1CachedAttackMs = 0.5f;
@@ -312,11 +311,12 @@ static inline int chokeOffsetFromKnob(int v) {
   return (int)(MAX_POS * t);
 }
 
-// D3 decay helper (includes choke and a small accent boost)
+// D3 decay helper (includes choke and a small accent boost, capped at 200ms)
 static inline float d3EffectiveBaseDecay() {
   float base = d3DecayBase + chokeOffsetMs;
   if (base < 7.0f) base = 7.0f;
   if (d3AltMode != ALT_OFF) base += 7.0f;
+  if (base > 200.0f) base = 200.0f;
   return base;
 }
 
@@ -475,7 +475,11 @@ void applyChokeToDecays() {
   drum2.length(base2 * 0.25f);
   AudioInterrupts();
 
-  // D2 clap family — cache the effective value
+  // D2 clap family — derive clap decay from D2 decay (50–1000ms → 120–275ms)
+  float d2Norm = (d2DecayBase - 50.0f) / (1000.0f - 50.0f);
+  if (d2Norm < 0.0f) d2Norm = 0.0f;
+  if (d2Norm > 1.0f) d2Norm = 1.0f;
+  float clapDecayBase = 120.0f + d2Norm * (275.0f - 120.0f);
   clapEffDecay = clapDecayBase + chokeOffsetMs;
   if (clapEffDecay < 10.0f) clapEffDecay = 10.0f;
 
@@ -516,8 +520,8 @@ void setup() {
     display.setTextSize(1);
     display.setCursor(40, 20);
     display.print("VERSION");
-    display.setTextSize(2);
-    display.setCursor(46, 36);
+    display.setTextSize(1);
+    display.setCursor(43, 36);
     display.print("v" FIRMWARE_VERSION);
     display.display();
     delay(800);
@@ -1287,7 +1291,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 8:  // D2 Pitch
       {
         float freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 FREQUENCY");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE FREQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
         break;
       }
@@ -1424,30 +1428,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 22:  // D3 Accent Pattern
       {
-        uint8_t mode = accentModeFromKnob(knobValue);
-        const char* label;
-
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 ACCENT");
-
-        // Map mode to display label
-        switch (mode) {
-          case ALT_HALF: label = "HALF"; break;
-          case ALT_QUARTER: label = "QUARTER"; break;
-          case ALT_EIGHT: label = "EIGHT"; break;
-          case ALT_EIGHTUP: label = "EIGHT UP"; break;
-          case ALT_VARI1: label = "VAR1"; break;
-          case ALT_VARI2: label = "VAR2"; break;
-          case ALT_VARI3: label = "VAR3"; break;
-          case ALT_VARI4: label = "VAR4"; break;
-          case ALT_ALT5: label = "VAR5"; break;
-          case ALT_ALT6: label = "VAR6"; break;
-          case ALT_ALT7: label = "VAR7"; break;
-          case ALT_ALT8: label = "VAR8"; break;
-          case ALT_ALT9: label = "VAR9"; break;
-          default: label = "OFF"; break;
-        }
-
-        snprintf(displayParameter2, sizeof(displayParameter2), "%s", label);
+        displayParameter2[0] = 0;
         break;
       }
 
@@ -1733,8 +1715,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float gainSnare = norm;
         float gainClap = 1.0f - norm;
 
-        snareClapMixer.gain(0, gainSnare * 0.95f);
-        snareClapMixer.gain(1, gainClap * 1.05f);
+        snareClapMixer.gain(0, gainSnare * 1.05f);
+        snareClapMixer.gain(1, gainClap * 0.75f);
         break;
       }
 
@@ -1771,20 +1753,18 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
             lpfFreqHz = 2500.0f - blendSquared * (2500.0f - 1500.0f);
           }
 
-          // Mix calculations — tamed to prevent excessive volume at high drive
-          const float TOTAL_TARGET = 0.35f;
-          const float WET_ATTEN = 0.45f;
-
-          float wetMix = wetNorm;  // max 1.0 guaranteed by normKnob + quadratic
-          float dryMix = 1.0f - wetMix;
-
-          gainDry = dryMix * TOTAL_TARGET;
-          gainWet = wetMix * TOTAL_TARGET * WET_ATTEN;
-
-          // Top-end trim to prevent excessive volume
-          float topTrim = 1.0f - 0.40f * norm;
-          gainDry *= topTrim;
-          gainWet *= topTrim;
+          // Dry stays near unity, only pulls down once wet is significant
+          gainDry = 1.0f - 0.08f * wetNorm;
+          // Wet ramps up with drive (0.0 → 0.5)
+          gainWet = wetNorm * 0.5f;
+          // Loudness comp: none below 55%, ramps down above (1.0 → 0.72)
+          float comp = 1.0f;
+          if (norm > 0.55f) {
+            float extra = (norm - 0.55f) / 0.45f; // 0→1 over 55%–100%
+            comp = 1.0f - 0.28f * extra;
+          }
+          gainDry *= comp;
+          gainWet *= comp;
         }
 
         // Apply as one atomic update
@@ -1844,7 +1824,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           d2NoiseFilter.frequency(filterFreqHz);
 
           float norm = normKnob(knobValue);
-          float noiseGain = 0.05f + 0.30f * norm;
+          float noiseGain = 0.045f + 0.27f * norm;
           d2Mixer.gain(2, noiseGain);
 
           applyChokeToDecays();
@@ -2000,7 +1980,10 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // True OFF in the first tiny region
         if (knobValue < 10) {
           d3DCwf.amplitude(0.0f);
-          d3Mixer.gain(3, 0.0f);
+          AudioNoInterrupts();
+          d3Mixer.gain(0, 0.25f);  // dry at default
+          d3Mixer.gain(1, 0.0f);   // wavefolder return off
+          AudioInterrupts();
           break;
         }
 
@@ -2010,12 +1993,29 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (norm > 1.0f) norm = 1.0f;
 
         // Drive goes 0..0.50 (linear)
-        const float drive = 0.50f * norm;
+        float drive = 0.50f * norm;
         d3DCwf.amplitude(drive);
 
-        // Wet return: comes in, but gets pulled down as drive rises
-        const float wetGain = 0.10f * norm * (1.0f - 0.65f * norm);
-        d3Mixer.gain(3, wetGain);
+        // Dry pulls down slightly as drive rises (0.25 → 0.22)
+        float dryGain = 0.25f - 0.03f * norm;
+        // Wet return ramps up with drive (0.0 → 0.30)
+        float wetGain = norm * 0.30f;
+        // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
+        float comp;
+        if (norm <= 0.55f) {
+          comp = 1.0f - 0.12f * norm;
+        } else {
+          float base = 1.0f - 0.12f * 0.55f;  // 0.934
+          float extra = (norm - 0.55f) / 0.45f; // 0→1 over 55%–100%
+          comp = base - 0.25f * extra;
+        }
+        dryGain *= comp;
+        wetGain *= comp;
+
+        AudioNoInterrupts();
+        d3Mixer.gain(0, dryGain);  // dry
+        d3Mixer.gain(1, wetGain);  // wavefolder return
+        AudioInterrupts();
         break;
       }
 
@@ -2201,24 +2201,31 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float active = (norm - DEADBAND) / (1.0f - DEADBAND);
         if (active > 1.0f) active = 1.0f;
 
-        // Both sine and saw rise together from the start.
-        // Quadratic ramp for gentle onset, accelerating feel.
+        // Both sine and saw rise together, quadratic ramp.
+        // Plateau after 60% — cap the oscillator drive level.
         float activeSq = active * active;
-        float sineGain = activeSq * 0.55f;    // 0 → 0.55
-        float sawGain  = activeSq * 0.55f;    // 0 → 0.55
+        float oscActive = (active <= 0.6f) ? active : 0.6f;
+        float oscSq = oscActive * oscActive;
+        float sineGain = oscSq * 0.55f;
+        float sawGain  = oscSq * 0.55f;
 
         // Drive fraction for compensation (0→1)
         float drive = activeSq;
 
-        // Dry bus: pull down slightly to make room (1.0 → 0.92)
-        float dryLevel = 1.0f - 0.08f * drive;
+        // Dry bus: normal pull-down up to 65%, then roll off to 50% of normal
+        float dryBase = 1.0f - 0.08f * drive;
+        if (active > 0.65f) {
+          float rolloff = (active - 0.65f) / (1.0f - 0.65f);  // 0→1 over 65%–100%
+          dryBase *= 1.0f - 0.5f * rolloff;                    // down to 50%
+        }
+        float dryLevel = dryBase;
 
-        // Wavefolder return: ramp up with drive (0.3 → 0.5)
-        float wfReturn = 0.3f + 0.2f * drive;
+        // Wavefolder return: ramp up more to compensate for dry rolloff (0.32 → 0.74)
+        float wfReturn = 0.32f + 0.42f * drive;
 
-        // Loudness compensation — single gentle curve (1.0 → 0.85)
-        float comp = 1.0f - 0.15f * drive;
-        if (comp < 0.85f) comp = 0.85f;
+        // Loudness compensation — normalize so dry+wet never exceeds unity
+        float sum = dryLevel + wfReturn;
+        float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
         masterWfComp = comp;
 
         AudioNoInterrupts();
@@ -2244,8 +2251,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           // Remap 5%-100% → 0-1, then use sqrt curve for more level at low knob
           float blend = (norm - 0.05f) / 0.95f;
           float shaped = sqrtf(blend);  // sqrt gives more audible range at low settings
-          delayAmp.gain(shaped * 2.0f);
-          masterMixer.gain(2, shaped);
+          float level = 0.15f + shaped * 0.90f;  // 15% floor, 5% louder max (1.05)
+          delayAmp.gain(level * 2.0f);
+          masterMixer.gain(2, level);
         }
 
         // Feedback amount (squared curve for finer low-end control), capped at 0.4
