@@ -134,8 +134,10 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   if (addr + sizeof(EepromSlot) > EEPROM.length()) return;
 
   EepromSlot slot = {};
+  eepromSeq++;
+
   slot.magic = EEPROM_MAGIC;
-  slot.seq = eepromSeq + 1;
+  slot.seq = eepromSeq;
 
   for (int step = 0; step < numSteps; step++) {
     slot.patterns.drum1[step] = drum1Sequence[step];
@@ -145,7 +147,6 @@ void saveStateToEEPROM(uint8_t slotIndex) {
 
   EEPROM.put((int)addr, slot);  // Cast to int here for EEPROM.put()
 
-  eepromSeq++;
   patternDirty = false;
 }
 

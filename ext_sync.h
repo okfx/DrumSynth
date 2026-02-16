@@ -43,9 +43,6 @@ extern IntervalTimer stepTimer;
 extern void setTransport(TransportState s);
 extern void applyMasterGainFromState();
 
-// Hardware constants (from hw_setup.h)
-// numSteps — already available via hw_setup.h
-
 // ============================================================================
 //  CONCURRENCY CONTRACT
 //
@@ -115,7 +112,6 @@ static constexpr uint32_t EXT_TIMEOUT_US = 2000000;
 volatile uint8_t  subdivRemaining = 0;     // Deferred steps still to fire (0 = idle, max 3)
 volatile uint32_t subdivIntervalUs = 0;    // Microseconds between subdivision steps
 
-// Debug pulse counter
 #ifdef DEBUG_MODE
 volatile uint32_t extClockDebugPulseCount = 0;
 #endif
@@ -181,6 +177,7 @@ void externalClockISR() {
   //   1. Hard floor: reject < 300µs (contact bounce / electrical noise)
   //   2. Relative: reject < 25% of EMA (absurdly fast edges only)
   // Less aggressive than old 45% — allows swing clocks, jittery analog clocks.
+  // Skip interval check on first-ever pulse (no previous timestamp)
   if (prevUs != 0) {
     uint32_t interval = nowUs - prevUs;
 
@@ -196,6 +193,7 @@ void externalClockISR() {
 
     // Fast EMA (alpha=0.5): glitch filter threshold + BPM display source.
     // Responsive to tempo changes; display-side smoothing handles jitter.
+    // Equivalent to (ema + interval) / 2 — fast integer average
     extIntervalEMA = (ema == 0)
         ? interval
         : ema + (((int32_t)(interval - ema)) >> 1);
@@ -204,6 +202,7 @@ void externalClockISR() {
   // Good pulse — record timestamp
   lastPulseMicros = nowUs;
 
+  // Cap at 255 to prevent uint8_t overflow (only 2 needed for lock-in)
   if (extPulseCount < 255) extPulseCount++;
 
   // Lock-in: switch to RUN_EXT after 2 consecutive intervals within 25%.
@@ -290,7 +289,7 @@ void externalClockISR() {
 
 // (Re)start the internal clock timer based on current BPM
 void rearmStepTimer() {
-  float stepPeriodUs = 60000000.0f / (bpm * 4.0f);
+  float stepPeriodUs = 15000000.0f / bpm;
   if (stepPeriodUs < 500.0f) stepPeriodUs = 500.0f;
   stepTimer.end();
   stepTimer.begin(stepISR, (uint32_t)stepPeriodUs);
@@ -306,9 +305,8 @@ static inline void resetExternalClockState() {
   extIntervalEMA = 0;
   prevAcceptedInterval = 0;
   ledUpdatePending = false;
-  lastD1TriggerUs = 0;
-  lastD2TriggerUs = 0;
-  lastD3TriggerUs = 0;
+  // Per-voice retrigger timestamps (lastD1/D2/D3TriggerUs) not reset here —
+  // they self-correct on next trigger.
   subdivRemaining = 0;
   subdivIntervalUs = 0;
   interrupts();
@@ -320,7 +318,7 @@ static inline void resetExternalClockState() {
 // ============================================================================
 
 // Handle ISR→main-loop lock-in handoff (wantSwitchToExt flag)
-inline void checkExtClockLockIn() {
+void checkExtClockLockIn() {
   bool switchToExt = false;
   noInterrupts();
   if (wantSwitchToExt) {
@@ -339,7 +337,7 @@ inline void checkExtClockLockIn() {
 }
 
 // Detect external clock timeout — fall back to internal or stop
-inline void checkExtClockTimeout() {
+void checkExtClockTimeout() {
   if (tstate == RUN_EXT) {
     uint32_t now = micros();
     uint32_t lastPulseCopy;
@@ -364,7 +362,7 @@ inline void checkExtClockTimeout() {
 // uses for glitch filtering, so the display matches what the engine hears.
 // Light display-side smoothing (alpha=0.25) damps jitter without the long
 // settle time the old slow EMA had.
-inline void updateExtBpmDisplay() {
+void updateExtBpmDisplay() {
   if (tstate == RUN_EXT) {
     noInterrupts();
     uint32_t emaCopy = extIntervalEMA;
