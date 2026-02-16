@@ -26,6 +26,7 @@ uint8_t scopeBufferWriteIndex = 0;
 
 // Smoothed auto-scale state — peak hold with slow release
 float scopePeakRange = 0.05f;  // starts at noise floor
+float scopeMidpoint = 0.0f;    // smoothed vertical center
 
 // External dependencies
 extern AudioRecordQueue scopeQueue;            // from audiotool.h
@@ -80,28 +81,35 @@ void drawScopeWaveform(int x, int y, int w, int h) {
   if (range < 0.001f) return;              // nothing to draw
 
   // Smoothed auto-scale with attack/release.
-  // Jumps instantly to louder signals (attack), but releases slowly (5% per frame)
-  // so the waveform doesn't jitter between frames as drum tails decay.
+  // Fast (but not instant) attack keeps transients from jolting the scale;
+  // slow release lets drum tails decay gracefully.
   if (range > scopePeakRange) {
-    scopePeakRange = range;                 // instant attack
+    scopePeakRange += (range - scopePeakRange) * 0.5f;  // fast attack (50% per frame)
   } else {
-    scopePeakRange *= 0.95f;               // slow release (~5% per frame)
+    scopePeakRange *= 0.97f;               // slow release (~3% per frame)
     if (scopePeakRange < NOISE_FLOOR) scopePeakRange = NOISE_FLOOR;
   }
 
   float vScale = (h * 0.9f) / scopePeakRange;
 
+  // Smooth vertical center with high inertia — prevents baseline jumping
+  // as the circular buffer scrolls through different parts of the waveform.
+  float rawMid = (minVal + maxVal) * 0.5f;
+  float midDiff = rawMid - scopeMidpoint;
+  if (midDiff > 0.0f) {
+    scopeMidpoint += midDiff * 0.12f;  // slow attack (rise)
+  } else {
+    scopeMidpoint += midDiff * 0.06f;  // very slow release (fall)
+  }
+
   // Snapshot write index so it doesn't change mid-render
   uint8_t writeSnap = scopeBufferWriteIndex;
 
-  // Precompute y-coordinates for all samples.
-  // midOffset centers the waveform vertically: scopePeakRange * vScale cancels
-  // to h * 0.9, so midOffset = h * 0.45.
+  // Precompute y-coordinates for all samples, centered on smoothed midpoint
   int ys[SCOPE_DISPLAY_WIDTH];
-  float midOffset = h * 0.45f;
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
     int idx = (writeSnap + i) % SCOPE_DISPLAY_WIDTH;
-    int py = y + h / 2 - (int)((scopeBuffer[idx] - minVal) * vScale - midOffset);
+    int py = y + h / 2 - (int)((scopeBuffer[idx] - scopeMidpoint) * vScale);
     ys[i] = constrain(py, y, y + h - 1);
   }
 

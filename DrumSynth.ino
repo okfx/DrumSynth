@@ -552,7 +552,7 @@ void setup() {
   // AUDIO SYSTEM INITIALIZATION
   // ============================================================================
 
-  AudioMemory(500);
+  AudioMemory(750);  // Extra headroom for long delay times (RAM2 only, no CPU cost)
   tickTimer1k.begin(sysTickISR, 1000);
   audioInit();
   scopeQueue.begin();
@@ -1967,7 +1967,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
         // Voice level trims
         const float VOICE1_BOOST = 3.8f;
-        const float VOICE2_TRIM = 2.25f;
+        const float VOICE2_TRIM = 2.75f;
         const float VOICE3_TRIM = 0.65f;
 
         float gainVoice1 = 0.0f;
