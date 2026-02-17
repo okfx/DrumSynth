@@ -2239,11 +2239,11 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // Drive fraction for compensation (0→1)
         float drive = activeSq;
 
-        // Dry bus: hold near unity below noon, then roll off to 40%
-        float dryBase = 1.0f;
+        // Dry bus: gentle pull-down up to 50%, then roll off harder to 40% of normal
+        float dryBase = 1.0f - 0.12f * drive;
         if (active > 0.50f) {
           float rolloff = (active - 0.50f) / (1.0f - 0.50f);  // 0→1 over 50%–100%
-          dryBase = 1.0f - 0.60f * rolloff;                    // down to 40%
+          dryBase *= 1.0f - 0.6f * rolloff;                    // down to 40%
         }
         float dryLevel = dryBase;
 
@@ -2261,13 +2261,10 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // transients, and the harmonic energy the wavefolder generates.
         // Include envelope contribution in the sum (×0.5 because transient,
         // not continuous — approximate average vs peak).
-        // Extra reduction only kicks in past noon so the low range stays full.
+        // Uses active² for the extra reduction so it bites harder past noon.
         float sum = dryLevel + wfReturn + envGain * 0.5f;
         float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
-        if (active > 0.50f) {
-          float past = (active - 0.50f) / 0.50f;  // 0→1 over noon–full
-          comp *= 1.0f - 0.45f * past * past;
-        }
+        comp *= 1.0f - 0.45f * active * active;
         masterWfComp = comp;
 
         AudioNoInterrupts();
