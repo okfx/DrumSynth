@@ -1777,15 +1777,15 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
             lpfFreqHz = 2500.0f - blendSquared * (2500.0f - 1500.0f);
           }
 
-          // Dry stays near unity, only pulls down once wet is significant
-          gainDry = 1.0f - 0.08f * wetNorm;
-          // Wet ramps up with drive (0.0 → 0.5)
-          gainWet = wetNorm * 0.5f;
-          // Loudness comp: none below 55%, ramps down above (1.0 → 0.72)
+          // Dry pulls down as wet rises (1.0 → 0.70)
+          gainDry = 1.0f - 0.30f * wetNorm;
+          // Wet ramps up with drive (0.0 → 0.45)
+          gainWet = wetNorm * 0.45f;
+          // Loudness comp: starts at 20% knob, ramps down (1.0 → 0.65)
           float comp = 1.0f;
-          if (norm > 0.55f) {
-            float extra = (norm - 0.55f) / 0.45f; // 0→1 over 55%–100%
-            comp = 1.0f - 0.28f * extra;
+          if (norm > 0.20f) {
+            float extra = (norm - 0.20f) / 0.80f; // 0→1 over 20%–100%
+            comp = 1.0f - 0.35f * extra;
           }
           gainDry *= comp;
           gainWet *= comp;
