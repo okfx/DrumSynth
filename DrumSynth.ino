@@ -2207,12 +2207,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        // Deadband at bottom 5% — wavefolder fully off
-        const float DEADBAND = 0.05f;
+        // Deadband at bottom 2% — wavefolder fully off
+        const float DEADBAND = 0.02f;
         if (norm <= DEADBAND) {
           AudioNoInterrupts();
           wfMixer.gain(0, 0.0f);
           wfMixer.gain(1, 0.0f);
+          wfMixer.gain(2, 0.0f);  // kick env off
+          wfMixer.gain(3, 0.0f);  // snare/clap env off
           masterWfComp = 1.0f;
           masterMixer.gain(0, 1.0f);  // dry at unity
           masterMixer.gain(1, 0.0f);  // wavefolder return off
@@ -2237,25 +2239,39 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // Drive fraction for compensation (0→1)
         float drive = activeSq;
 
-        // Dry bus: normal pull-down up to 65%, then roll off to 50% of normal
-        float dryBase = 1.0f - 0.08f * drive;
-        if (active > 0.65f) {
-          float rolloff = (active - 0.65f) / (1.0f - 0.65f);  // 0→1 over 65%–100%
-          dryBase *= 1.0f - 0.5f * rolloff;                    // down to 50%
+        // Dry bus: gentle pull-down up to 50%, then roll off harder to 40% of normal
+        float dryBase = 1.0f - 0.12f * drive;
+        if (active > 0.50f) {
+          float rolloff = (active - 0.50f) / (1.0f - 0.50f);  // 0→1 over 50%–100%
+          dryBase *= 1.0f - 0.6f * rolloff;                    // down to 40%
         }
         float dryLevel = dryBase;
 
-        // Wavefolder return: ramp up more to compensate for dry rolloff (0.32 → 0.74)
-        float wfReturn = 0.32f + 0.42f * drive;
+        // Wavefolder return: ramp up then plateau (0.30 → 0.58)
+        // Tamed at high drive to prevent loudness overshoot
+        float wfReturn = 0.30f + 0.28f * drive;
 
-        // Loudness compensation — normalize so dry+wet never exceeds unity
-        float sum = dryLevel + wfReturn;
+        // Drum envelope gains: transient bursts need higher gain than
+        // continuous oscillators to audibly affect wavefolding.
+        // Scales with active (not oscSq) so envelopes stay present at high drive.
+        const float ENV_RATIO = 0.80f;
+        float envGain = active * 0.55f * ENV_RATIO;
+
+        // Loudness compensation — account for oscillator drive, envelope
+        // transients, and the harmonic energy the wavefolder generates.
+        // Include envelope contribution in the sum (×0.5 because transient,
+        // not continuous — approximate average vs peak).
+        // Uses active² for the extra reduction so it bites harder past noon.
+        float sum = dryLevel + wfReturn + envGain * 0.5f;
         float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
+        comp *= 1.0f - 0.45f * active * active;
         masterWfComp = comp;
 
         AudioNoInterrupts();
         wfMixer.gain(0, sineGain);
         wfMixer.gain(1, sawGain);
+        wfMixer.gain(2, envGain);   // kick envelope
+        wfMixer.gain(3, envGain);   // snare/clap envelope
         masterMixer.gain(0, dryLevel);
         masterMixer.gain(1, wfReturn);
         AudioInterrupts();
