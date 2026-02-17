@@ -31,7 +31,7 @@
 #include "bitmaps.h"
 #include "hw_setup.h"
 
-#define FIRMWARE_VERSION ".130a"
+#define FIRMWARE_VERSION ".131a"
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
