@@ -330,12 +330,12 @@ static inline int chokeOffsetFromKnob(int v) {
   return (int)(MAX_POS * t);
 }
 
-// D3 decay helper (includes choke and a small accent boost, capped at 200ms)
+// D3 decay helper (includes choke and a small accent boost, capped at 250ms)
 static inline float d3EffectiveBaseDecay() {
   float base = d3DecayBase + chokeOffsetMs;
   if (base < 7.0f) base = 7.0f;
   if (d3AltMode != ALT_OFF) base += 7.0f;
-  if (base > 200.0f) base = 200.0f;
+  if (base > 250.0f) base = 250.0f;
   return base;
 }
 
@@ -1415,7 +1415,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = map(knobValue, 0, 1023, 100, 1200) * 0.1f;
+        float decayMs = map(knobValue, 0, 1023, 100, 2500) * 0.1f;
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DECAY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
         break;
@@ -1968,7 +1968,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = map(knobValue, 0, 1023, 100, 1200) * 0.1f;
+        float decayMs = map(knobValue, 0, 1023, 100, 2500) * 0.1f;
         d3DecayBase = decayMs;
         applyChokeToDecays();
         break;
