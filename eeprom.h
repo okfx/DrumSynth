@@ -63,10 +63,8 @@ struct EepromSlot {
 const uint16_t EEPROM_MAGIC = 0x4242;
 const uint8_t SAVE_SLOT_COUNT = 10;
 const int EEPROM_BASE_ADDR = 0;
-const int EEPROM_SLOT_SIZE = sizeof(EepromSlot);
-
 // PPQN stored after all save slots
-static const int EEPROM_PPQN_ADDR = SAVE_SLOT_COUNT * EEPROM_SLOT_SIZE;
+static const int EEPROM_PPQN_ADDR = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
 static const uint8_t EEPROM_PPQN_MAGIC = 0xAA;
 
 // ============================================================================
@@ -114,7 +112,7 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
 
   // Show "PATTERN LOADED" overlay message
   activeRail = RAIL_NONE;
-  lastActiveKnob = 255;  // sentinel: no active knob
+  lastActiveKnob = KNOB_NONE;
   snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
   snprintf(displayParameter2, sizeof(displayParameter2), "LOADED");
 

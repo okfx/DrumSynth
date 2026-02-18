@@ -58,8 +58,8 @@ extern void applyMasterGainFromState();
 //    currentStep               — int (32-bit aligned), atomic on ARM, ISR writes via triggerStepFromISR
 //    ledUpdatePending          — bool, atomic on ARM, ISR sets, main loop clears
 //    lastD1/D2/D3TriggerUs     — uint32_t, written by both ISR and main loop
-//    subdivRemaining           — uint8_t, ISR-only (externalClockISR + subdivISR, same priority)
-//    subdivIntervalUs          — uint32_t, ISR-only (externalClockISR writes, subdivISR reads)
+//    subdivRemaining           — uint8_t, ISR + resetExternalClockState (inside noInterrupts)
+//    subdivIntervalUs          — uint32_t, ISR + resetExternalClockState (inside noInterrupts)
 //
 //  Main loop writes (read by ISR):
 //    transportState                    — uint8_t, atomic on ARM, safe for ISR to read
@@ -111,8 +111,6 @@ static constexpr uint32_t EXT_TIMEOUT_US = 2000000;
 // cannot preempt each other, so no race conditions between them.
 volatile uint8_t  subdivRemaining = 0;     // Deferred steps still to fire (0 = idle, max 3)
 volatile uint32_t subdivIntervalUs = 0;    // Microseconds between subdivision steps
-
-// (DEBUG_MODE pulse counter removed — unused)
 
 // ============================================================================
 //  ISR Functions
@@ -278,7 +276,6 @@ void externalClockISR() {
     }
   }
 
-  // (DEBUG_MODE counter removed)
 }
 
 // ============================================================================

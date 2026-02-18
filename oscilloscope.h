@@ -69,8 +69,9 @@ void drawScopeWaveform(int x, int y, int w, int h) {
   // Find min/max for AC auto-scaling (signed signal)
   float minVal = 0.0f, maxVal = 0.0f;
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
-    if (scopeBuffer[i] < minVal) minVal = scopeBuffer[i];
-    if (scopeBuffer[i] > maxVal) maxVal = scopeBuffer[i];
+    float v = scopeBuffer[i];
+    if (v < minVal) minVal = v;
+    if (v > maxVal) maxVal = v;
   }
 
   float range = maxVal - minVal;
@@ -105,10 +106,12 @@ void drawScopeWaveform(int x, int y, int w, int h) {
   // Snapshot write index so it doesn't change mid-render
   uint8_t writeSnap = scopeBufferWriteIndex;
 
-  // Precompute y-coordinates for all samples, centered on smoothed midpoint
+  // Precompute y-coordinates for all samples, centered on smoothed midpoint.
+  // writeSnap+i wraps at most once, so a conditional subtract replaces modulo.
   int ys[SCOPE_DISPLAY_WIDTH];
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
-    int idx = (writeSnap + i) % SCOPE_DISPLAY_WIDTH;
+    int idx = writeSnap + i;
+    if (idx >= SCOPE_DISPLAY_WIDTH) idx -= SCOPE_DISPLAY_WIDTH;
     int py = y + h / 2 - (int)((scopeBuffer[idx] - scopeMidpoint) * vScale);
     ys[i] = constrain(py, y, y + h - 1);
   }

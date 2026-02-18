@@ -30,6 +30,7 @@
 #include "audio_init.h"
 #include "bitmaps.h"
 #include "hw_setup.h"
+static_assert(numSteps == 16, "Accent mask logic assumes 16 steps");
 
 #define FIRMWARE_VERSION ".131a"
 
@@ -42,7 +43,7 @@ enum Track : uint8_t {
 
 // overlay and debounce timing
 const uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
-const uint16_t DEBOUNCE_DELAY_MS = 10;       // 10ms — fast response for sync
+const uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
 const uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 const uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
 
@@ -62,6 +63,9 @@ static constexpr uint32_t PPQN_LONG_PRESS_MS = 5000;
 // PPQN options table
 const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 24, 48, 96};
 constexpr uint8_t PPQN_OPTION_COUNT = 6;
+
+// Display constants
+static constexpr int LPF_BAR_MAX = 78;       // LPF bar shows "OFF" at/above this value
 
 // sequences
 byte drum1Sequence[numSteps] = {
@@ -159,7 +163,8 @@ float d1CachedDecayMs = 75.0f;   // d1Decay
 // parameter overlay text — Main-loop only, no ISR access
 char displayParameter1[24] = "";
 char displayParameter2[24] = "";
-int lastActiveKnob = 255;
+const int KNOB_NONE = 255;                   // sentinel: no active knob
+int lastActiveKnob = KNOB_NONE;
 uint32_t parameterOverlayStartTick = 0;
 
 // UI voice rails
@@ -273,6 +278,7 @@ static constexpr int KNOB_UNLOCK_THRESHOLD = 10;  // ADC counts of intentional m
 
 // helpers
 static inline float mapf(int v, int inMin, int inMax, float outMin, float outMax) {
+  if (inMax == inMin) return outMin;  // guard: avoid divide-by-zero
   return outMin + (outMax - outMin) * float(v - inMin) / float(inMax - inMin);
 }
 
@@ -392,12 +398,6 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
     case ALT_ALT9: return PAT_ALT9;
     default: return 0;
   }
-}
-
-// Accent evaluation — delegates to accentMaskFromMode (single implementation).
-// Bit 15 = step 0, bit 0 = step 15; extract the bit for this step.
-static inline bool isAccent(uint8_t mode, uint8_t step) {
-  return (accentMaskFromMode(mode) >> (15 - (step & 15))) & 1;
 }
 
 // Safe even if 32 bit volatile reads can tear on your target.
@@ -538,7 +538,6 @@ void setup() {
     display.setTextSize(1);
     display.setCursor(40, 20);
     display.print("VERSION");
-    display.setTextSize(1);
     display.setCursor(43, 36);
     display.print("v" FIRMWARE_VERSION);
     display.display();
@@ -563,7 +562,7 @@ void setup() {
 
   // Clear overlay and parameter strings at boot (now sysTickMs is valid)
   activeRail = RAIL_NONE;
-  lastActiveKnob = 255;
+  lastActiveKnob = KNOB_NONE;
   displayParameter1[0] = 0;
   displayParameter2[0] = 0;
 
@@ -872,8 +871,8 @@ void triggerD3() {
 
 void updateOtherButtons() {
   static uint32_t lastDebounceTick[otherButtonsCount] = { 0 };
-  static bool state[otherButtonsCount] = { false };
-  static bool lastState[otherButtonsCount] = { false };
+  static bool btnState[otherButtonsCount] = { false };
+  static bool btnLastState[otherButtonsCount] = { false };
 
   // Button 7 long-hold state — shared between state-change and continuous-hold blocks
   static uint32_t btn7PressTick = 0;
@@ -891,19 +890,19 @@ void updateOtherButtons() {
 
     bool rawPressed = !otherButtonsMux.read();  // no arg — use channel already set above
 
-    if (rawPressed != lastState[i]) {
+    if (rawPressed != btnLastState[i]) {
       lastDebounceTick[i] = nowTick;
     }
 
-    uint16_t debounceTicks = (i == 6) ? PLAY_DEBOUNCE_MS : BUTTON_DEBOUNCE_MS;
-    if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceTicks && (rawPressed != state[i])) {
+    uint16_t debounceMs = (i == 6) ? PLAY_DEBOUNCE_MS : BUTTON_DEBOUNCE_MS;
+    if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceMs && (rawPressed != btnState[i])) {
 
-      state[i] = rawPressed;
+      btnState[i] = rawPressed;
 
       // Button 7 (CHANGE MEMORY SLOT) — state transitions only.
       // 5s hold detection is in continuous check below.
       if (i == 7) {
-        if (state[7]) {
+        if (btnState[7]) {
           // Press down — record timestamp
           btn7PressTick = nowTick;
           btn7EnteredPpqn = false;
@@ -925,7 +924,7 @@ void updateOtherButtons() {
             snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
             parameterOverlayStartTick = nowTick;
             activeRail = RAIL_NONE;
-            lastActiveKnob = 255;
+            lastActiveKnob = KNOB_NONE;
           } else {
             // Short press — normal cycle memory slot
             activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
@@ -935,7 +934,7 @@ void updateOtherButtons() {
       }
 
       // Button 7 (MEM) handled separately — see continuous-hold block above
-      if (state[i] && i != 7) {
+      if (btnState[i] && i != 7) {
         switch (i) {
 
           case 0: selectSequence(0); break;
@@ -984,7 +983,7 @@ void updateOtherButtons() {
           case 9:
             {
               activeRail = RAIL_NONE;
-              lastActiveKnob = 255;
+              lastActiveKnob = KNOB_NONE;
 
               if (sequencePlaying) {
                 snprintf(displayParameter1, sizeof(displayParameter1), "STOP");
@@ -1008,7 +1007,7 @@ void updateOtherButtons() {
     // Button 7 continuous hold check — enters PPQN mode after 5s while held.
     // Runs on every scan iteration (not just state change). Uses function-scope
     // btn7PressTick/btn7EnteredPpqn shared with the state-change block above.
-    if (i == 7 && state[7] && !ppqnModeActive && !btn7EnteredPpqn) {
+    if (i == 7 && btnState[7] && !ppqnModeActive && !btn7EnteredPpqn) {
       if ((uint32_t)(nowTick - btn7PressTick) >= PPQN_LONG_PRESS_MS) {
         ppqnModeActive = true;
         ppqnModeLastActivityTick = nowTick;
@@ -1017,7 +1016,7 @@ void updateOtherButtons() {
       }
     }
 
-    lastState[i] = rawPressed;
+    btnLastState[i] = rawPressed;
   }
 }
 
@@ -1070,8 +1069,8 @@ void updateLEDs() {
 
 void updateStepButtons() {
   static uint32_t lastDebounceTick[stepButtonCount] = { 0 };
-  static bool state[stepButtonCount] = { false };
-  static bool lastState[stepButtonCount] = { false };
+  static bool btnState[stepButtonCount] = { false };
+  static bool btnLastState[stepButtonCount] = { false };
 
   byte* seq = seqByTrack(activeTrack);
 
@@ -1086,21 +1085,21 @@ void updateStepButtons() {
     delayMicroseconds(5);
     bool rawPressed = !stepButtonsMux.read();  // no arg — use channel already set above
 
-    if (rawPressed != lastState[i]) {
+    if (rawPressed != btnLastState[i]) {
       lastDebounceTick[i] = nowTick;
     }
 
-    if ((uint32_t)(nowTick - lastDebounceTick[i]) > DEBOUNCE_DELAY_MS && (rawPressed != state[i])) {
+    if ((uint32_t)(nowTick - lastDebounceTick[i]) > STEP_DEBOUNCE_MS && (rawPressed != btnState[i])) {
 
-      state[i] = rawPressed;
-      if (state[i]) {
+      btnState[i] = rawPressed;
+      if (btnState[i]) {
         seq[i] ^= 1;
         sr.set(i, seq[i]);
         patternDirty = true;
       }
     }
 
-    lastState[i] = rawPressed;
+    btnLastState[i] = rawPressed;
   }
 }
 
@@ -1161,7 +1160,7 @@ static inline float d1PitchCurve(int knobValue) {
 
 // D2 Decay curve: piecewise 50–300 ms (low half) then 300–1000 ms (high half)
 static inline float d2DecayCurve(int knobValue) {
-  float norm = knobValue / 1023.0f;
+  float norm = normKnob(knobValue);
   if (norm <= 0.5f) {
     return 50.0f + (300.0f - 50.0f) * (norm / 0.5f);
   } else {
@@ -1225,11 +1224,12 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
     }
   }
 
-  int ratioIdx = (int)((knobValue / 1023.0f) * maxIdx + 0.5f);
+  int ratioIdx = (int)(normKnob(knobValue) * maxIdx + 0.5f);
   return constrain(ratioIdx, 0, maxIdx);
 }
 
-// parameter overlay text
+// Parameter overlay text — display strings for each knob.
+// KEEP IN SYNC with applyKnobToEngine() below (same case numbers).
 
 void updateParameterDisplay(byte idx, int knobValue) {
   setOverlayTimer(idx);
@@ -1243,7 +1243,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 0:  // D1 Drive/Distortion
       {
-        int percent = (int)map(knobValue, 0, 1023, 1, 100);
+        float norm = normKnob(knobValue);
+        int percent = (int)(norm * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORT");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1285,7 +1286,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 5:  // D1 Attack/Snap
       {
-        int percent = (int)map(knobValue, 0, 1023, 0, 100);
+        float norm = normKnob(knobValue);
+        int percent = (int)(norm * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1293,7 +1295,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 6:  // D1 EQ (Body)
       {
-        int percent = (int)map(knobValue, 0, 1023, 0, 100);
+        float norm = normKnob(knobValue);
+        int percent = (int)(norm * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1302,7 +1305,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 7:  // D1 Delay Send
       {
         // Capped at 75% to prevent feedback runaway
-        int percent = (int)map(knobValue, 0, 1023, 0, 75);
+        float norm = normKnob(knobValue);
+        int percent = (int)(norm * 75.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1340,16 +1344,21 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 11:  // D2 Wavefolder Drive
       {
         float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 DISTORT");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (knobValue < 10) {
+          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
+        } else {
+          int percent = (int)(norm * 100.0f + 0.5f);
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
     case 12:  // D2 Delay Send
       {
         // Capped at 75% to prevent feedback runaway
-        int percent = (int)map(knobValue, 0, 1023, 0, 75);
+        float norm = normKnob(knobValue);
+        int percent = (int)(norm * 75.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1358,13 +1367,11 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 13:  // D2 Reverb
       {
         float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f + 0.5f);
-
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 REVERB");
-
-        if (percent < 5) {
+        if (norm <= 0.02f) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
+          int percent = (int)(norm * 100.0f + 0.5f);
           snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         }
         break;
@@ -1372,11 +1379,12 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 14:  // D2 Noise
       {
+        float norm = normKnob(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 NOISE");
         if (knobValue < 5) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
-          int percent = (int)map(knobValue, 5, 1023, 1, 100);
+          int percent = (int)(norm * 100.0f + 0.5f);
           snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         }
         break;
@@ -1424,16 +1432,22 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 19:  // D3 Wavefolder Drive
       {
-        int percent = (int)map(knobValue, 0, 1023, 1, 100);
+        float norm = normKnob(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORT");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (knobValue < 10) {
+          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
+        } else {
+          int percent = (int)(norm * 100.0f + 0.5f);
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
     case 20:  // D3 Delay Send
       {
         // Capped at 75% to prevent feedback runaway (same as D1/D2)
-        int percent = (int)map(knobValue, 0, 1023, 0, 75);
+        float norm = normKnob(knobValue);
+        int percent = (int)(norm * 75.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1548,7 +1562,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 30:  // Wavefold (master wavefolder drive)
       {
         float norm = normKnob(knobValue);
-        const float DEADBAND = 0.05f;
+        const float DEADBAND = 0.02f;
         float active = (norm <= DEADBAND) ? 0.0f
                      : (norm - DEADBAND) / (1.0f - DEADBAND);
         if (active > 1.0f) active = 1.0f;
@@ -1562,9 +1576,14 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 31:  // Master Delay Mix/Feedback
       {
-        int percent = (int)map(knobValue, 0, 1023, 0, 100);
+        float norm = normKnob(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "DELAY AMT");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (norm <= 0.02f) {
+          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
+        } else {
+          int percent = (int)(norm * 100.0f + 0.5f);
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
@@ -1581,6 +1600,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
   }
 }
 
+// Apply knob value to audio engine — sets gains, frequencies, envelopes.
+// KEEP IN SYNC with updateParameterDisplay() above (same case numbers).
 inline void applyKnobToEngine(byte idx, int knobValue) {
   switch (idx) {
 
@@ -1708,7 +1729,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 7:  // D1 Delay Send
       {
         // Capped at 75% to prevent feedback runaway
-        float delaySend = map(knobValue, 0, 1023, 0, 75) * 0.01f;
+        float delaySend = normKnob(knobValue) * 0.75f;
         d1DelaySend = delaySend;
         updateDrumDelayGains();
         break;
@@ -1805,7 +1826,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 12:  // D2 Delay Send
       {
         // Capped at 75% to prevent feedback runaway
-        float delaySend = map(knobValue, 0, 1023, 0, 75) * 0.01f;
+        float delaySend = normKnob(knobValue) * 0.75f;
         d2DelaySend = delaySend;
         updateDrumDelayGains();
         break;
@@ -1815,14 +1836,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        if (norm < 0.05f) {
+        if (norm <= 0.02f) {
           // Off
           AudioNoInterrupts();
           d2MasterMixer.gain(1, 0.0f);
           AudioInterrupts();
         } else {
           // Active reverb
-          float blend = (norm - 0.05f) / 0.95f;
+          float blend = (norm - 0.02f) / 0.98f;
           float roomSize = 0.3f + blend * 0.6f;
 
           AudioNoInterrupts();
@@ -2012,25 +2033,26 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         float norm = normKnob(knobValue);
-        norm = (norm - 0.10f) / 0.90f;
-        if (norm < 0.0f) norm = 0.0f;
-        if (norm > 1.0f) norm = 1.0f;
+        // Remap past deadband: bottom 10% stays off, rest spans 0..1
+        float active = (norm - 0.10f) / 0.90f;
+        if (active < 0.0f) active = 0.0f;
+        if (active > 1.0f) active = 1.0f;
 
         // Drive goes 0..0.50 (linear)
-        float drive = 0.50f * norm;
+        float drive = 0.50f * active;
         d3DCwf.amplitude(drive);
 
         // Dry pulls down slightly as drive rises (0.25 → 0.22)
-        float dryGain = 0.25f - 0.03f * norm;
+        float dryGain = 0.25f - 0.03f * active;
         // Wet return ramps up with drive (0.0 → 0.30)
-        float wetGain = norm * 0.30f;
+        float wetGain = active * 0.30f;
         // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
         float comp;
-        if (norm <= 0.55f) {
-          comp = 1.0f - 0.12f * norm;
+        if (active <= 0.55f) {
+          comp = 1.0f - 0.12f * active;
         } else {
           float base = 1.0f - 0.12f * 0.55f;  // 0.934
-          float extra = (norm - 0.55f) / 0.45f; // 0→1 over 55%–100%
+          float extra = (active - 0.55f) / 0.45f; // 0→1 over 55%–100%
           comp = base - 0.25f * extra;
         }
         dryGain *= comp;
@@ -2046,7 +2068,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 20:  // D3 Delay Send
       {
         // Capped at 75% to prevent feedback runaway (same as D1/D2)
-        float delaySend = map(knobValue, 0, 1023, 0, 75) * 0.01f;
+        float delaySend = normKnob(knobValue) * 0.75f;
         d3DelaySend = delaySend;
         updateDrumDelayGains();
         break;
@@ -2076,19 +2098,17 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         d3AltMode = accentModeFromKnob(knobValue);
         d3AccentMask = accentMaskFromMode(d3AltMode);
 
-        // Update cached D3 decay for new accent mode
-        d3CachedDecayMs = d3EffectiveBaseDecay();
-        {
+        // Only recompute decay + preview when mode actually changes
+        if (d3AltMode != prevMode) {
+          d3CachedDecayMs = d3EffectiveBaseDecay();
           AudioNoInterrupts();
           d3AmpEnv.decay(d3CachedDecayMs);
           d3606AmpEnv.decay(d3CachedDecayMs);
           drum3.length(d3CachedDecayMs);
           AudioInterrupts();
-        }
 
-        // If mode changed, show the pattern briefly on step LEDs
-        if (d3AltMode != prevMode) {
-          accentPreviewMask = accentMaskFromMode(d3AltMode);
+          // Show the new pattern briefly on step LEDs
+          accentPreviewMask = d3AccentMask;  // already computed above
 
           uint32_t nowTick;
           noInterrupts();
@@ -2284,13 +2304,13 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        // Dead band below 5% — delay fully OFF
-        if (norm <= 0.05f) {
+        // Dead band below 2% — delay fully OFF
+        if (norm <= 0.02f) {
           delayAmp.gain(0.0f);
           masterMixer.gain(2, 0.0f);  // delay return
         } else {
-          // Remap 5%-100% → 0-1, then use sqrt curve for more level at low knob
-          float blend = (norm - 0.05f) / 0.95f;
+          // Remap 2%-100% → 0-1, then use sqrt curve for more level at low knob
+          float blend = (norm - 0.02f) / 0.98f;
           float shaped = sqrtf(blend);  // sqrt gives more audible range at low settings
           float level = 0.15f + shaped * 0.90f;  // 15% floor, 5% louder max (1.05)
           delayAmp.gain(level * 2.0f);
@@ -2361,6 +2381,19 @@ void updateKnobs() {
 
 // UI helpers
 
+// Draw text with 1-pixel black outline for readability on top of the scope waveform.
+// Uses 4 cardinal offsets (N/S/E/W) instead of 8 — half the draws, visually identical at 1px.
+void drawOutlinedText(int x, int y, const char* text) {
+  display.setTextColor(0);        // black outline
+  display.setCursor(x, y - 1); display.print(text);  // N
+  display.setCursor(x, y + 1); display.print(text);  // S
+  display.setCursor(x - 1, y); display.print(text);  // W
+  display.setCursor(x + 1, y); display.print(text);  // E
+  display.setTextColor(1);        // white foreground
+  display.setCursor(x, y);
+  display.print(text);
+}
+
 static inline void drawCaretRail(int x, int y, int w, int h, int caretX) {
   display.drawRect(x, y, w, h, 1);
   int cx = constrain(caretX, x + 1, x + w - 2);
@@ -2385,6 +2418,9 @@ void renderVoiceRails() {
 
   display.setTextSize(1);
 
+  // Black rectangle behind labels + rail so they're visible over the scope waveform
+  display.fillRect(railX - 2, labelY - 2, railW + 4, (railY + railH) - labelY + 5, 0);
+
   if (activeRail == RAIL_D1_SHAPE) {
     drawCaretRail(railX, railY, railW, railH, railX + (int)(uiMixD1Shape * railW));
     int third = railW / 3;
@@ -2397,18 +2433,16 @@ void renderVoiceRails() {
     int zx = railX + zone * third + 1;
     int zw = third - 2;
     display.fillRect(zx, railY + 1, zw, railH - 2, 1);
-  }
 
-  if (activeRail == RAIL_D2_VOICE) {
+  } else if (activeRail == RAIL_D2_VOICE) {
     int caret = railX + (int)(uiMixD2Voice * railW);
     drawCaretRail(railX, railY, railW, railH, caret);
     labelAtCenter("CLAP", railX + 14, labelY);
     labelAtCenter("SNARE", railX + railW - 14, labelY);
     int fillW = max(1, caret - railX);
-    display.fillRect(railX + 1, railY + 1, fillW - 2, railH - 2, 1);
-  }
+    if (fillW > 2) display.fillRect(railX + 1, railY + 1, fillW - 2, railH - 2, 1);
 
-  if (activeRail == RAIL_D3_VOICE) {
+  } else if (activeRail == RAIL_D3_VOICE) {
     drawCaretRail(railX, railY, railW, railH, railX + (int)(uiMixD3Voice * railW));
     int third = railW / 3;
     labelAtCenter("1", railX + third * 0 + third / 2, labelY);
@@ -2421,19 +2455,6 @@ void renderVoiceRails() {
     int zw = third - 2;
     display.fillRect(zx, railY + 1, zw, railH - 2, 1);
   }
-}
-
-// Draw text with 1-pixel black outline for readability on top of the scope waveform.
-// Uses 4 cardinal offsets (N/S/E/W) instead of 8 — half the draws, visually identical at 1px.
-void drawOutlinedText(int x, int y, const char* text) {
-  display.setTextColor(0);        // black outline
-  display.setCursor(x, y - 1); display.print(text);  // N
-  display.setCursor(x, y + 1); display.print(text);  // S
-  display.setCursor(x - 1, y); display.print(text);  // W
-  display.setCursor(x + 1, y); display.print(text);  // E
-  display.setTextColor(1);        // white foreground
-  display.setCursor(x, y);
-  display.print(text);
 }
 
 // OLED drawing
@@ -2549,7 +2570,7 @@ void updateDisplay() {
   // LPF
   display.setCursor(62, 0);
   display.print("LPF");
-  if (lpfSnap >= 78) {
+  if (lpfSnap >= LPF_BAR_MAX) {
     display.setCursor(62, 10);
     display.print("OFF");
   } else {
