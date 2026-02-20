@@ -64,6 +64,10 @@ static constexpr uint32_t PPQN_LONG_PRESS_MS = 5000;
 const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 24, 48, 96};
 constexpr uint8_t PPQN_OPTION_COUNT = 6;
 
+// Chromatic mode state — main-loop only
+bool chromaticMode = false;
+static constexpr uint32_t CHROMATIC_LONG_PRESS_MS = 3000;
+
 // Display constants
 static constexpr int LPF_BAR_MAX = 78;       // LPF bar shows "OFF" at/above this value
 
@@ -874,6 +878,10 @@ void updateOtherButtons() {
   static bool btnState[otherButtonsCount] = { false };
   static bool btnLastState[otherButtonsCount] = { false };
 
+  // Button 6 long-hold state — 3s hold toggles chromatic mode
+  static uint32_t btn6PressTick = 0;
+  static bool btn6EnteredChromatic = false;
+
   // Button 7 long-hold state — shared between state-change and continuous-hold blocks
   static uint32_t btn7PressTick = 0;
   static bool btn7EnteredPpqn = false;
@@ -933,21 +941,20 @@ void updateOtherButtons() {
         }
       }
 
-      // Button 7 (MEM) handled separately — see continuous-hold block above
-      if (btnState[i] && i != 7) {
-        switch (i) {
-
-          case 0: selectSequence(0); break;
-          case 1: selectSequence(1); break;
-          case 2: selectSequence(2); break;
-
-          case 3: break;  // Buttons 3-5: hardware-present but unassigned
-          case 4: break;
-          case 5: break;
-
-          case 6:
+      // Button 6 (PLAY/STOP) — state transitions.
+      // 3s hold toggles chromatic mode; short press toggles play/stop on release.
+      if (i == 6) {
+        if (btnState[6]) {
+          // Press down — record timestamp
+          btn6PressTick = nowTick;
+          btn6EnteredChromatic = false;
+        } else {
+          // Release
+          if (btn6EnteredChromatic) {
+            // Long-press already toggled chromatic mode — suppress play/stop
+          } else {
+            // Short press — normal play/stop toggle
             if (!sequencePlaying) {
-              // START — reset step position so first emitted step becomes 0
               noInterrupts();
               currentStep = numSteps - 1;
               pendingStepCount = 0;
@@ -957,12 +964,26 @@ void updateOtherButtons() {
               sequencePlaying = true;
               setTransport(RUN_INT);
             } else {
-              // STOP — setTransport(STOPPED) clears extStepAcc internally
               sequencePlaying = false;
               setTransport(STOPPED);
               applyMasterGainFromState();
             }
-            break;
+          }
+          btn6EnteredChromatic = false;
+        }
+      }
+
+      // Buttons 7 (MEM) and 6 (PLAY) handled separately above
+      if (btnState[i] && i != 7 && i != 6) {
+        switch (i) {
+
+          case 0: selectSequence(0); break;
+          case 1: selectSequence(1); break;
+          case 2: selectSequence(2); break;
+
+          case 3: break;  // Buttons 3-5: hardware-present but unassigned
+          case 4: break;
+          case 5: break;
 
           case 8:
             sequencePlaying = false;
@@ -1001,6 +1022,19 @@ void updateOtherButtons() {
           default:
             break;
         }
+      }
+    }
+
+    // Button 6 continuous hold check — toggles chromatic mode after 3s.
+    if (i == 6 && btnState[6] && !btn6EnteredChromatic) {
+      if ((uint32_t)(nowTick - btn6PressTick) >= CHROMATIC_LONG_PRESS_MS) {
+        chromaticMode = !chromaticMode;
+        btn6EnteredChromatic = true;
+        snprintf(displayParameter1, sizeof(displayParameter1),
+                 chromaticMode ? "CHROMATIC" : "NORMAL");
+        displayParameter2[0] = 0;
+        parameterOverlayStartTick = nowTick;
+        lastActiveKnob = KNOB_NONE;
       }
     }
 
@@ -1146,6 +1180,22 @@ static inline float d1DecayCurve(int knobValue) {
   }
 }
 
+// Chromatic pitch: maps knob 0–1023 to 49 semitones (A1=55Hz to A5=880Hz).
+// Returns frequency in Hz. Writes note name to outName (must be >=5 chars).
+// Uses standard MIDI formula: f(n) = 440 × 2^((n − 69) / 12)
+static inline float chromaticPitch(int knobValue, char* outName) {
+  float semi = (knobValue / 1023.0f) * 48.0f;
+  int note = constrain((int)(semi + 0.5f), 0, 48);
+  int midiNote = note + 33;  // A1 = MIDI 33
+
+  static const char* NOTE_NAMES[] = {
+    "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
+  };
+  snprintf(outName, 5, "%s%d", NOTE_NAMES[midiNote % 12], (midiNote / 12) - 1);
+
+  return 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
+}
+
 // D1 Pitch curve: piecewise 60–105 Hz (low) then 105–500 Hz (high)
 static inline float d1PitchCurve(int knobValue) {
   float norm = normKnob(knobValue);
@@ -1269,9 +1319,16 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
-        float freqHz = d1PitchCurve(knobValue);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 FREQUENCY");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
+        if (chromaticMode) {
+          char noteName[5];
+          chromaticPitch(knobValue, noteName);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 NOTE");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        } else {
+          float freqHz = d1PitchCurve(knobValue);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 FREQUENCY");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
+        }
         break;
       }
 
@@ -1318,9 +1375,16 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
-        float freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE FREQ");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
+        if (chromaticMode) {
+          char noteName[5];
+          chromaticPitch(knobValue, noteName);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D2 NOTE");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        } else {
+          float freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE FREQ");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
+        }
         break;
       }
 
@@ -1407,9 +1471,16 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 16:  // D3 Pitch (displayed as generic "tune")
       {
-        int tune = (int)(normKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%3d", tune);
+        if (chromaticMode) {
+          char noteName[5];
+          chromaticPitch(knobValue, noteName);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D3 NOTE");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        } else {
+          int tune = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%3d", tune);
+        }
         break;
       }
 
@@ -1670,7 +1741,12 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
-        d1BaseFreq = d1PitchCurve(knobValue);
+        if (chromaticMode) {
+          char noteName[5];
+          d1BaseFreq = chromaticPitch(knobValue, noteName);
+        } else {
+          d1BaseFreq = d1PitchCurve(knobValue);
+        }
         applyD1Freq();
         break;
       }
@@ -1741,7 +1817,13 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
-        float freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
+        float freqHz;
+        if (chromaticMode) {
+          char noteName[5];
+          freqHz = chromaticPitch(knobValue, noteName);
+        } else {
+          freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
+        }
         d2.frequency(freqHz);
         break;
       }
@@ -1898,44 +1980,48 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 16:  // D3 Pitch
       {
-        float norm = normKnob(knobValue);
-
-        // --- Shared pitch bend curve (both voices use the same shape) ---
-        const float BEND_START = 0.25f;
+        float hatBaseHz;
         float pitchBend;
 
-        if (norm <= BEND_START) {
-          float blend = norm / BEND_START;
-          pitchBend = 0.60f * blend;
+        // Precomputed logs of constant ratios — expf(x*log) is ~2x faster than powf
+        static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);
+        static const float LOG_C1_RATIO   = logf(2400.0f / 400.0f);
+        static const float LOG_C2_RATIO   = logf(4200.0f / 600.0f);
+        static const float LOG_R1_RATIO   = logf(4.0f / 2.0f);
+        static const float LOG_R2_RATIO   = logf(6.0f / 4.0f);
+
+        if (chromaticMode) {
+          // Chromatic: snap to semitone, derive pitchBend for FM/filter math
+          char noteName[5];
+          hatBaseHz = chromaticPitch(knobValue, noteName);
+          pitchBend = constrain(
+            (hatBaseHz - 400.0f) / (6000.0f - 400.0f), 0.0f, 1.0f);
         } else {
-          float blend = (norm - BEND_START) / (1.0f - BEND_START);
-          pitchBend = 0.60f + 0.40f * (blend * blend);
+          // Normal: piecewise pitch bend curve
+          float norm = normKnob(knobValue);
+          const float BEND_START = 0.25f;
+          if (norm <= BEND_START) {
+            float blend = norm / BEND_START;
+            pitchBend = 0.60f * blend;
+          } else {
+            float blend = (norm - BEND_START) / (1.0f - BEND_START);
+            pitchBend = 0.60f + 0.40f * (blend * blend);
+          }
+          const float hatCurve = pitchBend * pitchBend;
+          hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
         }
 
-        // --- Voice 1 (606-ish hats) tuning ---
-        // Precomputed logs of constant ratios — expf(x*log) is ~2x faster than powf on Cortex-M7
-        static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
-        static const float LOG_C1_RATIO   = logf(2400.0f / 400.0f);   // c1Max/c1Min
-        static const float LOG_C2_RATIO   = logf(4200.0f / 600.0f);   // c2Max/c2Min
-        static const float LOG_R1_RATIO   = logf(4.0f / 2.0f);        // r1Max/r1Min
-        static const float LOG_R2_RATIO   = logf(6.0f / 4.0f);        // r2Max/r2Min
+        // Filter tracking
+        const float hpfHz = 6800.0f * (1.0f + 0.06f * pitchBend);
+        const float bpfHz = 9800.0f * (1.0f + 0.05f * pitchBend);
 
-        const float hatCurve = pitchBend * pitchBend;
-        const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
-
-        // Gentle filter tracking (keeps volume steadier)
-        const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
-        const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
-
-        // --- Voice 2 (FM hats) tuning — reuses pitchBend from above ---
+        // Voice 2 FM tuning — reuses pitchBend
         const float carrier1Hz = 400.0f * expf(pitchBend * LOG_C1_RATIO);
         const float carrier2Hz = 600.0f * expf(pitchBend * LOG_C2_RATIO);
         const float ratio1 = 2.0f * expf(pitchBend * LOG_R1_RATIO);
         const float ratio2 = 4.0f * expf(pitchBend * LOG_R2_RATIO);
         const float modulator1Hz = carrier1Hz * ratio1;
         const float modulator2Hz = carrier2Hz * ratio2;
-
-        // FM depth: slightly more at the top end, but still capped
         const float depth1 = 0.06f + 0.52f * (pitchBend * pitchBend);
         const float depth2 = 0.04f + 0.44f * (pitchBend * pitchBend);
 
@@ -1949,7 +2035,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         d3W2.amplitude(depth1);
         d3W4.amplitude(depth2);
 
-        // Voice 1 606 hat oscillator bank
+        // Voice 1 606 hat oscillator bank (ratios preserved)
         d3606W1.frequency(hatBaseHz * 1.00f);
         d3606W2.frequency(hatBaseHz * 1.08f);
         d3606W3.frequency(hatBaseHz * 1.17f);
