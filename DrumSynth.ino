@@ -1147,16 +1147,29 @@ void updateStepButtons() {
 
       btnState[i] = rawPressed;
       if (btnState[i]) {
-        // Always toggle step on/off (all modes)
-        seq[i] ^= 1;
-        sr.set(i, seq[i]);
-        patternDirty = true;
-        // Record press time for bass line hold detection
-        stepPressTick[i] = nowTick;
-      }
-      // Detect step button release to clear held step
-      if (!btnState[i] && bassLineHeldStep == i) {
-        bassLineHeldStep = -1;
+        // Press down
+        if (bassLineModeActive && activeTrack == TRACK_D1) {
+          // Bass line mode — defer toggle to release (to distinguish from hold)
+          stepPressTick[i] = nowTick;
+        } else {
+          // Normal mode — toggle step immediately
+          seq[i] ^= 1;
+          sr.set(i, seq[i]);
+          patternDirty = true;
+        }
+      } else {
+        // Release
+        if (bassLineModeActive && activeTrack == TRACK_D1) {
+          if (bassLineHeldStep == i) {
+            // Was in note-select — just clear, no toggle
+            bassLineHeldStep = -1;
+          } else {
+            // Short press (released before hold threshold) — toggle step
+            seq[i] ^= 1;
+            sr.set(i, seq[i]);
+            patternDirty = true;
+          }
+        }
       }
     }
 

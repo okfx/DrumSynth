@@ -22,6 +22,7 @@
 extern byte drum1Sequence[];
 extern byte drum2Sequence[];
 extern byte drum3Sequence[];
+extern uint8_t bassLineNote[];
 
 // PPQN
 extern volatile uint8_t ppqn;
@@ -47,6 +48,7 @@ struct PatternStore {
   byte drum1[numSteps];
   byte drum2[numSteps];
   byte drum3[numSteps];
+  byte bassLine[numSteps];   // Per-step MIDI note for bass line mode
 };
 
 struct EepromSlot {
@@ -60,7 +62,7 @@ struct EepromSlot {
 //  Constants
 // ============================================================================
 
-const uint16_t EEPROM_MAGIC = 0x4242;
+const uint16_t EEPROM_MAGIC = 0x4243;  // Bumped for bass line layout
 const uint8_t SAVE_SLOT_COUNT = 10;
 const int EEPROM_BASE_ADDR = 0;
 // PPQN stored after all save slots
@@ -98,6 +100,7 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
     drum1Sequence[step] = slot.patterns.drum1[step];
     drum2Sequence[step] = slot.patterns.drum2[step];
     drum3Sequence[step] = slot.patterns.drum3[step];
+    bassLineNote[step] = slot.patterns.bassLine[step];
   }
 
   // Refresh step LEDs so they reflect the loaded pattern
@@ -142,6 +145,7 @@ void saveStateToEEPROM(uint8_t slotIndex) {
     slot.patterns.drum1[step] = drum1Sequence[step];
     slot.patterns.drum2[step] = drum2Sequence[step];
     slot.patterns.drum3[step] = drum3Sequence[step];
+    slot.patterns.bassLine[step] = bassLineNote[step];
   }
 
   EEPROM.put((int)addr, slot);  // Cast to int here for EEPROM.put()
