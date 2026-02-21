@@ -1380,8 +1380,10 @@ void updateParameterDisplay(byte idx, int knobValue) {
             snprintf(displayParameter1, sizeof(displayParameter1),
                      "STEP %d", bassLineHeldStep + 1);
             snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+          } else {
+            snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
+            snprintf(displayParameter2, sizeof(displayParameter2), "BASS LINE");
           }
-          // else: knob locked, do nothing
           break;
         }
         float freqHz = d1PitchCurve(knobValue);
