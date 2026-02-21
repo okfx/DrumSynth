@@ -141,12 +141,16 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   slot.magic = EEPROM_MAGIC;
   slot.seq = eepromSeq;
 
+  // Copy arrays with interrupts disabled so external clock ISR
+  // can't read a half-copied pattern (~1µs on Cortex-M7).
+  noInterrupts();
   for (int step = 0; step < numSteps; step++) {
     slot.patterns.drum1[step] = drum1Sequence[step];
     slot.patterns.drum2[step] = drum2Sequence[step];
     slot.patterns.drum3[step] = drum3Sequence[step];
     slot.patterns.bassLine[step] = bassLineNote[step];
   }
+  interrupts();
 
   EEPROM.put((int)addr, slot);  // Cast to int here for EEPROM.put()
 

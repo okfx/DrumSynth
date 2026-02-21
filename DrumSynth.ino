@@ -1025,14 +1025,9 @@ void updateOtherButtons() {
               activeRail = RAIL_NONE;
               lastActiveKnob = KNOB_NONE;
 
-              if (sequencePlaying) {
-                snprintf(displayParameter1, sizeof(displayParameter1), "STOP");
-                snprintf(displayParameter2, sizeof(displayParameter2), "TO SAVE");
-              } else {
-                if (patternDirty) saveStateToEEPROM(activeSaveSlot);
-                snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
-                snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
-              }
+              if (patternDirty) saveStateToEEPROM(activeSaveSlot);
+              snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
+              snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
 
               parameterOverlayStartTick = nowTick;
               break;
@@ -1275,18 +1270,18 @@ static inline float d2DecayCurve(int knobValue) {
   }
 }
 
-// BPM curve: 60–300 (first 80%) then 900–1000 (remaining 20%, hyperspeed), rounded to 0.5
-// NOTE: The 300–900 gap is intentional — hyperspeed is a separate creative effect.
+// BPM curve: 60–400 (first 85%) then 900–1000 (remaining 15%, hyperspeed), rounded to 0.5
+// NOTE: The 400–900 gap is intentional — hyperspeed is a separate creative effect.
 static inline float bpmFromKnob(int knobValue) {
   float norm = normKnob(knobValue);
   float bpmValue;
-  if (norm <= 0.80f) {
-    // 0–80%: 60 → 300 BPM (normal range)
-    float blend = norm / 0.80f;
-    bpmValue = 60.0f + blend * (300.0f - 60.0f);
+  if (norm <= 0.85f) {
+    // 0–85%: 60 → 400 BPM (normal range)
+    float blend = norm / 0.85f;
+    bpmValue = 60.0f + blend * (400.0f - 60.0f);
   } else {
-    // 80–100%: 900 → 1000 BPM (hyperspeed)
-    float blend = (norm - 0.80f) / 0.20f;
+    // 85–100%: 900 → 1000 BPM (hyperspeed)
+    float blend = (norm - 0.85f) / 0.15f;
     bpmValue = 900.0f + blend * (1000.0f - 900.0f);
   }
   return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
