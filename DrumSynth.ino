@@ -1793,7 +1793,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 4:  // D1 Volume
       {
         float norm = normKnob(knobValue);
-        d1Vol = norm * 0.90f;  // Scaled down ~10% to balance with D2/D3
+        d1Vol = norm * norm * 0.75f;  // Log taper (square law), max 0.75
         drumMixer.gain(0, d1Vol);
         updateDrumDelayGains();
         break;
@@ -1998,10 +1998,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 15:  // D2 Volume
       {
         float norm = normKnob(knobValue);
-        float volume = norm * 3.5f;
-        if (volume > 2.3f) volume = 2.3f;
-
-        d2Vol = volume;
+        d2Vol = norm * norm * 0.75f;  // Log taper (square law), max 0.75
         drumMixer.gain(1, d2Vol);
         updateDrumDelayGains();
         break;
@@ -2242,10 +2239,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 23:  // D3 Volume
       {
         float norm = normKnob(knobValue);
-        float volume = norm * 5.0f;
-        if (volume > 3.5f) volume = 3.5f;
-
-        d3Vol = volume;
+        d3Vol = norm * norm * 0.75f;  // Log taper (square law), max 0.75
         drumMixer.gain(2, d3Vol);
         updateDrumDelayGains();
         break;
