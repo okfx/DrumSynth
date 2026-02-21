@@ -150,7 +150,7 @@ volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main 
 #include "oscilloscope.h"
 
 // master UI values
-int masterLPFBarX = 78;
+int masterLPFBarX = LPF_BAR_MAX;
 
 // drum decays
 float d1DecayBase = 75.0f;
@@ -169,8 +169,8 @@ float d3CachedDecayMs = 25.0f;
 
 // D1 cached envelope params (updated on knob change / choke change)
 float d1CachedAttackMs = 0.5f;
-float d1CachedHoldMs = 56.25f;   // d1Decay * 0.75f
-float d1CachedDecayMs = 75.0f;   // d1Decay
+float d1CachedHoldMs = 56.25f;   // defaults; see updateD1EnvelopeCache()
+float d1CachedDecayMs = 75.0f;   // defaults; see updateD1EnvelopeCache()
 
 // parameter overlay text — Main-loop only, no ISR access
 char displayParameter1[24] = "";
@@ -441,9 +441,9 @@ inline void updateDrumDelayGains() {
   // Decouple delay sends from the drum output levels.
   // This keeps delay tails and throws consistent even if a drum is turned down or muted.
 
-  float s1 = d1DelaySend;          // 0..1
-  float s2 = d2DelaySend;          // 0..1
-  float s3 = d3DelaySend * 1.75f;  // D3 needs more send to match D1/D2 levels
+  float s1 = d1DelaySend * 0.6f;   // D1 tapped post-amp (0.8×) — scale down to match D2 level
+  float s2 = d2DelaySend;          // D2 tapped at snareClapMixer — reference level
+  float s3 = d3DelaySend * 1.75f;  // D3 tapped post-filter (quiet) — scale up to match D2 level
 
   // Keep the combined delay input from getting too hot.
   // (Prevents clipping when multiple sends are high at once.)
@@ -1155,8 +1155,8 @@ void updateStepButtons() {
           if (bassLineHeldStep == i) {
             // Was in note-select — just clear, no toggle
             bassLineHeldStep = -1;
-          } else if (bassLineHeldStep < 0) {
-            // Short press — toggle step (only if no other step is in note-select)
+          } else {
+            // Short press on a different step — toggle it
             seq[i] ^= 1;
             sr.set(i, seq[i]);
             patternDirty = true;
@@ -1233,10 +1233,10 @@ static inline float d1PitchCurve(int knobValue) {
   float norm = normKnob(knobValue);
   if (norm <= 0.33f) {
     float blend = norm / 0.33f;
-    return 60.0f + (105.0f - 60.0f) * blend;
+    return 55.0f + (110.0f - 55.0f) * blend;   // A1(55) → A2(110)
   } else {
     float blend = (norm - 0.33f) / 0.67f;
-    return 105.0f + (500.0f - 105.0f) * blend;
+    return 110.0f + (440.0f - 110.0f) * blend;  // A2(110) → A4(440)
   }
 }
 
@@ -1437,7 +1437,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
-        float freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
+        float freqHz = mapf(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE FREQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
         break;
@@ -1868,7 +1868,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
-        float freqHz = mapf(knobValue, 0, 1023, 100.0f, 300.0f);
+        float freqHz = mapf(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
         d2.frequency(freqHz);
         break;
       }
@@ -1906,7 +1906,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
         if (!offZone) {
           driveGain = 0.75f + 0.15f * norm;
-          freqHz = 20.0f + norm * 800.0f;
+          freqHz = 27.5f + norm * 852.5f;  // A0(27.5) → A5(880)
 
           // Wet mix comes in gradually with quadratic curve
           const float WET_START = 0.10f;
@@ -2042,8 +2042,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // --- Voice 1 (606-ish hats) tuning ---
         // Precomputed logs of constant ratios — expf(x*log) is ~2x faster than powf on Cortex-M7
         static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
-        static const float LOG_C1_RATIO   = logf(2400.0f / 400.0f);   // c1Max/c1Min
-        static const float LOG_C2_RATIO   = logf(4200.0f / 600.0f);   // c2Max/c2Min
+        static const float LOG_C1_RATIO   = logf(3520.0f / 440.0f);   // c1: A4(440)→A7(3520)
+        static const float LOG_C2_RATIO   = logf(6160.0f / 660.0f);   // c2: 660→6160 (1.5× c1)
         static const float LOG_R1_RATIO   = logf(4.0f / 2.0f);        // r1Max/r1Min
         static const float LOG_R2_RATIO   = logf(6.0f / 4.0f);        // r2Max/r2Min
 
@@ -2055,8 +2055,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
 
         // --- Voice 2 (FM hats) tuning — reuses pitchBend from above ---
-        const float carrier1Hz = 400.0f * expf(pitchBend * LOG_C1_RATIO);
-        const float carrier2Hz = 600.0f * expf(pitchBend * LOG_C2_RATIO);
+        const float carrier1Hz = 440.0f * expf(pitchBend * LOG_C1_RATIO);  // A4 base
+        const float carrier2Hz = 660.0f * expf(pitchBend * LOG_C2_RATIO); // 1.5× c1 base
         const float ratio1 = 2.0f * expf(pitchBend * LOG_R1_RATIO);
         const float ratio2 = 4.0f * expf(pitchBend * LOG_R2_RATIO);
         const float modulator1Hz = carrier1Hz * ratio1;
@@ -2086,8 +2086,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         d3606HPF.frequency(hpfHz);
         d3606BPF.frequency(bpfHz);
 
-        // Voice 3 noise-based hat
-        drum3.frequency(carrier1Hz * 0.5f);
+        // Voice 3 noise-based hat — A2(110) → A6(1760), independent of FM carriers
+        static const float LOG_NOISE_RATIO = logf(1760.0f / 110.0f);  // A2→A6
+        drum3.frequency(110.0f * expf(pitchBend * LOG_NOISE_RATIO));
 
         AudioInterrupts();
         break;
@@ -2436,10 +2437,17 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           delayAmp.gain(0.0f);
           masterMixer.gain(2, 0.0f);  // delay return
         } else {
-          // Remap 2%-100% → 0-1, then use sqrt curve for more level at low knob
-          float blend = (norm - 0.02f) / 0.98f;
-          float shaped = sqrtf(blend);  // sqrt gives more audible range at low settings
-          float level = 0.15f + shaped * 0.90f;  // 15% floor, 5% louder max (1.05)
+          // Level ramps from 0 to peak over 2%–25%, then plateaus at peak.
+          // sqrt curve gives audible control in the ramp zone.
+          const float RAMP_END = 0.25f;
+          const float PEAK_LEVEL = 1.05f;
+          float level;
+          if (norm < RAMP_END) {
+            float blend = (norm - 0.02f) / (RAMP_END - 0.02f);  // 0→1 over 2%–25%
+            level = sqrtf(blend) * PEAK_LEVEL;
+          } else {
+            level = PEAK_LEVEL;  // plateau
+          }
           delayAmp.gain(level * 2.0f);
           masterMixer.gain(2, level);
         }
