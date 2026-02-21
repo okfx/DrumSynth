@@ -32,7 +32,7 @@
 #include "hw_setup.h"
 static_assert(numSteps == 16, "Accent mask logic assumes 16 steps");
 
-#define FIRMWARE_VERSION ".131a"
+#define FIRMWARE_VERSION ".131aBassline"
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -58,11 +58,23 @@ bool ppqnModeActive = false;
 uint32_t ppqnModeLastActivityTick = 0;  // Last knob/button interaction
 uint8_t ppqnModeSelection = 2;          // Currently selected value in mode
 static constexpr uint32_t PPQN_MODE_TIMEOUT_MS = 5000;
-static constexpr uint32_t PPQN_LONG_PRESS_MS = 5000;
+static constexpr uint32_t PPQN_LONG_PRESS_MS = 3000;
 
 // PPQN options table
 const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 24, 48, 96};
 constexpr uint8_t PPQN_OPTION_COUNT = 6;
+
+// Bass Line mode state — main-loop only
+bool bassLineModeActive = false;
+static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 3000;
+static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
+int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
+
+// Per-step MIDI note for bass line (A1=33 to A4=69, 36 semitones)
+// Default A2 = MIDI 45
+uint8_t bassLineNote[numSteps] = {
+  45,45,45,45, 45,45,45,45, 45,45,45,45, 45,45,45,45
+};
 
 // Display constants
 static constexpr int LPF_BAR_MAX = 78;       // LPF bar shows "OFF" at/above this value
@@ -779,7 +791,14 @@ void playSequenceCore() {
   }
   currentStep = (currentStep + 1) % numSteps;
 
-  if (drum1Sequence[currentStep]) triggerD1();
+  if (drum1Sequence[currentStep]) {
+    if (bassLineModeActive) {
+      char noteName[5];
+      d1BaseFreq = bassLinePitch(bassLineNote[currentStep], noteName);
+      applyD1Freq();
+    }
+    triggerD1();
+  }
   if (drum2Sequence[currentStep]) triggerD2();
   if (drum3Sequence[currentStep]) triggerD3();
 
@@ -878,6 +897,10 @@ void updateOtherButtons() {
   static uint32_t btn7PressTick = 0;
   static bool btn7EnteredPpqn = false;
 
+  // Button 0 long-hold state — bass line mode toggle
+  static uint32_t btn0PressTick = 0;
+  static bool btn0EnteredBassLine = false;
+
   uint32_t nowTick;
   noInterrupts();
   nowTick = sysTickMs;
@@ -933,11 +956,28 @@ void updateOtherButtons() {
         }
       }
 
-      // Button 7 (MEM) handled separately — see continuous-hold block above
-      if (btnState[i] && i != 7) {
+      // Button 0 (D1 SEQ SELECT) — press/release for bass line long-hold.
+      if (i == 0) {
+        if (btnState[0]) {
+          // Press down — record timestamp
+          btn0PressTick = nowTick;
+          btn0EnteredBassLine = false;
+        } else {
+          // Release
+          if (btn0EnteredBassLine) {
+            // Long-press toggled bass line mode — suppress selectSequence
+          } else {
+            // Short press — normal D1 sequence select
+            selectSequence(0);
+          }
+          btn0EnteredBassLine = false;
+        }
+      }
+
+      // Buttons 0 and 7 handled separately — see press/release and continuous-hold blocks
+      if (btnState[i] && i != 7 && i != 0) {
         switch (i) {
 
-          case 0: selectSequence(0); break;
           case 1: selectSequence(1); break;
           case 2: selectSequence(2); break;
 
@@ -1016,6 +1056,19 @@ void updateOtherButtons() {
       }
     }
 
+    // Button 0 continuous hold check — enters/exits bass line mode after 3s while held.
+    if (i == 0 && btnState[0] && !btn0EnteredBassLine) {
+      if ((uint32_t)(nowTick - btn0PressTick) >= BASSLINE_LONG_PRESS_MS) {
+        bassLineModeActive = !bassLineModeActive;
+        btn0EnteredBassLine = true;
+        snprintf(displayParameter1, sizeof(displayParameter1),
+                 bassLineModeActive ? "BASSLINE MODE" : "EXITING BASSLINE");
+        displayParameter2[0] = 0;
+        parameterOverlayStartTick = nowTick;
+        lastActiveKnob = KNOB_NONE;
+      }
+    }
+
     btnLastState[i] = rawPressed;
   }
 }
@@ -1071,6 +1124,7 @@ void updateStepButtons() {
   static uint32_t lastDebounceTick[stepButtonCount] = { 0 };
   static bool btnState[stepButtonCount] = { false };
   static bool btnLastState[stepButtonCount] = { false };
+  static uint32_t stepPressTick[stepButtonCount] = { 0 };
 
   byte* seq = seqByTrack(activeTrack);
 
@@ -1093,9 +1147,32 @@ void updateStepButtons() {
 
       btnState[i] = rawPressed;
       if (btnState[i]) {
+        // Always toggle step on/off (all modes)
         seq[i] ^= 1;
         sr.set(i, seq[i]);
         patternDirty = true;
+        // Record press time for bass line hold detection
+        stepPressTick[i] = nowTick;
+      }
+      // Detect step button release to clear held step
+      if (!btnState[i] && bassLineHeldStep == i) {
+        bassLineHeldStep = -1;
+      }
+    }
+
+    // Bass line mode: after holding a step button for 300ms, enter note-select
+    if (bassLineModeActive && activeTrack == TRACK_D1 && btnState[i]) {
+      if (bassLineHeldStep == i) {
+        // Already in note-select — keep overlay alive
+        char noteName[5];
+        bassLinePitch(bassLineNote[i], noteName);
+        snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        parameterOverlayStartTick = nowTick;
+        lastActiveKnob = KNOB_NONE;
+      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
+        // Just crossed the hold threshold — enter note-select for this step
+        bassLineHeldStep = i;
       }
     }
 
@@ -1156,6 +1233,23 @@ static inline float d1PitchCurve(int knobValue) {
     float blend = (norm - 0.33f) / 0.67f;
     return 105.0f + (500.0f - 105.0f) * blend;
   }
+}
+
+// Bass line pitch: maps MIDI note (33–69) to frequency.
+// Returns frequency in Hz. Writes note name to outName (must be >=5 chars).
+static inline float bassLinePitch(uint8_t midiNote, char* outName) {
+  static const char* NOTE_NAMES[] = {
+    "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
+  };
+  snprintf(outName, 5, "%s%d", NOTE_NAMES[midiNote % 12], (midiNote / 12) - 1);
+  return 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
+}
+
+// Maps knob 0–1023 to MIDI note in A1(33)–A4(69) range, quantized.
+static inline uint8_t bassLineKnobToNote(int knobValue) {
+  float semi = (knobValue / 1023.0f) * 36.0f;
+  int note = constrain((int)(semi + 0.5f), 0, 36);
+  return (uint8_t)(note + 33);  // A1 = MIDI 33
 }
 
 // D2 Decay curve: piecewise 50–300 ms (low half) then 300–1000 ms (high half)
@@ -1269,6 +1363,19 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
+        if (bassLineModeActive) {
+          if (bassLineHeldStep >= 0) {
+            uint8_t note = bassLineKnobToNote(knobValue);
+            bassLineNote[bassLineHeldStep] = note;
+            char noteName[5];
+            bassLinePitch(note, noteName);
+            snprintf(displayParameter1, sizeof(displayParameter1),
+                     "STEP %d", bassLineHeldStep + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+          }
+          // else: knob locked, do nothing
+          break;
+        }
         float freqHz = d1PitchCurve(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 FREQUENCY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
@@ -1670,6 +1777,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
+        if (bassLineModeActive) {
+          if (bassLineHeldStep >= 0) {
+            uint8_t note = bassLineKnobToNote(knobValue);
+            bassLineNote[bassLineHeldStep] = note;
+            // Don't change d1BaseFreq — frequency set at playback time
+          }
+          break;
+        }
         d1BaseFreq = d1PitchCurve(knobValue);
         applyD1Freq();
         break;
