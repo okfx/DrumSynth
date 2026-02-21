@@ -65,7 +65,7 @@ void updateScopeData() {
 //  drawScopeWaveform() — render waveform into display buffer
 // ============================================================================
 
-void drawScopeWaveform(int x, int y, int w, int h) {
+void drawScopeWaveform(int x, int y, int h) {
   // Find min/max for AC auto-scaling (signed signal)
   float minVal = 0.0f, maxVal = 0.0f;
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {

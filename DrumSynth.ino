@@ -112,7 +112,7 @@ volatile uint32_t sysTickMs = 0;  // Written by sysTickISR, read by main loop
 // Main-loop only — not accessed from any ISR. rearmStepTimer() is only
 // called from setTransport() and setup(), both main-loop context.
 float bpm = 120.0f;
-volatile int currentStep = 0;  // Written by ISR (triggerStepFromISR), read by main loop
+volatile uint8_t currentStep = 0;  // Written by ISR (triggerStepFromISR), read by main loop
 
 // transport — three states: internal clock, external clock, or stopped
 enum TransportState : uint8_t {
@@ -295,8 +295,6 @@ static inline float mapf(int v, int inMin, int inMax, float outMin, float outMax
 }
 
 static inline float normKnob(int v) {
-  if (v < 0) v = 0;
-  if (v > 1023) v = 1023;
   return float(v) / 1023.0f;
 }
 
@@ -304,7 +302,7 @@ static inline float normKnob(int v) {
 float d1BaseFreq = 100.0f;
 float d1DistPitchBoost = 0.0f;
 
-static inline void applyD1Freq() {
+inline void applyD1Freq() {
   float f = d1BaseFreq * (1.0f + d1DistPitchBoost);
   AudioNoInterrupts();
   d1.frequency(f);
@@ -786,15 +784,14 @@ void playSequence() {
 // Advance one step and trigger active drums.
 // Called from main loop context (internal clock path), so safe to call updateLEDs().
 void playSequenceCore() {
-  if (currentStep < 0 || currentStep >= numSteps) {
+  if (currentStep >= numSteps) {
     currentStep = numSteps - 1;
   }
   currentStep = (currentStep + 1) % numSteps;
 
   if (drum1Sequence[currentStep]) {
     if (bassLineModeActive) {
-      char noteName[5];
-      d1BaseFreq = bassLinePitch(bassLineNote[currentStep], noteName);
+      d1BaseFreq = bassLineFreq(bassLineNote[currentStep]);
       applyD1Freq();
     }
     triggerD1();
@@ -1096,7 +1093,7 @@ void updateLEDs() {
   byte* seq = seqByTrack(activeTrack);
 
   // Snapshot current step and play state atomically
-  int currentStepSnap;
+  uint8_t currentStepSnap;
   bool playingSnap;
   noInterrupts();
   currentStepSnap = currentStep;
@@ -1158,8 +1155,8 @@ void updateStepButtons() {
           if (bassLineHeldStep == i) {
             // Was in note-select — just clear, no toggle
             bassLineHeldStep = -1;
-          } else {
-            // Short press (released before hold threshold) — toggle step
+          } else if (bassLineHeldStep < 0) {
+            // Short press — toggle step (only if no other step is in note-select)
             seq[i] ^= 1;
             sr.set(i, seq[i]);
             patternDirty = true;
@@ -1243,14 +1240,19 @@ static inline float d1PitchCurve(int knobValue) {
   }
 }
 
-// Bass line pitch: maps MIDI note (33–69) to frequency.
+// Bass line frequency: maps MIDI note to Hz. Pure math, no string work.
+inline float bassLineFreq(uint8_t midiNote) {
+  return 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
+}
+
+// Bass line pitch: frequency + note name string for display.
 // Returns frequency in Hz. Writes note name to outName (must be >=5 chars).
 static inline float bassLinePitch(uint8_t midiNote, char* outName) {
   static const char* NOTE_NAMES[] = {
     "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
   };
   snprintf(outName, 5, "%s%d", NOTE_NAMES[midiNote % 12], (midiNote / 12) - 1);
-  return 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
+  return bassLineFreq(midiNote);
 }
 
 // Maps knob 0–1023 to MIDI note in A1(33)–A4(69) range, quantized.
@@ -2101,7 +2103,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 18:  // D3 Voice Mix - 3-way
       {
-        const int value = constrain(knobValue, 0, 1023);
+        const int value = knobValue;
 
         // Zone boundaries
         const int PURE1_MAX = int(1023 * 0.06f);
@@ -2718,7 +2720,7 @@ void updateDisplay() {
   }
 
   // Oscilloscope — always drawn (not replaced by overlay)
-  drawScopeWaveform(2, 22, SCOPE_DISPLAY_WIDTH, SCOPE_DISPLAY_HEIGHT);
+  drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
 
   // Parameter overlay at bottom of screen (on top of scope)
   if (overlayActiveNow) {

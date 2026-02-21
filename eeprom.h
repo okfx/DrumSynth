@@ -4,7 +4,7 @@
 //  EEPROM Persistence — eeprom.h
 //
 //  Pattern save/load across 10 slots, plus PPQN persistence.
-//  Each slot stores a 3-track × 16-step pattern with magic number validation.
+//  Each slot stores a 3-track + bass line × 16-step pattern with magic number validation.
 //  PPQN is stored separately after the pattern slots.
 //
 //  Include AFTER: hw_setup.h (numSteps), EEPROM.h, sequence arrays,
@@ -62,12 +62,11 @@ struct EepromSlot {
 //  Constants
 // ============================================================================
 
-const uint16_t EEPROM_MAGIC = 0x4243;  // Bumped for bass line layout
-const uint8_t SAVE_SLOT_COUNT = 10;
-const int EEPROM_BASE_ADDR = 0;
+static constexpr uint16_t EEPROM_MAGIC      = 0x4243;  // Bumped for bass line layout
+static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
 // PPQN stored after all save slots
-static const int EEPROM_PPQN_ADDR = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
-static const uint8_t EEPROM_PPQN_MAGIC = 0xAA;
+static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
+static constexpr uint8_t  EEPROM_PPQN_MAGIC = 0xAA;
 
 // ============================================================================
 //  State
@@ -85,7 +84,7 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   if (slotIndex >= SAVE_SLOT_COUNT) return false;
 
   // Calculate and verify address (type-safe)
-  size_t addr = (size_t)EEPROM_BASE_ADDR + (size_t)slotIndex * sizeof(EepromSlot);
+  size_t addr = (size_t)slotIndex * sizeof(EepromSlot);
   if (addr + sizeof(EepromSlot) > EEPROM.length()) return false;
 
   // Read slot from EEPROM
@@ -95,13 +94,16 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   // Verify magic number
   if (slot.magic != EEPROM_MAGIC) return false;
 
-  // Load pattern data
+  // Load pattern data with interrupts disabled so external clock ISR
+  // can't read a half-copied pattern (~1us on Cortex-M7).
+  noInterrupts();
   for (int step = 0; step < numSteps; step++) {
     drum1Sequence[step] = slot.patterns.drum1[step];
     drum2Sequence[step] = slot.patterns.drum2[step];
     drum3Sequence[step] = slot.patterns.drum3[step];
     bassLineNote[step] = slot.patterns.bassLine[step];
   }
+  interrupts();
 
   // Refresh step LEDs so they reflect the loaded pattern
   updateLEDs();
@@ -131,7 +133,7 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
 void saveStateToEEPROM(uint8_t slotIndex) {
   if (slotIndex >= SAVE_SLOT_COUNT) return;
 
-  size_t addr = (size_t)EEPROM_BASE_ADDR + (size_t)slotIndex * sizeof(EepromSlot);
+  size_t addr = (size_t)slotIndex * sizeof(EepromSlot);
   if (addr + sizeof(EepromSlot) > EEPROM.length()) return;
 
   EepromSlot slot = {};

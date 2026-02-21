@@ -24,7 +24,7 @@ extern volatile TransportState transportState;
 extern volatile bool sequencePlaying;
 extern float bpm;
 extern volatile uint8_t ppqn;
-extern volatile int currentStep;
+extern volatile uint8_t currentStep;
 
 // Sequence data
 extern byte drum1Sequence[];
@@ -35,6 +35,13 @@ extern byte drum3Sequence[];
 extern void triggerD1();
 extern void triggerD2();
 extern void triggerD3();
+
+// Bass line mode — ISR reads these to apply per-step frequency
+extern bool bassLineModeActive;
+extern uint8_t bassLineNote[];
+extern float d1BaseFreq;
+extern void applyD1Freq();
+extern float bassLineFreq(uint8_t midiNote);
 
 // Shared timer (used for both internal clock and ext subdivision)
 extern IntervalTimer stepTimer;
@@ -55,17 +62,19 @@ extern void applyMasterGainFromState();
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport()
 //    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears
 //    pendingStepCount          — uint8_t, atomic on ARM, written by stepISR only
-//    currentStep               — int (32-bit aligned), atomic on ARM, ISR writes via triggerStepFromISR
+//    currentStep               — uint8_t, atomic on ARM, ISR writes via triggerStepFromISR
 //    ledUpdatePending          — bool, atomic on ARM, ISR sets, main loop clears
 //    lastD1/D2/D3TriggerUs     — uint32_t, written by both ISR and main loop
 //    subdivRemaining           — uint8_t, ISR + resetExternalClockState (inside noInterrupts)
 //    subdivIntervalUs          — uint32_t, ISR + resetExternalClockState (inside noInterrupts)
 //
 //  Main loop writes (read by ISR):
-//    transportState                    — uint8_t, atomic on ARM, safe for ISR to read
+//    transportState            — uint8_t, atomic on ARM, safe for ISR to read
 //    sequencePlaying           — bool, atomic on ARM, safe for ISR to read
 //    drum1/2/3Sequence[]       — byte arrays, atomic reads from ISR, written by main loop (button presses)
 //    ppqn                      — volatile uint8_t, main loop writes (PPQN mode), ISR reads. Atomic on ARM.
+//    bassLineModeActive        — bool, atomic on ARM, safe for ISR to read
+//    bassLineNote[]            — uint8_t array, atomic reads from ISR, written by main loop (knob handler)
 //
 //  Rule: All multi-byte (>1 byte) shared variables must be read/written
 //  inside noInterrupts()/interrupts() blocks.
@@ -122,12 +131,18 @@ volatile uint32_t subdivIntervalUs = 0;    // Microseconds between subdivision s
 void triggerStepFromISR() {
   // Guard against corruption: clamp to valid range, then advance.
   // Setting to numSteps-1 means the +1 below wraps to step 0 (clean restart).
-  if (currentStep < 0 || currentStep >= numSteps) {
+  if (currentStep >= numSteps) {
     currentStep = numSteps - 1;
   }
   currentStep = (currentStep + 1) % numSteps;
 
-  if (drum1Sequence[currentStep]) triggerD1();
+  if (drum1Sequence[currentStep]) {
+    if (bassLineModeActive) {
+      d1BaseFreq = bassLineFreq(bassLineNote[currentStep]);
+      applyD1Freq();
+    }
+    triggerD1();
+  }
   if (drum2Sequence[currentStep]) triggerD2();
   if (drum3Sequence[currentStep]) triggerD3();
 
