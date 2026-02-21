@@ -1423,9 +1423,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 7:  // D1 Delay Send
       {
-        // Capped at 75% to prevent feedback runaway
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 75.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1475,9 +1473,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 12:  // D2 Delay Send
       {
-        // Capped at 75% to prevent feedback runaway
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 75.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1511,10 +1507,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 15:  // D2 Volume
       {
-        float norm = normKnob(knobValue);
-        float volume = norm * 3.5f;
-        if (volume > 2.3f) volume = 2.3f;
-        int percent = (int)(volume / 2.3f * 100.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1564,9 +1557,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 20:  // D3 Delay Send
       {
-        // Capped at 75% to prevent feedback runaway (same as D1/D2)
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 75.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DLY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1592,10 +1583,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 23:  // D3 Volume
       {
-        float norm = normKnob(knobValue);
-        float volume = norm * 5.0f;
-        if (volume > 3.5f) volume = 3.5f;
-        int percent = (int)(volume / 3.5f * 100.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
