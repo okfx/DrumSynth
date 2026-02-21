@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DrumSynth User Manual</title>
+<style>
+  @page { margin: 1.5cm; size: A4; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    color: #1a1a1a;
+    background: #fff;
+    line-height: 1.45;
+    font-size: 11pt;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+  h1 {
+    font-size: 28pt;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 0.15em;
+  }
+  h1 small {
+    display: block;
+    font-size: 11pt;
+    font-weight: 400;
+    color: #666;
+    letter-spacing: 0;
+    margin-top: 0.3em;
+  }
+  h2 {
+    font-size: 15pt;
+    font-weight: 700;
+    margin-top: 1.8em;
+    margin-bottom: 0.5em;
+    padding-bottom: 0.2em;
+    border-bottom: 2px solid #222;
+  }
+  h3 {
+    font-size: 12pt;
+    font-weight: 700;
+    margin-top: 1.2em;
+    margin-bottom: 0.4em;
+    color: #333;
+  }
+  p, li { margin-bottom: 0.4em; }
+  ul, ol { padding-left: 1.4em; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.6em 0 1em 0;
+    font-size: 10pt;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #222;
+    color: #fff;
+    font-weight: 600;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  tr:nth-child(even) { background: #f7f7f7; }
+  .knob-num { font-weight: 700; text-align: center; width: 40px; }
+  .voice-header {
+    background: #444 !important;
+    color: #fff;
+    font-weight: 700;
+    font-size: 10pt;
+  }
+  .voice-header td { border-color: #444; }
+  .diagram {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 9pt;
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 1em;
+    margin: 0.8em 0;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .accent-grid {
+    display: inline-block;
+    font-family: monospace;
+    font-size: 9pt;
+    letter-spacing: 1px;
+  }
+  .tip {
+    background: #fffbe6;
+    border-left: 3px solid #e6c200;
+    padding: 0.5em 0.8em;
+    margin: 0.6em 0;
+    font-size: 10pt;
+  }
+  .section-icon { margin-right: 0.3em; }
+  .page-break { page-break-before: always; }
+  .toc { columns: 2; column-gap: 2em; margin: 0.5em 0; }
+  .toc li { font-size: 10pt; margin-bottom: 0.2em; }
+  .step-vis {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 1px solid #999;
+    border-radius: 2px;
+    margin: 1px;
+    vertical-align: middle;
+  }
+  .step-on { background: #e63946; border-color: #c1121f; }
+  .step-off { background: #eee; }
+  @media print {
+    body { padding: 0; max-width: none; }
+    .page-break { page-break-before: always; }
+  }
+</style>
+</head>
+<body>
+
+<h1>DrumSynth
+  <small>3-Voice Drum Synthesizer + Bass Line &mdash; User Manual</small>
+</h1>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li><a href="#voices">Voices</a></li>
+  <li><a href="#knobs">Knobs Reference</a></li>
+  <li><a href="#buttons">Buttons</a></li>
+  <li><a href="#steps">Step Buttons &amp; LEDs</a></li>
+  <li><a href="#bassline">Bass Line Mode</a></li>
+  <li><a href="#accent">Hi-Hat Accent Patterns</a></li>
+  <li><a href="#delay">Delay Effect</a></li>
+  <li><a href="#signal">Signal Flow</a></li>
+  <li><a href="#extclock">External Clock Sync</a></li>
+  <li><a href="#saveload">Save &amp; Load</a></li>
+  <li><a href="#display">Display Guide</a></li>
+</ol>
+
+<!-- ================================================================== -->
+<h2 id="voices">1. Voices</h2>
+
+<p>The drum machine has <strong>three synthesis engines</strong> (D1, D2, D3), each with multiple voice modes. Seven distinct sounds are available:</p>
+
+<table>
+  <tr><th>Voice</th><th>Sound</th><th>Pitch Range</th><th>Character</th></tr>
+  <tr><td><strong>A</strong></td><td>Kick</td><td>A1&ndash;A4 (55&ndash;440 Hz)</td><td>Sub-bass to punchy mid kick</td></tr>
+  <tr><td><strong>B</strong></td><td>Bass Line</td><td>A1&ndash;A4 (36 semitones)</td><td>Chromatic per-step bass (shares D1 engine)</td></tr>
+  <tr><td><strong>C</strong></td><td>Snare</td><td>A2&ndash;A4 (110&ndash;440 Hz)</td><td>Pitched snare body</td></tr>
+  <tr><td><strong>D</strong></td><td>Clap</td><td>Fixed</td><td>Synthetic layered clap</td></tr>
+  <tr><td><strong>E</strong></td><td>606 Hats</td><td>400&ndash;6000 Hz</td><td>Analog-style 6-oscillator hats</td></tr>
+  <tr><td><strong>F</strong></td><td>FM Hats</td><td>A4&ndash;A7 (440&ndash;3520 Hz)</td><td>FM synthesis metallic hats</td></tr>
+  <tr><td><strong>G</strong></td><td>Noise Hat</td><td>A2&ndash;A6 (110&ndash;1760 Hz)</td><td>Filtered noise hat</td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h2 id="knobs" class="page-break">2. Knobs Reference</h2>
+
+<p>32 knobs organized in four groups of 8. Turn any knob to see its name and value on the display.</p>
+
+<table>
+  <tr class="voice-header"><td colspan="4">D1 &mdash; KICK (Knobs 0&ndash;7)</td></tr>
+  <tr><th class="knob-num">#</th><th>Name</th><th>Range</th><th>What It Does</th></tr>
+  <tr><td class="knob-num">0</td><td>Distort</td><td>0&ndash;100%</td><td>Adds gritty harmonic distortion to the kick</td></tr>
+  <tr><td class="knob-num">1</td><td>Shape</td><td>SIN &rarr; SAW &rarr; SQR</td><td>Morphs the waveform. Sine is smooth, square is aggressive</td></tr>
+  <tr><td class="knob-num">2</td><td>Decay</td><td>50&ndash;1000 ms</td><td>How long the kick rings. Short = tight, long = boomy</td></tr>
+  <tr><td class="knob-num">3</td><td>Pitch</td><td>55&ndash;440 Hz</td><td>Kick fundamental frequency. In bass line mode: sets note for held step</td></tr>
+  <tr><td class="knob-num">4</td><td>Volume</td><td>0&ndash;100%</td><td>Kick output level</td></tr>
+  <tr><td class="knob-num">5</td><td>Snap</td><td>0&ndash;100%</td><td>Attack punch. Higher = sharper transient and more pitch sweep</td></tr>
+  <tr><td class="knob-num">6</td><td>Body</td><td>0&ndash;100%</td><td>Mid-range EQ sculpting. Shapes the "thump" character</td></tr>
+  <tr><td class="knob-num">7</td><td>Delay Send</td><td>0&ndash;75%</td><td>How much kick goes to the delay effect</td></tr>
+</table>
+
+<table>
+  <tr class="voice-header"><td colspan="4">D2 &mdash; SNARE / CLAP (Knobs 8&ndash;15)</td></tr>
+  <tr><th class="knob-num">#</th><th>Name</th><th>Range</th><th>What It Does</th></tr>
+  <tr><td class="knob-num">8</td><td>Snare Freq</td><td>110&ndash;440 Hz</td><td>Pitched snare body. Lower = deeper, higher = more tonal</td></tr>
+  <tr><td class="knob-num">9</td><td>Decay</td><td>50&ndash;1000 ms</td><td>How long the snare/clap rings</td></tr>
+  <tr><td class="knob-num">10</td><td>Voice Mix</td><td>CLAP &harr; SNARE</td><td>Crossfades between clap and snare. Center = blend of both</td></tr>
+  <tr><td class="knob-num">11</td><td>Distort</td><td>OFF &rarr; 100%</td><td>Wavefolder distortion with frequency sweep. Dead band at bottom</td></tr>
+  <tr><td class="knob-num">12</td><td>Delay Send</td><td>0&ndash;75%</td><td>How much snare/clap goes to the delay</td></tr>
+  <tr><td class="knob-num">13</td><td>Reverb</td><td>OFF &rarr; 100%</td><td>Room reverb. Dead band at bottom = fully dry</td></tr>
+  <tr><td class="knob-num">14</td><td>Noise</td><td>OFF &rarr; 200 ms</td><td>Adds a noise burst layer. Dead band at bottom = off</td></tr>
+  <tr><td class="knob-num">15</td><td>Volume</td><td>0&ndash;100%</td><td>Snare/clap output level</td></tr>
+</table>
+
+<table>
+  <tr class="voice-header"><td colspan="4">D3 &mdash; HI-HAT (Knobs 16&ndash;23)</td></tr>
+  <tr><th class="knob-num">#</th><th>Name</th><th>Range</th><th>What It Does</th></tr>
+  <tr><td class="knob-num">16</td><td>Tune</td><td>Low &rarr; High</td><td>Pitch of all three hat voices. Higher = brighter, more metallic</td></tr>
+  <tr><td class="knob-num">17</td><td>Decay</td><td>10&ndash;250 ms</td><td>Hat length. Short = closed hat, long = open hat</td></tr>
+  <tr><td class="knob-num">18</td><td>Voice Mix</td><td>606 &harr; FM &harr; Noise</td><td>Three-way crossfade between hat voices</td></tr>
+  <tr><td class="knob-num">19</td><td>Distort</td><td>OFF &rarr; 100%</td><td>Wavefolder crunch on hat output. Dead band at bottom</td></tr>
+  <tr><td class="knob-num">20</td><td>Delay Send</td><td>0&ndash;75%</td><td>How much hat goes to the delay</td></tr>
+  <tr><td class="knob-num">21</td><td>Filter</td><td>4500&ndash;12500 Hz</td><td>Lowpass filter on hats. Lower = darker, muffled</td></tr>
+  <tr><td class="knob-num">22</td><td>Accent</td><td>OFF / 13 patterns</td><td>Rhythmic accent pattern &mdash; accented steps ring 2.5&times; longer</td></tr>
+  <tr><td class="knob-num">23</td><td>Volume</td><td>0&ndash;100%</td><td>Hat output level</td></tr>
+</table>
+
+<table>
+  <tr class="voice-header"><td colspan="4">MASTER (Knobs 24&ndash;31)</td></tr>
+  <tr><th class="knob-num">#</th><th>Name</th><th>Range</th><th>What It Does</th></tr>
+  <tr><td class="knob-num">24</td><td>Delay Time</td><td>1/32 &ndash; 1/2.</td><td>Beat-synced delay time (see <a href="#delay">Delay</a> section)</td></tr>
+  <tr><td class="knob-num">25</td><td>Wavefold Freq</td><td>40&ndash;1000 Hz</td><td>Master wavefolder tone. Adds harmonics across all voices</td></tr>
+  <tr><td class="knob-num">26</td><td>Master LPF</td><td>1000&ndash;7500 Hz</td><td>Lowpass filter on the entire mix. Lower = darker sound</td></tr>
+  <tr><td class="knob-num">27</td><td>BPM</td><td>60&ndash;400</td><td>Tempo. Also has a hyperspeed zone (900&ndash;1000) at the top</td></tr>
+  <tr><td class="knob-num">28</td><td>Master Volume</td><td>0&ndash;100%</td><td>Final output level</td></tr>
+  <tr><td class="knob-num">29</td><td>Decay Offset</td><td>&minus;100% &ndash; +100%</td><td>Global choke. Shortens or lengthens <em>all</em> voice decays at once</td></tr>
+  <tr><td class="knob-num">30</td><td>Wavefold Intensity</td><td>OFF &rarr; 100%</td><td>Master wavefolder amount. Dead band at bottom = clean</td></tr>
+  <tr><td class="knob-num">31</td><td>Delay Amount</td><td>OFF &rarr; 100%</td><td>Delay wet level + feedback. Level peaks at 25%, then feedback keeps rising</td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h2 id="buttons" class="page-break">3. Buttons</h2>
+
+<table>
+  <tr><th>Button</th><th>Short Press</th><th>Long Press (3 sec)</th></tr>
+  <tr><td><strong>D1 Select</strong></td><td>Select kick track for step editing</td><td>Toggle <a href="#bassline">bass line mode</a></td></tr>
+  <tr><td><strong>D2 Select</strong></td><td>Select snare/clap track for step editing</td><td>&mdash;</td></tr>
+  <tr><td><strong>D3 Select</strong></td><td>Select hi-hat track for step editing</td><td>&mdash;</td></tr>
+  <tr><td><strong>Play / Stop</strong></td><td>Start or stop playback</td><td>&mdash;</td></tr>
+  <tr><td><strong>Slot</strong></td><td>Cycle through save slots (0&ndash;9)</td><td>Enter PPQN selection mode (turn BPM knob to choose, release to confirm)</td></tr>
+  <tr><td><strong>Load</strong></td><td>Load pattern from current slot</td><td>&mdash;</td></tr>
+  <tr><td><strong>Save</strong></td><td>Save pattern to current slot</td><td>&mdash;</td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h2 id="steps">4. Step Buttons &amp; LEDs</h2>
+
+<p><strong>16 step buttons</strong> with matching LEDs form the step sequencer grid.</p>
+
+<h3>Normal Mode</h3>
+<ul>
+  <li><strong>Press a step</strong> to toggle it on/off in the currently selected track</li>
+  <li>Lit LED = step is active (voice triggers on that beat)</li>
+  <li>During playback, the current step LED pulses bright as the sequence plays</li>
+</ul>
+
+<h3>Bass Line Mode (D1 only)</h3>
+<ul>
+  <li><strong>Short press</strong> &mdash; toggles step on/off (same as normal)</li>
+  <li><strong>Hold 300 ms</strong> &mdash; enters note-select for that step. Turn the Pitch knob to set its note. Release to confirm</li>
+  <li>You can toggle other steps while holding one in note-select</li>
+</ul>
+
+<!-- ================================================================== -->
+<h2 id="bassline">5. Bass Line Mode</h2>
+
+<p>Bass line mode turns the kick drum into a <strong>chromatic bass synthesizer</strong> with per-step pitch control.</p>
+
+<h3>How to Use</h3>
+<ol>
+  <li><strong>Activate:</strong> Hold the D1 Select button for 3 seconds. Display shows "BASS LINE MODE"</li>
+  <li><strong>Program steps:</strong> Press step buttons to toggle beats on/off (short press)</li>
+  <li><strong>Set pitch per step:</strong> Hold any step button for 300 ms, then turn the D1 Pitch knob. The display shows the step number and note name (e.g., "STEP 5 &mdash; C3")</li>
+  <li><strong>Release</strong> the step button to confirm the note</li>
+  <li><strong>Deactivate:</strong> Hold D1 Select for 3 seconds again</li>
+</ol>
+
+<div class="tip"><strong>Tip:</strong> Each step defaults to A2. Notes range from A1 to A4 (36 semitones). Bass line notes are saved with your pattern.</div>
+
+<!-- ================================================================== -->
+<h2 id="accent" class="page-break">6. Hi-Hat Accent Patterns</h2>
+
+<p>Knob 22 selects from <strong>13 rhythmic accent patterns</strong> for the hi-hat. Accented steps ring <strong>2.5&times; longer</strong> than normal, creating open/closed hat grooves. When you change patterns, the LEDs briefly flash to show which steps are accented.</p>
+
+<table>
+  <tr><th style="width:30px">#</th><th style="width:80px">Name</th><th>Accented Steps (marked with &bull;)</th></tr>
+  <tr><td>OFF</td><td>None</td><td><span class="accent-grid">&middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &middot;</span></td></tr>
+  <tr><td>1</td><td>Half</td><td><span class="accent-grid">&bull; &middot; &middot; &middot; &middot; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &middot; &middot; &middot; &middot;</span></td></tr>
+  <tr><td>2</td><td>Quarter</td><td><span class="accent-grid">&bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot;</span></td></tr>
+  <tr><td>3</td><td>Eighth</td><td><span class="accent-grid">&bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot;</span></td></tr>
+  <tr><td>4</td><td>Eighth Up</td><td><span class="accent-grid">&middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull; &middot; &bull;</span></td></tr>
+  <tr><td>5</td><td>Vari 1</td><td><span class="accent-grid">&bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &middot; &middot; &bull; &middot; &bull; &middot; &middot; &middot;</span></td></tr>
+  <tr><td>6</td><td>Vari 2</td><td><span class="accent-grid">&bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot;</span></td></tr>
+  <tr><td>7</td><td>Vari 3</td><td><span class="accent-grid">&bull; &middot; &bull; &middot; &middot; &bull; &middot; &middot; &bull; &middot; &bull; &middot; &middot; &bull; &middot; &bull;</span></td></tr>
+  <tr><td>8</td><td>Vari 4</td><td><span class="accent-grid">&middot; &bull; &bull; &bull; &middot; &bull; &bull; &bull; &middot; &bull; &bull; &bull; &middot; &bull; &bull; &bull;</span></td></tr>
+  <tr><td>9</td><td>Alt 5</td><td><span class="accent-grid">&middot; &middot; &bull; &bull; &middot; &middot; &bull; &bull; &middot; &middot; &bull; &bull; &middot; &middot; &bull; &bull;</span></td></tr>
+  <tr><td>10</td><td>Alt 6</td><td><span class="accent-grid">&middot; &middot; &bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &bull; &middot; &middot; &middot; &bull; &middot;</span></td></tr>
+  <tr><td>11</td><td>Alt 7</td><td><span class="accent-grid">&bull; &middot; &middot; &bull; &middot; &middot; &bull; &middot; &middot; &bull; &middot; &middot; &bull; &middot; &middot; &bull;</span></td></tr>
+  <tr><td>12</td><td>Alt 8</td><td><span class="accent-grid">&middot; &middot; &middot; &middot; &bull; &bull; &bull; &bull; &middot; &middot; &middot; &middot; &bull; &bull; &bull; &bull;</span></td></tr>
+  <tr><td>13</td><td>Alt 9</td><td><span class="accent-grid">&bull; &bull; &bull; &bull; &middot; &middot; &middot; &middot; &bull; &bull; &bull; &bull; &middot; &middot; &middot; &middot;</span></td></tr>
+</table>
+
+<!-- ================================================================== -->
+<h2 id="delay">7. Delay Effect</h2>
+
+<p>The delay is a beat-synced echo shared by all three voices. Each voice has its own send level (knobs 7, 12, 20).</p>
+
+<h3>Delay Time (Knob 24)</h3>
+<p>Snaps to the nearest musical division based on your current BPM:</p>
+
+<table>
+  <tr><th>Division</th><th>Name</th><th>Description</th></tr>
+  <tr><td>1/32</td><td>Thirty-second note</td><td>Very fast flutter</td></tr>
+  <tr><td>1/16</td><td>Sixteenth note</td><td>Tight rhythmic echo</td></tr>
+  <tr><td>1/8T</td><td>Eighth triplet</td><td>Swing/shuffle feel</td></tr>
+  <tr><td>1/8</td><td>Eighth note</td><td>Classic echo</td></tr>
+  <tr><td>1/4T</td><td>Quarter triplet</td><td>Syncopated bounce</td></tr>
+  <tr><td>1/8.</td><td>Dotted eighth</td><td>Ping-pong feel</td></tr>
+  <tr><td>1/4</td><td>Quarter note</td><td>Standard echo</td></tr>
+  <tr><td>1/4.</td><td>Dotted quarter</td><td>Wide spacious echo</td></tr>
+  <tr><td>1/2</td><td>Half note</td><td>Long throw</td></tr>
+  <tr><td>5/8</td><td>Five eighths</td><td>Polyrhythmic feel</td></tr>
+  <tr><td>1/2.</td><td>Dotted half</td><td>Very long trail</td></tr>
+</table>
+
+<h3>Delay Amount (Knob 31)</h3>
+<ul>
+  <li><strong>0&ndash;2%:</strong> Delay is completely off (dead band)</li>
+  <li><strong>2&ndash;25%:</strong> Volume ramps up to full</li>
+  <li><strong>25&ndash;100%:</strong> Volume stays at peak; feedback amount continues to increase</li>
+</ul>
+
+<div class="tip"><strong>Tip:</strong> Muting a voice (volume to zero) does <em>not</em> cut its delay tail. Delay sends are independent of voice volumes.</div>
+
+<!-- ================================================================== -->
+<h2 id="signal" class="page-break">8. Signal Flow</h2>
+
+<div class="diagram">                         ┌──────────────┐
+  D1 Kick ──────────────┬──▶│              │
+  D2 Snare/Clap ────────┼──▶│  Drum Mixer  │──▶ Master LPF ──▶ Master Wavefolder ──▶ Output
+  D3 Hi-Hat ────────────┼──▶│              │
+                        │   └──────────────┘
+                        │
+                        │   ┌──────────────┐     ┌───────────┐
+  D1 (send knob 7) ────┼──▶│              │     │           │
+  D2 (send knob 12) ───┼──▶│ Delay Mixer  │──▶──│   Delay   │──┐
+  D3 (send knob 20) ───┼──▶│              │     │           │  │
+                        │   │    ┌─feedback─┼──◀──│  Filter   │◀─┘
+                        │   └────┘          │     └───────────┘
+                        │        │
+                        │        ▼
+                        │   Delay Return ────────────────────────▶ Output</div>
+
+<p><strong>Master effects chain:</strong></p>
+<ul>
+  <li><strong>Master LPF</strong> (knob 26) &mdash; Lowpass filter on the entire mix</li>
+  <li><strong>Master Wavefolder</strong> (knobs 25 + 30) &mdash; Adds harmonics/distortion to the full mix</li>
+  <li><strong>Delay</strong> (knobs 24 + 31) &mdash; Beat-synced echo with feedback, mixed into output</li>
+</ul>
+
+<!-- ================================================================== -->
+<h2 id="extclock">9. External Clock Sync</h2>
+
+<p>Connect an external clock pulse to sync the sequencer with other gear.</p>
+
+<h3>Getting Started</h3>
+<ol>
+  <li>Connect a clock source to the clock input</li>
+  <li>Press Play &mdash; the machine waits for incoming pulses</li>
+  <li>Once a steady clock is detected (two consistent pulses), it locks in and starts running</li>
+  <li>The display shows "EXT" and the detected BPM</li>
+</ol>
+
+<h3>PPQN (Pulses Per Quarter Note)</h3>
+<p>Set PPQN to match your clock source. Hold the Slot button for 3 seconds, turn the BPM knob to select, release to confirm.</p>
+
+<table>
+  <tr><th>PPQN</th><th>Use When</th></tr>
+  <tr><td>1</td><td>Clock sends 1 pulse per beat &mdash; machine subdivides into 4 steps</td></tr>
+  <tr><td>2</td><td>Clock sends 2 pulses per beat &mdash; machine subdivides into 2 steps</td></tr>
+  <tr><td>4</td><td>Clock sends 4 pulses per beat &mdash; 1:1 step mapping</td></tr>
+  <tr><td>24</td><td>Standard MIDI clock (24 ppqn)</td></tr>
+  <tr><td>48</td><td>High-resolution clock</td></tr>
+  <tr><td>96</td><td>Very high-resolution clock</td></tr>
+</table>
+
+<div class="tip"><strong>Tip:</strong> If the external clock stops for more than 2 seconds, the machine returns to internal clock mode. PPQN is remembered across power cycles.</div>
+
+<!-- ================================================================== -->
+<h2 id="saveload">10. Save &amp; Load</h2>
+
+<p><strong>10 memory slots</strong> (0&ndash;9) store your patterns. Each slot saves:</p>
+<ul>
+  <li>D1 kick pattern (16 steps)</li>
+  <li>D2 snare/clap pattern (16 steps)</li>
+  <li>D3 hi-hat pattern (16 steps)</li>
+  <li>Bass line notes (pitch per step)</li>
+</ul>
+
+<h3>How to Save &amp; Load</h3>
+<table>
+  <tr><th>Action</th><th>How</th></tr>
+  <tr><td>Choose a slot</td><td>Press the Slot button to cycle through slots 0&ndash;9</td></tr>
+  <tr><td>Save</td><td>Press Save &mdash; display shows "PATTERN SAVED"</td></tr>
+  <tr><td>Load</td><td>Press Load &mdash; display shows "PATTERN LOADED"</td></tr>
+</table>
+
+<div class="tip"><strong>Tip:</strong> You can save while the sequence is playing. Knob positions are not saved &mdash; only the step patterns and bass line notes.</div>
+
+<!-- ================================================================== -->
+<h2 id="display">11. Display Guide</h2>
+
+<table>
+  <tr><th>Area</th><th>What It Shows</th></tr>
+  <tr><td>Top</td><td>Transport mode (INT / EXT) and current BPM</td></tr>
+  <tr><td>Center</td><td>Real-time oscilloscope &mdash; see your sound waveform as it plays</td></tr>
+  <tr><td>Overlay</td><td>Knob name &amp; value, shown briefly when you turn any knob</td></tr>
+  <tr><td>Visual rails</td><td>Shown for Shape (knob 1), Voice Mix (10, 18) &mdash; position indicator along a bar</td></tr>
+  <tr><td>Status messages</td><td>PATTERN SAVED, PATTERN LOADED, BASS LINE MODE, PPQN selection</td></tr>
+</table>
+
+</body>
+</html>
