@@ -14,6 +14,19 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 
+// Simple CRC8 (polynomial 0x07) over a byte array.
+// Used to detect EEPROM corruption beyond the magic number.
+static uint8_t crc8(const uint8_t* data, size_t len) {
+  uint8_t crc = 0xFF;
+  for (size_t i = 0; i < len; i++) {
+    crc ^= data[i];
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) : (crc << 1);
+    }
+  }
+  return crc;
+}
+
 // ============================================================================
 //  External dependencies — defined in main .ino
 // ============================================================================
@@ -55,14 +68,14 @@ struct EepromSlot {
   uint16_t magic;
   uint16_t seq;
   PatternStore patterns;
-  uint8_t reserved0;  // reserved for future use (e.g., per-slot BPM)
+  uint8_t crc;  // CRC8 over PatternStore bytes — detects partial writes / corruption
 };
 
 // ============================================================================
 //  Constants
 // ============================================================================
 
-static constexpr uint16_t EEPROM_MAGIC      = 0x4243;  // Bumped for bass line layout
+static constexpr uint16_t EEPROM_MAGIC      = 0x4244;  // Bumped: added CRC8 field
 static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
 // PPQN stored after all save slots
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
@@ -94,14 +107,18 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   // Verify magic number
   if (slot.magic != EEPROM_MAGIC) return false;
 
+  // Verify CRC8 over pattern data — catches partial writes and bit rot
+  uint8_t expected = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
+  if (slot.crc != expected) return false;
+
   // Load pattern data with interrupts disabled so external clock ISR
   // can't read a half-copied pattern (~1us on Cortex-M7).
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
-    drum1Sequence[step] = slot.patterns.drum1[step];
-    drum2Sequence[step] = slot.patterns.drum2[step];
-    drum3Sequence[step] = slot.patterns.drum3[step];
-    bassLineNote[step] = slot.patterns.bassLine[step];
+    drum1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
+    drum2Sequence[step] = slot.patterns.drum2[step] ? 1 : 0;
+    drum3Sequence[step] = slot.patterns.drum3[step] ? 1 : 0;
+    bassLineNote[step] = constrain(slot.patterns.bassLine[step], 33, 69);  // A1–A4
   }
   interrupts();
 
@@ -153,6 +170,9 @@ void saveStateToEEPROM(uint8_t slotIndex) {
     slot.patterns.bassLine[step] = bassLineNote[step];
   }
   interrupts();
+
+  // CRC8 over pattern data — detects partial writes on load
+  slot.crc = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
 
   EEPROM.put((int)addr, slot);  // Cast to int here for EEPROM.put()
 

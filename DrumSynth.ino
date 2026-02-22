@@ -175,7 +175,7 @@ float d1CachedDecayMs = 75.0f;   // defaults; see updateD1EnvelopeCache()
 // parameter overlay text — Main-loop only, no ISR access
 char displayParameter1[24] = "";
 char displayParameter2[24] = "";
-const int KNOB_NONE = 255;                   // sentinel: no active knob
+const int KNOB_NONE = -1;                    // sentinel: no active knob
 int lastActiveKnob = KNOB_NONE;
 uint32_t parameterOverlayStartTick = 0;
 
@@ -247,8 +247,8 @@ enum AltMode : uint8_t {
   ALT_OFF = 0,
   ALT_HALF,
   ALT_QUARTER,
-  ALT_EIGHT,
-  ALT_EIGHTUP,
+  ALT_EIGHTH,
+  ALT_EIGHTHUP,
   ALT_VARI1,
   ALT_VARI2,
   ALT_VARI3,
@@ -300,14 +300,12 @@ static inline float normKnob(int v) {
 
 // D1 osc and pitch
 float d1BaseFreq = 100.0f;
-float d1DistPitchBoost = 0.0f;
 
 inline void applyD1Freq() {
-  float f = d1BaseFreq * (1.0f + d1DistPitchBoost);
   AudioNoInterrupts();
-  d1.frequency(f);
-  d1b.frequency(f);
-  d1c.frequency(f);
+  d1.frequency(d1BaseFreq);
+  d1b.frequency(d1BaseFreq);
+  d1c.frequency(d1BaseFreq);
   AudioInterrupts();
 }
 
@@ -395,8 +393,8 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
   switch (mode) {
     case ALT_HALF: return 0b1000000010000000;     // steps 0 and 8
     case ALT_QUARTER: return 0b1000100010001000;  // steps 0,4,8,12
-    case ALT_EIGHT: return 0b1010101010101010;    // even steps (eighth-note pattern)
-    case ALT_EIGHTUP: return 0b0101010101010101;  // odd steps (eighth-note upbeat)
+    case ALT_EIGHTH: return 0b1010101010101010;    // even steps (eighth-note pattern)
+    case ALT_EIGHTHUP: return 0b0101010101010101;  // odd steps (eighth-note upbeat)
     case ALT_VARI1: return PAT_VARI1;
     case ALT_VARI2: return PAT_VARI2;
     case ALT_VARI3: return PAT_VARI3;
@@ -594,7 +592,7 @@ void setup() {
   // Initialize knob smoothing filters
   for (byte i = 0; i < knobCount; i++) {
     analog[i] = new ResponsiveAnalogRead(0, true);
-    analog[i]->setActivityThreshold(20);
+    analog[i]->setActivityThreshold(32);
   }
 
   // ============================================================================
@@ -1030,9 +1028,14 @@ void updateOtherButtons() {
               activeRail = RAIL_NONE;
               lastActiveKnob = KNOB_NONE;
 
-              if (patternDirty) saveStateToEEPROM(activeSaveSlot);
-              snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
-              snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
+              if (patternDirty) {
+                saveStateToEEPROM(activeSaveSlot);
+                snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
+                snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
+              } else {
+                snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
+                snprintf(displayParameter2, sizeof(displayParameter2), "CLEAN");
+              }
 
               parameterOverlayStartTick = nowTick;
               break;
@@ -1248,19 +1251,37 @@ static inline float d1PitchCurve(int knobValue) {
   }
 }
 
-// Bass line frequency: maps MIDI note to Hz. Pure math, no string work.
+// Bass line note range (MIDI 33=A1 through 69=A4)
+static constexpr uint8_t BASS_NOTE_MIN = 33;
+static constexpr uint8_t BASS_NOTE_MAX = 69;
+
+// Bass line frequency: maps MIDI note (33–69) to Hz via lookup table.
+// Pre-computed A1(33)=55Hz through A4(69)=440Hz. Avoids powf in ISR.
+static const float BASS_LINE_FREQ[] = {
+  // MIDI 33  34       35       36       37       38       39       40
+  55.000f, 58.270f, 61.735f, 65.406f, 69.296f, 73.416f, 77.782f, 82.407f,
+  // MIDI 41  42       43       44       45       46       47       48
+  87.307f, 92.499f, 97.999f, 103.826f, 110.000f, 116.541f, 123.471f, 130.813f,
+  // MIDI 49  50       51       52       53       54       55       56
+  138.591f, 146.832f, 155.563f, 164.814f, 174.614f, 184.997f, 195.998f, 207.652f,
+  // MIDI 57  58       59       60       61       62       63       64
+  220.000f, 233.082f, 246.942f, 261.626f, 277.183f, 293.665f, 311.127f, 329.628f,
+  // MIDI 65  66       67       68       69
+  349.228f, 369.994f, 391.995f, 415.305f, 440.000f
+};
+
 inline float bassLineFreq(uint8_t midiNote) {
-  return 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
+  uint8_t idx = constrain(midiNote, BASS_NOTE_MIN, BASS_NOTE_MAX) - BASS_NOTE_MIN;
+  return BASS_LINE_FREQ[idx];
 }
 
-// Bass line pitch: frequency + note name string for display.
-// Returns frequency in Hz. Writes note name to outName (must be >=5 chars).
-static inline float bassLinePitch(uint8_t midiNote, char* outName) {
+// Bass line pitch: writes note name string for display.
+// outName must be >= 5 chars.
+static inline void bassLinePitch(uint8_t midiNote, char* outName) {
   static const char* NOTE_NAMES[] = {
     "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
   };
   snprintf(outName, 5, "%s%d", NOTE_NAMES[midiNote % 12], (midiNote / 12) - 1);
-  return bassLineFreq(midiNote);
 }
 
 // Maps knob 0–1023 to MIDI note in A1(33)–A4(69) range, quantized.
@@ -1307,8 +1328,8 @@ static inline uint8_t accentModeFromKnob(int knobValue) {
   switch (zone) {
     case 1: return ALT_HALF;
     case 2: return ALT_QUARTER;
-    case 3: return ALT_EIGHT;
-    case 4: return ALT_EIGHTUP;
+    case 3: return ALT_EIGHTH;
+    case 4: return ALT_EIGHTHUP;
     case 5: return ALT_VARI1;
     case 6: return ALT_VARI2;
     case 7: return ALT_VARI3;
@@ -1355,8 +1376,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 0:  // D1 Drive/Distortion
       {
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORT");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1404,8 +1424,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 4:  // D1 Volume
       {
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1413,8 +1432,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 5:  // D1 Attack/Snap
       {
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1422,8 +1440,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 6:  // D1 EQ (Body)
       {
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1657,8 +1674,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 28:  // Master Volume
       {
-        float norm = normKnob(knobValue);
-        int percent = (int)(norm * 100.0f + 0.5f);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "MASTER VOL");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1726,12 +1742,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 0:  // D1 Drive/Distortion
       {
+        if (knobValue < 10) {
+          d1DCwf.amplitude(0.0f);
+          break;
+        }
         float norm = normKnob(knobValue);
         float wavefolderAmp = 0.1f + norm * 1.023f;
 
         d1DCwf.amplitude(wavefolderAmp);
-        d1DistPitchBoost = 0.03f * norm;
-        applyD1Freq();
         break;
       }
 
@@ -1995,7 +2013,6 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           float noiseGain = 0.045f + 0.27f * norm;
           d2Mixer.gain(2, noiseGain);
 
-          applyChokeToDecays();
         } else {
           // Off
           d2Mixer.gain(2, 0.0f);
@@ -2264,7 +2281,6 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
         float delayMs = msPerBeat * quantizeRatios[ratioIdx];
         if (delayMs > 1400.0f) delayMs = 1400.0f;
-        if (delayMs < 0.0f) delayMs = 0.0f;
 
         masterDelay.delay(0, delayMs);
         break;
@@ -2317,7 +2333,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // update() finishes the current interval, then applies the new period —
         // no gap, no stutter.
         if (transportState == RUN_INT) {
-          float stepPeriodUs = 15000000.0f / bpm;  // 60M µs / (BPM × 4 subdivisions)
+          float stepPeriodUs = 60000000.0f / (STEPS_PER_BEAT * bpm);
           if (stepPeriodUs < 500.0f) stepPeriodUs = 500.0f;
           stepTimer.update((uint32_t)stepPeriodUs);
         }

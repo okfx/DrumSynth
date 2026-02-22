@@ -286,7 +286,6 @@ inline void audioInit() {
   d3606BPF.resonance(1.25f);
 
   d3606AmpEnv.attack(1.0f);
-  d3606AmpEnv.hold(0.0f);
   d3606AmpEnv.decay(45.0f);
   d3606AmpEnv.sustain(0.0f);
 
@@ -317,7 +316,6 @@ inline void audioInit() {
   d3MasterMixer.gain(1, 0.0f);  // d3Mixer2 removed in wavefoldermixer graph
 
   d3AmpEnv.attack(1.0f);
-  d3AmpEnv.hold(0.0f);
   d3AmpEnv.decay(45.0f);
   d3AmpEnv.sustain(0.0f);
 

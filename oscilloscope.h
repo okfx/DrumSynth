@@ -36,7 +36,7 @@ extern Adafruit_SH1106G display;               // from hw_setup.h
 //  updateScopeData() — call from main loop to consume audio samples
 // ============================================================================
 
-void updateScopeData() {
+static inline void updateScopeData() {
   static uint8_t blockSkipCounter = 0;
   const uint8_t BLOCKS_TO_SKIP = 12;
   const int SAMPLE_DECIMATION = 16;
@@ -65,7 +65,7 @@ void updateScopeData() {
 //  drawScopeWaveform() — render waveform into display buffer
 // ============================================================================
 
-void drawScopeWaveform(int x, int y, int h) {
+static inline void drawScopeWaveform(int x, int y, int h) {
   // Find min/max for AC auto-scaling (signed signal)
   float minVal = 0.0f, maxVal = 0.0f;
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {

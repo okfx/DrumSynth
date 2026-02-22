@@ -45,9 +45,9 @@ Mux stepButtonsMux  = Mux(Pin(17, INPUT, PinType::Digital), Pinset(0, 1, 2, 3));
 Mux otherButtonsMux = Mux(Pin(22, INPUT, PinType::Digital), Pinset(0, 1, 2, 3));  // Control buttons 0-9
 
 // Hardware counts
-const int knobCount         = 32;  // 2 muxes × 16 channels
-const int stepButtonCount   = 16;  // 1 mux × 16 channels
-const int otherButtonsCount = 10;  // 1 mux, 10 of 16 channels used
-const int numSteps          = 16;  // Sequencer step count (matches step buttons)
+static constexpr int knobCount         = 32;  // 2 muxes × 16 channels
+static constexpr int stepButtonCount   = 16;  // 1 mux × 16 channels
+static constexpr int otherButtonsCount = 10;  // 1 mux, 10 of 16 channels used
+static constexpr int numSteps          = 16;  // Sequencer step count (matches step buttons)
 
 #endif
