@@ -66,7 +66,6 @@ extern void applyMasterGainFromState();
 //    ledUpdatePending          — bool, atomic on ARM, ISR sets, main loop clears
 //    lastD1/D2/D3TriggerUs     — uint32_t, written by both ISR and main loop
 //    subdivRemaining           — uint8_t, ISR + resetExternalClockState (inside noInterrupts)
-//    subdivIntervalUs          — uint32_t, ISR + resetExternalClockState (inside noInterrupts)
 //
 //  Main loop writes (read by ISR):
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
@@ -81,45 +80,50 @@ extern void applyMasterGainFromState();
 // ============================================================================
 
 // ============================================================================
-//  State variables
+//  Constants
 // ============================================================================
 
-// ISR-written external clock state
-volatile uint32_t lastPulseMicros = 0;     // Timestamp of last valid pulse (ISR+main)
+static constexpr uint32_t EXT_GLITCH_US = 300;       // Hard floor for glitch rejection (µs)
+static constexpr uint32_t EXT_TIMEOUT_US = 2000000;  // No pulse for 2s → fall back to internal
+static constexpr uint8_t  STEPS_PER_BEAT = 4;        // 16th-note sequencer: 4 steps per quarter note
+static constexpr uint32_t MIN_RETRIGGER_US = 2000;   // 2ms — skip noteOff if retriggered faster
+
+// ============================================================================
+//  State variables — external clock
+// ============================================================================
+
+// Pulse timing (ISR-written, main loop reads with noInterrupts)
+volatile uint32_t lastPulseMicros = 0;     // Timestamp of last accepted pulse (µs)
 volatile uint32_t lastPulseInterval = 0;   // Interval between last two accepted pulses (µs)
-volatile uint32_t extIntervalEMA = 0;      // Fast EMA (alpha=0.5) — glitch filter + BPM display source
+volatile uint32_t extIntervalEMA = 0;      // Fast EMA (alpha=0.5) — glitch filter + BPM display
 volatile uint32_t prevAcceptedInterval = 0; // Previous accepted interval — lock-in similarity check
-volatile uint8_t  extPulseCount = 0;       // Counts valid pulses (2 needed to switch to EXT)
-volatile uint8_t  extStepAcc = 0;          // Step accumulator (fractional step tracking)
-volatile uint8_t  pendingStepCount = 0;    // For internal clock (stepISR), capped at 255
+volatile uint8_t  extPulseCount = 0;       // Accepted pulse count (2 needed for lock-in)
+
+// Step generation
+volatile uint8_t  extStepAcc = 0;          // Accumulator for fractional step tracking (ppqn >= 4)
+volatile bool     wantSwitchToExt = false; // ISR→main-loop handoff: ISR sets, main loop clears
+
+// Subdivision (ppqn < 4): ISR fires Step A immediately, then arms stepTimer
+// for the remaining steps at evenly-spaced intervals from lastPulseInterval.
+// Both ISRs run at the same ARM priority — no preemption, no race conditions.
+volatile uint8_t  subdivRemaining = 0;     // Deferred steps still to fire (0 = idle, max 3)
+
+// ============================================================================
+//  State variables — shared (used by both internal and external clock paths)
+// ============================================================================
+
+volatile uint8_t  pendingStepCount = 0;    // Internal clock (stepISR) step queue, capped at 255
 volatile bool     ledUpdatePending = false; // ISR sets after step trigger, main loop updates LEDs
 
-// ISR→main-loop handoff: ISR sets this flag, main loop acts on it
-volatile bool wantSwitchToExt = false;
-
-// Per-voice retrigger timestamps — ISR-written, used to avoid noteOff()
-// killing a just-triggered envelope when two steps fire in rapid succession
+// Per-voice retrigger timestamps — written by triggerD1/D2/D3 (called from
+// both ISR and main loop), used to avoid noteOff() killing a just-triggered
+// envelope when two steps fire in rapid succession.
 volatile uint32_t lastD1TriggerUs = 0;
 volatile uint32_t lastD2TriggerUs = 0;
 volatile uint32_t lastD3TriggerUs = 0;
-static constexpr uint32_t MIN_RETRIGGER_US = 2000;  // 2ms — skip noteOff if retriggered faster
 
-// BPM derived from external clock interval (main loop only, not volatile)
+// BPM display (main loop only, not volatile)
 float extBpmDisplay = 0.0f;
-
-// Hard floor for glitch rejection: 300µs catches contact bounce / electrical noise
-static constexpr uint32_t EXT_GLITCH_US = 300;
-
-// Timeout: if no pulse for 2 seconds, fall back to internal clock
-static constexpr uint32_t EXT_TIMEOUT_US = 2000000;
-
-// Subdivision timer state — for ppqn < 4, the external clock ISR fires Step A
-// immediately, then arms stepTimer to fire the remaining steps (B, C, D) at
-// evenly-spaced intervals derived from lastPulseInterval (measured, not EMA).
-// Both ISRs (externalClockISR + subdivISR) run at the same ARM priority — they
-// cannot preempt each other, so no race conditions between them.
-volatile uint8_t  subdivRemaining = 0;     // Deferred steps still to fire (0 = idle, max 3)
-volatile uint32_t subdivIntervalUs = 0;    // Microseconds between subdivision steps
 
 // ============================================================================
 //  ISR Functions
@@ -129,12 +133,8 @@ volatile uint32_t subdivIntervalUs = 0;    // Microseconds between subdivision s
 // Uses same triggerD1/D2/D3 helpers as playSequenceCore(), but sets
 // ledUpdatePending instead of calling updateLEDs() (SPI unsafe from ISR).
 void triggerStepFromISR() {
-  // Guard against corruption: clamp to valid range, then advance.
-  // Setting to numSteps-1 means the +1 below wraps to step 0 (clean restart).
-  if (currentStep >= numSteps) {
-    currentStep = numSteps - 1;
-  }
-  currentStep = (currentStep + 1) % numSteps;
+  // Advance step with wrap.  Bitmask (0x0F) works because numSteps is 16.
+  currentStep = (currentStep + 1) & 0x0F;
 
   if (drum1Sequence[currentStep]) {
     if (bassLineModeActive) {
@@ -158,12 +158,12 @@ void stepISR() {
   }
 }
 
-// Subdivision timer ISR — fires deferred steps for ppqn < 4.
-// Called by stepTimer at subdivIntervalUs intervals during RUN_EXT.
+// Subdivision timer ISR — fires deferred steps for ppqn < STEPS_PER_BEAT.
+// Called by stepTimer at evenly-spaced intervals during RUN_EXT.
 // Runs at same priority as externalClockISR (no preemption between them).
 void subdivISR() {
-  // Guard: if ppqn was changed to >= 4 while subdivisions were in flight, stop
-  if (ppqn >= 4 || subdivRemaining == 0) {
+  // Guard: if ppqn was changed to >= STEPS_PER_BEAT while subdivisions were in flight, stop
+  if (ppqn >= STEPS_PER_BEAT || subdivRemaining == 0) {
     stepTimer.end();
     subdivRemaining = 0;
     return;
@@ -206,7 +206,8 @@ void externalClockISR() {
 
     // Fast EMA (alpha=0.5): glitch filter threshold + BPM display source.
     // Responsive to tempo changes; display-side smoothing handles jitter.
-    // Equivalent to (ema + interval) / 2 — fast integer average
+    // Math: newEMA = (oldEMA + interval) / 2, done as integer shift.
+    // The (int32_t) cast makes the subtraction signed so >> 1 rounds toward zero.
     extIntervalEMA = (ema == 0)
         ? interval
         : ema + (((int32_t)(interval - ema)) >> 1);
@@ -242,9 +243,9 @@ void externalClockISR() {
   bool canStep = (transportState == RUN_EXT || wantSwitchToExt);
   if (canStep && sequencePlaying) {
 
-    if (ppqn >= 4) {
+    if (ppqn >= STEPS_PER_BEAT) {
       // --- STANDARD PATH (ppqn >= 4): accumulator, at most 1 step per pulse ---
-      uint8_t acc = extStepAcc + 4;
+      uint8_t acc = extStepAcc + STEPS_PER_BEAT;
       while (acc >= ppqn) {
         acc -= ppqn;
         triggerStepFromISR();
@@ -266,7 +267,7 @@ void externalClockISR() {
       // Calculate how many more steps to fire between now and the next pulse:
       //   ppqn=2 → stepsPerPulse=2 → 1 deferred step  (B)
       //   ppqn=1 → stepsPerPulse=4 → 3 deferred steps (B, C, D)
-      uint8_t stepsPerPulse = 4 / ppqn;
+      uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
       uint8_t deferred = stepsPerPulse - 1;
 
       // Arm subdivision timer using the measured interval (not EMA).
@@ -283,7 +284,6 @@ void externalClockISR() {
         if (subInterval < MIN_RETRIGGER_US) subInterval = MIN_RETRIGGER_US;
 
         subdivRemaining = deferred;
-        subdivIntervalUs = subInterval;
         stepTimer.begin(subdivISR, subInterval);
       }
       // If measuredInterval == 0 (first pulse, no interval yet), only Step A fires.
@@ -299,7 +299,8 @@ void externalClockISR() {
 
 // (Re)start the internal clock timer based on current BPM
 void rearmStepTimer() {
-  float stepPeriodUs = 15000000.0f / bpm;
+  // 60,000,000 µs/min ÷ STEPS_PER_BEAT ÷ bpm = µs per step
+  float stepPeriodUs = 60000000.0f / (STEPS_PER_BEAT * bpm);
   if (stepPeriodUs < 500.0f) stepPeriodUs = 500.0f;
   stepTimer.end();
   stepTimer.begin(stepISR, (uint32_t)stepPeriodUs);
@@ -318,7 +319,6 @@ static inline void resetExternalClockState() {
   // Per-voice retrigger timestamps (lastD1/D2/D3TriggerUs) not reset here —
   // they self-correct on next trigger.
   subdivRemaining = 0;
-  subdivIntervalUs = 0;
   interrupts();
   extBpmDisplay = 0.0f;
 }
@@ -366,6 +366,21 @@ void checkExtClockTimeout() {
       resetExternalClockState();
     }
   }
+}
+
+// Check if external clock is running steadily — call from main loop only.
+// Returns true if ISR has been tracking a valid clock within the timeout window.
+// Used by the PLAY button to skip RUN_INT and go straight to RUN_EXT,
+// so the first step fires on the next real pulse with no internal-clock gap.
+bool isExtClockRunning() {
+  noInterrupts();
+  uint8_t  count = extPulseCount;
+  uint32_t ema   = extIntervalEMA;
+  uint32_t lastP = lastPulseMicros;
+  interrupts();
+
+  if (count < 2 || ema == 0 || lastP == 0) return false;
+  return (micros() - lastP) < EXT_TIMEOUT_US;
 }
 
 // Derive EXT BPM from the fast EMA (alpha=0.5) — same interval the engine

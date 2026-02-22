@@ -992,7 +992,15 @@ void updateOtherButtons() {
               interrupts();
 
               sequencePlaying = true;
-              setTransport(RUN_INT);
+
+              // If external clock is already running, go straight to RUN_EXT.
+              // The ISR will fire the first step on the very next pulse —
+              // no internal clock steps in between, no spurious handoff.
+              if (isExtClockRunning()) {
+                setTransport(RUN_EXT);
+              } else {
+                setTransport(RUN_INT);
+              }
             } else {
               // STOP — setTransport(STOPPED) clears extStepAcc internally
               sequencePlaying = false;
