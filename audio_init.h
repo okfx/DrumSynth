@@ -80,7 +80,6 @@ inline void audioInit() {
   // D1 pitch envelope and modulation
   d1DC.amplitude(0.25f);
   d1DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
-  d3DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
   d1PitchEnv.decay(25.0f);
   d1PitchEnv.sustain(0.0f);
 
@@ -190,12 +189,10 @@ inline void audioInit() {
   clap1AmpEnv.attack(0.5f);
   clap1AmpEnv.hold(4.0f);
   clap1AmpEnv.decay(20.0f);
-  clap1AmpEnv.release(0.0f);
 
   clap2AmpEnv.attack(0.5f);
   clap2AmpEnv.hold(5.0f);
   clap2AmpEnv.decay(24.0f);
-  clap2AmpEnv.release(0.0f);
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
@@ -229,7 +226,6 @@ inline void audioInit() {
   clapMasterEnv.attack(0.5f);
   clapMasterEnv.hold(1.0f);
   clapMasterEnv.decay(200.0f);
-  clapMasterEnv.release(0.0f);
   clapMasterEnv.sustain(0.0f);
 
   clapAmp.gain(1.5f);
@@ -275,10 +271,10 @@ inline void audioInit() {
   d3606Mixer1.gain(2, 0.25f);
   d3606Mixer1.gain(3, 0.25f);
 
-  d3606Mixer2.gain(0, 0.25f);
-  d3606Mixer2.gain(1, 0.25f);
-  d3606Mixer2.gain(2, 0.25f);
-  d3606Mixer2.gain(3, 0.25f);
+  d3606Mixer2.gain(0, 0.25f);  // W5
+  d3606Mixer2.gain(1, 0.25f);  // W6
+  d3606Mixer2.gain(2, 0.0f);   // unconnected
+  d3606Mixer2.gain(3, 0.0f);   // unconnected
 
   d3606MasterMixer.gain(0, 1.0f);
   d3606MasterMixer.gain(1, 1.0f);
@@ -289,30 +285,28 @@ inline void audioInit() {
   d3606BPF.frequency(5000.0f);
   d3606BPF.resonance(1.25f);
 
-  d3606AmpEnv.delay(0.0f);
   d3606AmpEnv.attack(1.0f);
   d3606AmpEnv.hold(0.0f);
   d3606AmpEnv.decay(45.0f);
   d3606AmpEnv.sustain(0.0f);
-  d3606AmpEnv.release(0.0f);
 
   // --- D3 Voice 2: FM hats ---
 
-  const float c1 = 500.0f;
-  const float c2 = 850.0f;
-  const float r1 = 7.13f;
-  const float r2 = 9.41f;
-  const float m1 = c1 * r1;
-  const float m2 = c2 * r2;
+  const float carrier1Freq = 500.0f;
+  const float carrier2Freq = 850.0f;
+  const float ratio1       = 7.13f;
+  const float ratio2       = 9.41f;
+  const float mod1Freq     = carrier1Freq * ratio1;  // 3565 Hz
+  const float mod2Freq     = carrier2Freq * ratio2;  // 7998.5 Hz
 
-  d3W1.begin(0.28f, c1, WAVEFORM_SINE);
+  d3W1.begin(0.28f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
   d3W1.frequencyModulation(6);  // 4..8 is a good hat range
 
-  d3W3.begin(0.28f, c2, WAVEFORM_SINE);
+  d3W3.begin(0.28f, carrier2Freq, WAVEFORM_SINE);  // carrier 2
   d3W3.frequencyModulation(6);
 
-  d3W2.begin(0.25f, m1, WAVEFORM_SINE);  // depth = amplitude here
-  d3W4.begin(0.20f, m2, WAVEFORM_SINE);
+  d3W2.begin(0.25f, mod1Freq, WAVEFORM_SINE);  // modulator 1 (depth = amplitude)
+  d3W4.begin(0.20f, mod2Freq, WAVEFORM_SINE);  // modulator 2
 
   d3Mixer1.gain(0, 0.5f);
   d3Mixer1.gain(1, 0.0f);
@@ -322,12 +316,10 @@ inline void audioInit() {
   d3MasterMixer.gain(0, 0.5f);
   d3MasterMixer.gain(1, 0.0f);  // d3Mixer2 removed in wavefoldermixer graph
 
-  d3AmpEnv.delay(0.0f);
   d3AmpEnv.attack(1.0f);
   d3AmpEnv.hold(0.0f);
   d3AmpEnv.decay(45.0f);
   d3AmpEnv.sustain(0.0f);
-  d3AmpEnv.release(0.0f);
 
   // --- D3 Voice 3: Noise-based hat ---
 
@@ -336,6 +328,8 @@ inline void audioInit() {
   drum3.length(15.0f);
 
   // --- D3 output mixing ---
+
+  d3DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
 
   // D3 wavefolder mixer (voice 1 + voice 2 + voice 3)
   d3WfMixer.gain(0, 0.25f);
@@ -382,7 +376,7 @@ inline void audioInit() {
   masterMixer.gain(0, 1.0f);  // dry drums
   masterMixer.gain(1, 1.0f);  // master wavefolder
   masterMixer.gain(2, 1.0f);  // delay return
-  masterMixer.gain(3, 1.0f);  // spare
+  masterMixer.gain(3, 0.0f);  // unconnected
 
   // Master delay
   masterDelay.delay(0, 0);
