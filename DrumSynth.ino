@@ -2422,7 +2422,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           // Level ramps from 0 to peak over 2%–25%, then plateaus at peak.
           // sqrt curve gives audible control in the ramp zone.
           const float RAMP_END = 0.25f;
-          const float PEAK_LEVEL = 1.05f;
+          const float PEAK_LEVEL = 0.79f;
           float level;
           if (norm < RAMP_END) {
             float blend = (norm - 0.02f) / (RAMP_END - 0.02f);  // 0→1 over 2%–25%
