@@ -2664,7 +2664,8 @@ void updateDisplay() {
     display.print("EXT");
     display.setCursor(0, 10);
     if (extBpmDisplay > 0) {
-      display.print(extBpmDisplay, 1);
+      float rounded = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;  // Round to nearest 0.5
+      display.print(rounded, 1);
     }
   } else {
     display.print("BPM");
