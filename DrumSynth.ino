@@ -1743,12 +1743,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         if (knobValue < 10) {
           d1DCwf.amplitude(0.0f);
+          d1Mixer.gain(3, 0.0f);   // wavefolder return off
           break;
         }
         float norm = normKnob(knobValue);
         float wavefolderAmp = 0.1f + norm * 1.023f;
 
         d1DCwf.amplitude(wavefolderAmp);
+        d1Mixer.gain(3, 0.25f);  // wavefolder return on
         break;
       }
 
@@ -1900,8 +1902,10 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float gainSnare = norm;
         float gainClap = 1.0f - norm;
 
+        AudioNoInterrupts();
         snareClapMixer.gain(0, gainSnare * 1.05f);
         snareClapMixer.gain(1, gainClap * 0.75f);
+        AudioInterrupts();
         break;
       }
 
@@ -1997,20 +2001,21 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 14:  // D2 Noise
       {
-        if (knobValue >= 5) {
+        if (knobValue >= 10) {
           float decayMs = (knobValue < 512)
-                            ? mapf(knobValue, 5, 511, 30.0f, 70.0f)
+                            ? mapf(knobValue, 10, 511, 30.0f, 70.0f)
                             : mapf(knobValue, 512, 1023, 70.0f, 200.0f);
 
-          d2NoiseEnvelope.hold(decayMs * 0.5f);
-          d2NoiseEnvelope.decay(decayMs);
-
           float filterFreqHz = 3000.0f + 10.0f * decayMs;
-          d2NoiseFilter.frequency(filterFreqHz);
-
           float norm = normKnob(knobValue);
           float noiseGain = 0.045f + 0.27f * norm;
+
+          AudioNoInterrupts();
+          d2NoiseEnvelope.hold(decayMs * 0.5f);
+          d2NoiseEnvelope.decay(decayMs);
+          d2NoiseFilter.frequency(filterFreqHz);
           d2Mixer.gain(2, noiseGain);
+          AudioInterrupts();
 
         } else {
           // Off
