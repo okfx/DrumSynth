@@ -349,7 +349,7 @@ inline void audioInit() {
   d3WfMixer.gain(2, 0.25f);
 
   // D3 final mixer (dry + wavefolder)
-  d3Mixer.gain(0, 0.25f);  // d3WfMixer (dry)
+  d3Mixer.gain(0, 0.45f);  // d3WfMixer (dry)
   d3Mixer.gain(1, 0.0f);   // d3Wavefolder (wet) — off at boot, knob 19 enables
   // inputs 2–3: unconnected
 

@@ -989,12 +989,11 @@ void updateOtherButtons() {
 
               sequencePlaying = true;
 
-              // If external clock is already running, go straight to RUN_EXT
-              // and fire step 0 immediately so the user can drop in on the
-              // downbeat without waiting for the next pulse.
+              // If external clock is already running, go straight to RUN_EXT.
+              // Don't fire step 0 here — let the next real pulse trigger it
+              // so the sequence lands exactly on the external beat grid.
               if (isExtClockRunning()) {
                 setTransport(RUN_EXT);
-                playSequenceCore();  // Fire step 0 now — don't wait for next pulse
               } else {
                 setTransport(RUN_INT);
               }
@@ -2174,15 +2173,15 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (knobValue < 10) {
           d3WfSine.amplitude(0.0f);
           AudioNoInterrupts();
-          d3Mixer.gain(0, 0.25f);  // dry at default
+          d3Mixer.gain(0, 0.45f);  // dry at default
           d3Mixer.gain(1, 0.0f);   // wavefolder return off
           AudioInterrupts();
           break;
         }
 
         float norm = normKnob(knobValue);
-        // Remap past deadband: bottom 10% stays off, rest spans 0..1
-        float active = (norm - 0.10f) / 0.90f;
+        // Remap past deadband: bottom 10% off, plateau at 58% (≈1:00)
+        float active = (norm - 0.10f) / 0.48f;
         if (active < 0.0f) active = 0.0f;
         if (active > 1.0f) active = 1.0f;
 
@@ -2195,10 +2194,10 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float freqHz = 50.0f * expf(active * 2.89f);  // ln(18) ≈ 2.89
         d3WfSine.frequency(freqHz);
 
-        // Dry pulls down slightly as drive rises (0.25 → 0.22)
-        float dryGain = 0.25f - 0.03f * active;
-        // Wet return ramps up with drive (0.0 → 0.30)
-        float wetGain = active * 0.30f;
+        // Dry pulls down slightly as drive rises (0.45 → 0.40)
+        float dryGain = 0.45f - 0.05f * active;
+        // Wet return ramps up with drive (0.0 → 0.35)
+        float wetGain = active * 0.35f;
         // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
         float comp;
         if (active <= 0.55f) {
@@ -2703,8 +2702,13 @@ void updateDisplay() {
     display.print("EXT");
     display.setCursor(0, 10);
     if (extBpmDisplay > 0) {
-      float rounded = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;  // Round to nearest 0.5
-      display.print(rounded, 1);
+      // Round to nearest 0.5 with hysteresis to prevent display bouncing
+      static float lastSnapped = 0.0f;
+      float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
+      if (lastSnapped <= 0.0f || fabsf(extBpmDisplay - lastSnapped) > 0.3f) {
+        lastSnapped = snapped;
+      }
+      display.print(lastSnapped, 1);
     }
   } else {
     display.print("BPM");
