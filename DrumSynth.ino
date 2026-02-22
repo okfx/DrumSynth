@@ -32,7 +32,7 @@
 #include "hw_setup.h"
 static_assert(numSteps == 16, "Accent mask logic assumes 16 steps");
 
-#define FIRMWARE_VERSION ".131aBassline"
+#define FIRMWARE_VERSION "1.0"
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
