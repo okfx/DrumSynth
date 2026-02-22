@@ -1566,7 +1566,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
         break;
       }
 
-    case 19:  // D3 Wavefolder Drive
+    case 19:  // D3 Distort (sine-driven wavefolder)
       {
         float norm = normKnob(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORT");
@@ -1591,7 +1591,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
         float normSq = norm * norm;
-        float cutoffHz = 4500.0f + normSq * (8000.0f - 4500.0f);
+        float cutoffHz = 4500.0f + normSq * (11000.0f - 4500.0f);
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
@@ -2054,12 +2054,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         // --- Voice 1 (606-ish hats) tuning ---
-        // Precomputed logs of constant ratios — expf(x*log) is ~2x faster than powf on Cortex-M7
+        // Precomputed log of constant ratio — expf(x*log) is ~2x faster than powf on Cortex-M7
         static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
-        static const float LOG_C1_RATIO   = logf(3520.0f / 440.0f);   // c1: A4(440)→A7(3520)
-        static const float LOG_C2_RATIO   = logf(6160.0f / 660.0f);   // c2: 660→6160 (1.5× c1)
-        static const float LOG_R1_RATIO   = logf(4.0f / 2.0f);        // r1Max/r1Min
-        static const float LOG_R2_RATIO   = logf(6.0f / 4.0f);        // r2Max/r2Min
 
         const float hatCurve = pitchBend * pitchBend;
         const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
@@ -2069,16 +2065,19 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
 
         // --- Voice 2 (FM hats) tuning — reuses pitchBend from above ---
-        const float carrier1Hz = 440.0f * expf(pitchBend * LOG_C1_RATIO);  // A4 base
-        const float carrier2Hz = 660.0f * expf(pitchBend * LOG_C2_RATIO); // 1.5× c1 base
-        const float ratio1 = 2.0f * expf(pitchBend * LOG_R1_RATIO);
-        const float ratio2 = 4.0f * expf(pitchBend * LOG_R2_RATIO);
-        const float modulator1Hz = carrier1Hz * ratio1;
-        const float modulator2Hz = carrier2Hz * ratio2;
+        // Carriers scale together; irrational ratios stay fixed (changing
+        // ratios changes timbre, not pitch — we only want pitch shift here).
+        static const float LOG_FM_C1_RATIO = logf(2510.0f / 317.0f);  // 317→2510 Hz
+        static const float LOG_FM_C2_RATIO = logf(5880.0f / 743.0f);  // 743→5880 Hz
 
-        // FM depth: slightly more at the top end, but still capped
-        const float depth1 = 0.06f + 0.52f * (pitchBend * pitchBend);
-        const float depth2 = 0.04f + 0.44f * (pitchBend * pitchBend);
+        const float carrier1Hz = 317.0f * expf(pitchBend * LOG_FM_C1_RATIO);
+        const float carrier2Hz = 743.0f * expf(pitchBend * LOG_FM_C2_RATIO);
+        const float modulator1Hz = carrier1Hz * 2.236f;  // √5 fixed ratio
+        const float modulator2Hz = carrier2Hz * 1.414f;  // √2 fixed ratio
+
+        // FM depth: increases with pitch to maintain brightness at high end
+        const float depth1 = 0.45f + 0.35f * pitchBend;
+        const float depth2 = 0.35f + 0.30f * pitchBend;
 
         AudioNoInterrupts();
 
@@ -2128,9 +2127,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
         const float MAX_GAIN = 0.9f;
 
-        // Voice level trims
+        // Voice level trims (Voice 2 lowered for louder FM engine)
         const float VOICE1_BOOST = 3.8f;
-        const float VOICE2_TRIM = 2.75f;
+        const float VOICE2_TRIM = 1.4f;
         const float VOICE3_TRIM = 0.65f;
 
         float gainVoice1 = 0.0f;
@@ -2162,11 +2161,11 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         break;
       }
 
-    case 19:  // D3 Wavefolder Drive
+    case 19:  // D3 Distort (sine-driven wavefolder)
       {
         // True OFF in the first tiny region
         if (knobValue < 10) {
-          d3DCwf.amplitude(0.0f);
+          d3WfSine.amplitude(0.0f);
           AudioNoInterrupts();
           d3Mixer.gain(0, 0.25f);  // dry at default
           d3Mixer.gain(1, 0.0f);   // wavefolder return off
@@ -2180,9 +2179,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (active < 0.0f) active = 0.0f;
         if (active > 1.0f) active = 1.0f;
 
-        // Drive goes 0..0.50 (linear)
-        float drive = 0.50f * active;
-        d3DCwf.amplitude(drive);
+        // Amplitude: 0.05 → 0.50 (fold depth rises with knob)
+        float drive = 0.05f + 0.45f * active;
+        d3WfSine.amplitude(drive);
+
+        // Frequency: 50 → 900 Hz (exponential — more travel in low range)
+        // exp curve: 50 * (900/50)^active = 50 * 18^active
+        float freqHz = 50.0f * expf(active * 2.89f);  // ln(18) ≈ 2.89
+        d3WfSine.frequency(freqHz);
 
         // Dry pulls down slightly as drive rises (0.25 → 0.22)
         float dryGain = 0.25f - 0.03f * active;
@@ -2222,7 +2226,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
         // Cutoff: quadratic curve so the last 20 percent is dramatic
         float normSquared = norm * norm;
-        float cutoffHz = 4500.0f + normSquared * (8000.0f - 4500.0f);
+        float cutoffHz = 4500.0f + normSquared * (11000.0f - 4500.0f);
 
         // Resonance: cubic curve so it stays tame, then goes wild
         float resonance = 0.2f + (norm * norm * norm) * (0.9f - 0.2f);

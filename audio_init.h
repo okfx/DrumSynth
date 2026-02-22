@@ -290,30 +290,44 @@ inline void audioInit() {
   d3606AmpEnv.sustain(0.0f);
 
   // --- D3 Voice 2: FM hats ---
+  //
+  // Two carrier/modulator pairs with irrational ratios for metallic,
+  // pitch-free spectra.  Carriers are prime-spaced (317, 743 Hz) so
+  // their sum/difference tones never coincide.  Modulator ratios of
+  // √5 ≈ 2.236 and √2 ≈ 1.414 guarantee maximally inharmonic sidebands.
+  // High modulation depth (0.65/0.55) fills the spectrum with dense
+  // metallic partials — two aggressive pairs rival six mild ones.
 
-  const float carrier1Freq = 500.0f;
-  const float carrier2Freq = 850.0f;
-  const float ratio1       = 7.13f;
-  const float ratio2       = 9.41f;
-  const float mod1Freq     = carrier1Freq * ratio1;  // 3565 Hz
-  const float mod2Freq     = carrier2Freq * ratio2;  // 7998.5 Hz
+  const float carrier1Freq = 317.0f;
+  const float carrier2Freq = 743.0f;
+  const float ratio1       = 2.236f;   // √5 — maximally inharmonic
+  const float ratio2       = 1.414f;   // √2 — classic metallic ratio
+  const float mod1Freq     = carrier1Freq * ratio1;  // ≈ 708.8 Hz
+  const float mod2Freq     = carrier2Freq * ratio2;  // ≈ 1050.6 Hz
 
-  d3W1.begin(0.28f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
-  d3W1.frequencyModulation(6);  // 4..8 is a good hat range
+  d3W1.begin(0.30f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
+  d3W1.frequencyModulation(8);  // wide FM bandwidth for dense sidebands
 
-  d3W3.begin(0.28f, carrier2Freq, WAVEFORM_SINE);  // carrier 2
-  d3W3.frequencyModulation(6);
+  d3W3.begin(0.30f, carrier2Freq, WAVEFORM_SINE);  // carrier 2
+  d3W3.frequencyModulation(8);
 
-  d3W2.begin(0.25f, mod1Freq, WAVEFORM_SINE);  // modulator 1 (depth = amplitude)
-  d3W4.begin(0.20f, mod2Freq, WAVEFORM_SINE);  // modulator 2
+  d3W2.begin(0.65f, mod1Freq, WAVEFORM_SINE);  // modulator 1 — aggressive depth
+  d3W4.begin(0.55f, mod2Freq, WAVEFORM_SINE);  // modulator 2
 
-  d3Mixer1.gain(0, 0.5f);
+  d3Mixer1.gain(0, 0.35f);  // lowered for louder FM engine (was 0.5)
   d3Mixer1.gain(1, 0.0f);
   d3Mixer1.gain(2, 0.0f);
   d3Mixer1.gain(3, 0.0f);
 
   d3MasterMixer.gain(0, 0.5f);
   d3MasterMixer.gain(1, 0.0f);  // d3Mixer2 removed in wavefoldermixer graph
+
+  // FM voice shaping filters (d3MasterMixer → d3BPF → d3Filter → d3AmpEnv)
+  d3BPF.frequency(5500.0f);     // bandpass: keep metallic sizzle, cut low-end FM mud
+  d3BPF.resonance(0.9f);
+
+  d3Filter.frequency(2000.0f);  // highpass output: remove remaining low content
+  d3Filter.resonance(0.7f);
 
   d3AmpEnv.attack(1.0f);
   d3AmpEnv.decay(45.0f);
@@ -327,7 +341,7 @@ inline void audioInit() {
 
   // --- D3 output mixing ---
 
-  d3DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
+  d3WfSine.begin(0.0f, 400.0f, WAVEFORM_SINE);  // wavefolder off at boot — knob sets amplitude
 
   // D3 wavefolder mixer (voice 1 + voice 2 + voice 3)
   d3WfMixer.gain(0, 0.25f);
@@ -336,7 +350,7 @@ inline void audioInit() {
 
   // D3 final mixer (dry + wavefolder)
   d3Mixer.gain(0, 0.25f);  // d3WfMixer (dry)
-  d3Mixer.gain(1, 0.25f);  // d3Wavefolder (wet)
+  d3Mixer.gain(1, 0.0f);   // d3Wavefolder (wet) — off at boot, knob 19 enables
   // inputs 2–3: unconnected
 
   // D3 master filter
