@@ -199,7 +199,6 @@ RailMode activeRail = RAIL_NONE;
 
 // delay ratios (in quarter-note units)
 static constexpr float quantizeRatios[] = {
-  0.125f,       // 1/8  of a quarter = 1/32
   0.25f,        // 1/4  of a quarter = 1/16
   0.33333333f,  // 1/3  of a quarter = 1/8T
   0.5f,         // 1/2  of a quarter = 1/8
@@ -213,7 +212,6 @@ static constexpr float quantizeRatios[] = {
 };
 
 static constexpr const char* ratioLabels[] = {
-  "1/32",
   "1/16",
   "1/8T",
   "1/8",
@@ -592,7 +590,7 @@ void setup() {
   // Initialize knob smoothing filters
   for (byte i = 0; i < knobCount; i++) {
     analog[i] = new ResponsiveAnalogRead(0, true);
-    analog[i]->setActivityThreshold(32);
+    analog[i]->setActivityThreshold(36);
   }
 
   // ============================================================================
