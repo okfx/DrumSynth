@@ -1557,7 +1557,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
         break;
       }
 
-    case 18:  // D3 Voice Mix - 3-way (uses rail display)
+    case 18:  // D3 Voice Mix — 606 / FM / PERC (uses rail display)
       {
         displayParameter1[0] = 0;
         displayParameter2[0] = 0;
@@ -2053,7 +2053,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           pitchBend = 0.60f + 0.40f * (blend * blend);
         }
 
-        // --- Voice 1 (606-ish hats) tuning ---
+        // --- 606 voice tuning ---
         // Precomputed log of constant ratio — expf(x*log) is ~2x faster than powf on Cortex-M7
         static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
 
@@ -2064,14 +2064,15 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
         const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
 
-        // --- Voice 2 (FM hats) tuning — reuses pitchBend from above ---
+        // --- FM voice tuning — reuses pitchBend from above ---
         // Carriers scale together; irrational ratios stay fixed (changing
         // ratios changes timbre, not pitch — we only want pitch shift here).
-        static const float LOG_FM_C1_RATIO = logf(2510.0f / 317.0f);  // 317→2510 Hz
-        static const float LOG_FM_C2_RATIO = logf(5880.0f / 743.0f);  // 743→5880 Hz
+        // Range: 500→3000 Hz (c1) and 1050→6300 Hz (c2) — ~2.5 octaves
+        static const float LOG_FM_C1_RATIO = logf(3000.0f / 500.0f);  // 500→3000 Hz
+        static const float LOG_FM_C2_RATIO = logf(6300.0f / 1050.0f); // 1050→6300 Hz
 
-        const float carrier1Hz = 317.0f * expf(pitchBend * LOG_FM_C1_RATIO);
-        const float carrier2Hz = 743.0f * expf(pitchBend * LOG_FM_C2_RATIO);
+        const float carrier1Hz = 500.0f * expf(pitchBend * LOG_FM_C1_RATIO);
+        const float carrier2Hz = 1050.0f * expf(pitchBend * LOG_FM_C2_RATIO);
         const float modulator1Hz = carrier1Hz * 2.236f;  // √5 fixed ratio
         const float modulator2Hz = carrier2Hz * 1.414f;  // √2 fixed ratio
 
@@ -2079,17 +2080,23 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float depth1 = 0.45f + 0.35f * pitchBend;
         const float depth2 = 0.35f + 0.30f * pitchBend;
 
+        // FM shaping filters track pitch (gentle, keeps volume steady)
+        const float fmBpfHz = 4000.0f + 4000.0f * pitchBend;   // 4000→8000 Hz
+        const float fmHpfHz = 1500.0f + 1500.0f * pitchBend;   // 1500→3000 Hz
+
         AudioNoInterrupts();
 
-        // Voice 2 FM hats
+        // FM voice
         d3W1.frequency(carrier1Hz);
         d3W3.frequency(carrier2Hz);
         d3W2.frequency(modulator1Hz);
         d3W4.frequency(modulator2Hz);
         d3W2.amplitude(depth1);
         d3W4.amplitude(depth2);
+        d3BPF.frequency(fmBpfHz);
+        d3Filter.frequency(fmHpfHz);
 
-        // Voice 1 606 hat oscillator bank
+        // 606 voice oscillator bank
         d3606W1.frequency(hatBaseHz * 1.00f);
         d3606W2.frequency(hatBaseHz * 1.08f);
         d3606W3.frequency(hatBaseHz * 1.17f);
@@ -2099,7 +2106,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         d3606HPF.frequency(hpfHz);
         d3606BPF.frequency(bpfHz);
 
-        // Voice 3 noise-based hat — A2(110) → A6(1760), independent of FM carriers
+        // PERC voice — A2(110) → A6(1760), independent of FM carriers
         static const float LOG_NOISE_RATIO = logf(1760.0f / 110.0f);  // A2→A6
         drum3.frequency(110.0f * expf(pitchBend * LOG_NOISE_RATIO));
 
@@ -2115,48 +2122,48 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         break;
       }
 
-    case 18:  // D3 Voice Mix - 3-way
+    case 18:  // D3 Voice Mix — 606 / FM / PERC
       {
         const int value = knobValue;
 
-        // Zone boundaries
-        const int PURE1_MAX = int(1023 * 0.06f);
-        const int PURE2_MIN = int(1023 * 0.46f);
-        const int PURE2_MAX = int(1023 * 0.65f);
-        const int PURE3_MIN = int(1023 * 0.94f);
+        // Zone boundaries (pure solo regions for each voice)
+        const int ZONE_606_MAX  = int(1023 * 0.06f);
+        const int ZONE_FM_MIN   = int(1023 * 0.46f);
+        const int ZONE_FM_MAX   = int(1023 * 0.65f);
+        const int ZONE_PERC_MIN = int(1023 * 0.94f);
 
         const float MAX_GAIN = 0.9f;
 
-        // Voice level trims (Voice 2 lowered for louder FM engine)
-        const float VOICE1_BOOST = 3.8f;
-        const float VOICE2_TRIM = 1.4f;
-        const float VOICE3_TRIM = 0.65f;
+        // Voice level trims (matched so each voice solos at ~0.5 peak)
+        const float TRIM_606  = 0.8f;
+        const float TRIM_FM   = 2.5f;
+        const float TRIM_PERC = 0.65f;
 
-        float gainVoice1 = 0.0f;
-        float gainVoice2 = 0.0f;
-        float gainVoice3 = 0.0f;
+        float gain606  = 0.0f;
+        float gainFM   = 0.0f;
+        float gainPerc = 0.0f;
 
         // Calculate voice gains based on knob position
-        if (value <= PURE1_MAX) {
-          gainVoice1 = 1.0f;
-        } else if (value < PURE2_MIN) {
-          const float blend = float(value - PURE1_MAX) / float(PURE2_MIN - PURE1_MAX);
-          gainVoice1 = 1.0f - blend;
-          gainVoice2 = blend;
-        } else if (value <= PURE2_MAX) {
-          gainVoice2 = 1.0f;
-        } else if (value < PURE3_MIN) {
-          const float blend = float(value - PURE2_MAX) / float(PURE3_MIN - PURE2_MAX);
-          gainVoice2 = 1.0f - blend;
-          gainVoice3 = blend;
+        if (value <= ZONE_606_MAX) {
+          gain606 = 1.0f;
+        } else if (value < ZONE_FM_MIN) {
+          const float blend = float(value - ZONE_606_MAX) / float(ZONE_FM_MIN - ZONE_606_MAX);
+          gain606 = 1.0f - blend;
+          gainFM = blend;
+        } else if (value <= ZONE_FM_MAX) {
+          gainFM = 1.0f;
+        } else if (value < ZONE_PERC_MIN) {
+          const float blend = float(value - ZONE_FM_MAX) / float(ZONE_PERC_MIN - ZONE_FM_MAX);
+          gainFM = 1.0f - blend;
+          gainPerc = blend;
         } else {
-          gainVoice3 = 1.0f;
+          gainPerc = 1.0f;
         }
 
         AudioNoInterrupts();
-        d3WfMixer.gain(0, gainVoice1 * MAX_GAIN * VOICE1_BOOST);
-        d3WfMixer.gain(1, gainVoice2 * MAX_GAIN * VOICE2_TRIM);
-        d3WfMixer.gain(2, gainVoice3 * MAX_GAIN * VOICE3_TRIM);
+        d3WfMixer.gain(0, gain606  * MAX_GAIN * TRIM_606);
+        d3WfMixer.gain(1, gainFM   * MAX_GAIN * TRIM_FM);
+        d3WfMixer.gain(2, gainPerc * MAX_GAIN * TRIM_PERC);
         AudioInterrupts();
         break;
       }
@@ -2594,9 +2601,9 @@ void renderVoiceRails() {
   } else if (activeRail == RAIL_D3_VOICE) {
     drawCaretRail(railX, railY, railW, railH, railX + (int)(uiMixD3Voice * railW));
     int third = railW / 3;
-    labelAtCenter("1", railX + third * 0 + third / 2, labelY);
-    labelAtCenter("2", railX + third * 1 + third / 2, labelY);
-    labelAtCenter("3", railX + third * 2 + third / 2, labelY);
+    labelAtCenter("606", railX + third * 0 + third / 2, labelY);
+    labelAtCenter("FM", railX + third * 1 + third / 2, labelY);
+    labelAtCenter("PERC", railX + third * 2 + third / 2, labelY);
     int zone = (uiMixD3Voice < 1.0f / 3.0f)   ? 0
                : (uiMixD3Voice < 2.0f / 3.0f) ? 1
                                               : 2;
