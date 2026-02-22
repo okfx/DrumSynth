@@ -989,11 +989,12 @@ void updateOtherButtons() {
 
               sequencePlaying = true;
 
-              // If external clock is already running, go straight to RUN_EXT.
-              // The ISR will fire the first step on the very next pulse —
-              // no internal clock steps in between, no spurious handoff.
+              // If external clock is already running, go straight to RUN_EXT
+              // and fire step 0 immediately so the user can drop in on the
+              // downbeat without waiting for the next pulse.
               if (isExtClockRunning()) {
                 setTransport(RUN_EXT);
+                playSequenceCore();  // Fire step 0 now — don't wait for next pulse
               } else {
                 setTransport(RUN_INT);
               }
