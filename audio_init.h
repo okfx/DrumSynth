@@ -341,7 +341,7 @@ inline void audioInit() {
 
   // --- D3 output mixing ---
 
-  d3WfSine.begin(0.0f, 400.0f, WAVEFORM_SINE);  // wavefolder off at boot — knob sets amplitude
+  d3WfSine.begin(0.0f, 400.0f, WAVEFORM_SINE);  // fold-depth modulator — off at boot, knob 19 sets amplitude + freq
 
   // D3 wavefolder mixer (606 + FM + PERC)
   d3WfMixer.gain(0, 0.25f);

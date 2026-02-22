@@ -1589,8 +1589,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 21:  // D3 Filter
       {
         float norm = normKnob(knobValue);
-        float normSq = norm * norm;
-        float cutoffHz = 4500.0f + normSq * (11000.0f - 4500.0f);
+        float normSquared = norm * norm;
+        float cutoffHz = 4500.0f + normSquared * (11000.0f - 4500.0f);
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
@@ -2180,31 +2180,34 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         float norm = normKnob(knobValue);
-        // Remap past deadband: bottom 10% off, plateau at 58% (≈1:00)
-        float active = (norm - 0.10f) / 0.48f;
-        if (active < 0.0f) active = 0.0f;
-        if (active > 1.0f) active = 1.0f;
+        // Two ramps: amplitude plateaus at 58% (≈1:00), frequency uses full range
+        float ampActive = (norm - 0.10f) / 0.48f;
+        if (ampActive < 0.0f) ampActive = 0.0f;
+        if (ampActive > 1.0f) ampActive = 1.0f;
 
-        // Amplitude: 0.05 → 0.50 (fold depth rises with knob)
-        float drive = 0.05f + 0.45f * active;
+        float freqActive = (norm - 0.10f) / 0.90f;
+        if (freqActive < 0.0f) freqActive = 0.0f;
+        if (freqActive > 1.0f) freqActive = 1.0f;
+
+        // Amplitude: 0.05 → 0.50 (caps at 1:00, stays flat after)
+        float drive = 0.05f + 0.45f * ampActive;
         d3WfSine.amplitude(drive);
 
-        // Frequency: 50 → 900 Hz (exponential — more travel in low range)
-        // exp curve: 50 * (900/50)^active = 50 * 18^active
-        float freqHz = 50.0f * expf(active * 2.89f);  // ln(18) ≈ 2.89
+        // Frequency: 50 → 900 Hz (exponential, full knob range)
+        float freqHz = 50.0f * expf(freqActive * 2.89f);  // ln(18) ≈ 2.89
         d3WfSine.frequency(freqHz);
 
         // Dry pulls down slightly as drive rises (0.45 → 0.40)
-        float dryGain = 0.45f - 0.05f * active;
+        float dryGain = 0.45f - 0.05f * ampActive;
         // Wet return ramps up with drive (0.0 → 0.35)
-        float wetGain = active * 0.35f;
+        float wetGain = ampActive * 0.35f;
         // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
         float comp;
-        if (active <= 0.55f) {
-          comp = 1.0f - 0.12f * active;
+        if (ampActive <= 0.55f) {
+          comp = 1.0f - 0.12f * ampActive;
         } else {
           float base = 1.0f - 0.12f * 0.55f;  // 0.934
-          float extra = (active - 0.55f) / 0.45f; // 0→1 over 55%–100%
+          float extra = (ampActive - 0.55f) / 0.45f; // 0→1 over 55%–100%
           comp = base - 0.25f * extra;
         }
         dryGain *= comp;
@@ -2705,7 +2708,7 @@ void updateDisplay() {
       // Round to nearest 0.5 with hysteresis to prevent display bouncing
       static float lastSnapped = 0.0f;
       float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
-      if (lastSnapped <= 0.0f || fabsf(extBpmDisplay - lastSnapped) > 0.3f) {
+      if (lastSnapped <= 0.0f || fabsf(snapped - lastSnapped) > 0.3f) {
         lastSnapped = snapped;
       }
       display.print(lastSnapped, 1);
