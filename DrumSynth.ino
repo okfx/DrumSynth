@@ -32,7 +32,7 @@
 #include "hw_setup.h"
 static_assert(numSteps == 16, "Accent mask logic assumes 16 steps");
 
-#define FIRMWARE_VERSION "1.0"
+#define FIRMWARE_VERSION "03.02.26"
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -127,7 +127,8 @@ volatile bool sequencePlaying = false;     // Read by stepISR, externalClockISR
 // PPQN for external clock — loaded from EEPROM at boot, selectable via UI.
 // ISR reads (externalClockISR), main loop writes (PPQN selection mode).
 // uint8_t is atomic on ARM Cortex-M7 — no interrupt guards needed.
-volatile uint8_t ppqn = 2;
+static constexpr uint8_t PPQN_DEFAULT = 2;  // shared with eeprom.h fallback
+volatile uint8_t ppqn = PPQN_DEFAULT;
 
 // ---------------------------------------------------------------------------
 // Mid-file includes: These headers define functions/ISRs that reference globals
@@ -154,7 +155,7 @@ int masterLPFBarX = LPF_BAR_MAX;
 
 // drum decays
 float d1DecayBase = 75.0f;
-float d1Decay = 75.0f;
+float d1Decay = 75.0f;  // Effective D1 decay (base + choke). Written by applyChokeToDecays(), read by updateD1EnvelopeCache().
 float d2DecayBase = 75.0f;
 float d3DecayBase = 25.0f;
 
@@ -176,7 +177,7 @@ float d1CachedDecayMs = 75.0f;   // defaults; see updateD1EnvelopeCache()
 char displayParameter1[24] = "";
 char displayParameter2[24] = "";
 const int KNOB_NONE = -1;                    // sentinel: no active knob
-int lastActiveKnob = KNOB_NONE;
+int lastActiveKnob = KNOB_NONE;              // NOTE: currently write-only — reserved for future per-knob display logic
 uint32_t parameterOverlayStartTick = 0;
 
 // UI voice rails
@@ -439,17 +440,17 @@ inline void updateDrumDelayGains() {
 
   float s1 = d1DelaySend * 0.6f;   // D1 tapped post-amp (0.8×) — scale down to match D2 level
   float s2 = d2DelaySend;          // D2 tapped at snareClapMixer — reference level
-  float s3 = d3DelaySend * 1.75f;  // D3 tapped post-filter (quiet) — scale up to match D2 level
+  float s3 = d3DelaySend * 1.75f;  // D3 tapped post-filter (quieter than D2) — 1.75× compensates for filter attenuation
 
   // Keep the combined delay input from getting too hot.
   // (Prevents clipping when multiple sends are high at once.)
   const float SEND_SUM_TARGET = 0.90f;
   float sum = s1 + s2 + s3;
   if (sum > SEND_SUM_TARGET) {
-    float k = SEND_SUM_TARGET / sum;
-    s1 *= k;
-    s2 *= k;
-    s3 *= k;
+    float scaleFactor = SEND_SUM_TARGET / sum;
+    s1 *= scaleFactor;
+    s2 *= scaleFactor;
+    s3 *= scaleFactor;
   }
 
   delayMixer.gain(0, s1);
@@ -475,9 +476,9 @@ static inline void updateD1EnvelopeCache() {
 
 void applyChokeToDecays() {
   // D1: floor at 17 ms
-  float eff1 = d1DecayBase + chokeOffsetMs;
-  if (eff1 < 17.0f) eff1 = 17.0f;
-  d1Decay = eff1;
+  float d1EffDecay = d1DecayBase + chokeOffsetMs;
+  if (d1EffDecay < 17.0f) d1EffDecay = 17.0f;
+  d1Decay = d1EffDecay;
 
   // Update D1 envelope cache
   updateD1EnvelopeCache();
@@ -584,7 +585,7 @@ void setup() {
   // ============================================================================
 
   // Initialize shift register and LEDs
-  sr.setAllLow();
+  ledShiftReg.setAllLow();
   updateLEDs();
 
   // Initialize knob smoothing filters
@@ -734,26 +735,25 @@ void setTransport(TransportState s) {
   if (transportState == s) return;
   transportState = s;
 
-  // When leaving RUN_EXT, clear step accumulator and cancel subdivisions
+  // When leaving RUN_EXT, clear step accumulator and subdivisions
   if (transportState != RUN_EXT) {
     extStepAcc = 0;
-    stepTimer.end();        // Cancel any in-flight subdivision timer
     subdivRemaining = 0;
   }
 
   switch (transportState) {
     case RUN_INT:
-      rearmStepTimer();
+      rearmStepTimer();     // ends + restarts internal clock timer
       break;
     case RUN_EXT:
-      stepTimer.end();
+      stepTimer.end();      // stop internal clock — pulses drive steps now
       // Don't clear extStepAcc here — the ISR may have already written a valid
       // accumulator value on the locking pulse before main loop calls setTransport().
       // Clearing happens when *leaving* RUN_EXT (see above).
       break;
     case STOPPED:
     default:
-      stepTimer.end();
+      stepTimer.end();      // stop all timers
       break;
   }
 }
@@ -974,30 +974,31 @@ void updateOtherButtons() {
           case 1: selectSequence(1); break;
           case 2: selectSequence(2); break;
 
-          case 3: break;  // Buttons 3-5: hardware-present but unassigned
-          case 4: break;
-          case 5: break;
+          // cases 3, 4, 5: hardware-present but unassigned
 
           case 6:
             if (!sequencePlaying) {
-              // START — reset step position so first emitted step becomes 0
+              // START — reset step position so first emitted step becomes 0.
+              // Interrupts stay disabled through setTransport + triggerStep to
+              // prevent the ext clock ISR from double-advancing step 0.
               noInterrupts();
               currentStep = numSteps - 1;
               pendingStepCount = 0;
               extStepAcc = 0;
-              interrupts();
-
               sequencePlaying = true;
 
               // If external clock is already running, go straight to RUN_EXT
-              // and fire step 0 immediately so the user can drop in on the
-              // downbeat without waiting for the next pulse.
+              // and fire step 0 immediately so the pattern starts on the user's
+              // button press. The next pulse advances to step 1 — the gap between
+              // step 0 and step 1 may be shorter than normal, but this matches
+              // how hardware drum machines handle drop-in sync.
               if (isExtClockRunning()) {
                 setTransport(RUN_EXT);
-                playSequenceCore();  // Fire step 0 now — don't wait for next pulse
+                triggerStepFromISR();  // fire step 0 now (advances 15→0)
               } else {
                 setTransport(RUN_INT);
               }
+              interrupts();
             } else {
               // STOP — setTransport(STOPPED) clears extStepAcc internally
               sequencePlaying = false;
@@ -1012,7 +1013,7 @@ void updateOtherButtons() {
             applyMasterGainFromState();
 
             loadStateFromEEPROM(activeSaveSlot);
-            updateLEDs();
+            // updateLEDs() already called inside loadStateFromEEPROM()
 
             // Ensure next START begins at step 0 again
             noInterrupts();
@@ -1094,7 +1095,7 @@ void updateLEDs() {
   if (preview) {
     for (int i = 0; i < numSteps; i++) {
       bool on = (mask >> (15 - i)) & 1;
-      sr.set(i, on);
+      ledShiftReg.set(i, on);
     }
     return;
   }
@@ -1118,7 +1119,7 @@ void updateLEDs() {
       ledState = true;
     }
 
-    sr.set(i, ledState);
+    ledShiftReg.set(i, ledState);
   }
 }
 
@@ -1156,7 +1157,7 @@ void updateStepButtons() {
         } else {
           // Normal mode — toggle step immediately
           seq[i] ^= 1;
-          sr.set(i, seq[i]);
+          ledShiftReg.set(i, seq[i]);
           patternDirty = true;
         }
       } else {
@@ -1168,7 +1169,7 @@ void updateStepButtons() {
           } else {
             // Short press on a different step — toggle it
             seq[i] ^= 1;
-            sr.set(i, seq[i]);
+            ledShiftReg.set(i, seq[i]);
             patternDirty = true;
           }
         }
@@ -1519,7 +1520,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 14:  // D2 Noise
       {
         float norm = normKnob(knobValue);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 NOISE");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE NOISE");
         if (knobValue < 5) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
@@ -1557,7 +1558,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
         break;
       }
 
-    case 18:  // D3 Voice Mix - 3-way (uses rail display)
+    case 18:  // D3 Voice Mix — 606 / FM / PERC (uses rail display)
       {
         displayParameter1[0] = 0;
         displayParameter2[0] = 0;
@@ -1566,11 +1567,11 @@ void updateParameterDisplay(byte idx, int knobValue) {
         break;
       }
 
-    case 19:  // D3 Wavefolder Drive
+    case 19:  // D3 Distort (sine-driven wavefolder)
       {
         float norm = normKnob(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORT");
-        if (knobValue < 10) {
+        if (knobValue < 5) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
           int percent = (int)(norm * 100.0f + 0.5f);
@@ -1590,8 +1591,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 21:  // D3 Filter
       {
         float norm = normKnob(knobValue);
-        float normSq = norm * norm;
-        float cutoffHz = 4500.0f + normSq * (8000.0f - 4500.0f);
+        float normSquared = norm * norm;
+        float cutoffHz = 3000.0f + normSquared * (11000.0f - 3000.0f);
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
@@ -2053,13 +2054,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           pitchBend = 0.60f + 0.40f * (blend * blend);
         }
 
-        // --- Voice 1 (606-ish hats) tuning ---
-        // Precomputed logs of constant ratios — expf(x*log) is ~2x faster than powf on Cortex-M7
+        // --- 606 voice tuning ---
+        // Precomputed log of constant ratio — expf(x*log) is ~2x faster than powf on Cortex-M7
         static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
-        static const float LOG_C1_RATIO   = logf(3520.0f / 440.0f);   // c1: A4(440)→A7(3520)
-        static const float LOG_C2_RATIO   = logf(6160.0f / 660.0f);   // c2: 660→6160 (1.5× c1)
-        static const float LOG_R1_RATIO   = logf(4.0f / 2.0f);        // r1Max/r1Min
-        static const float LOG_R2_RATIO   = logf(6.0f / 4.0f);        // r2Max/r2Min
 
         const float hatCurve = pitchBend * pitchBend;
         const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
@@ -2068,29 +2065,39 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
         const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
 
-        // --- Voice 2 (FM hats) tuning — reuses pitchBend from above ---
-        const float carrier1Hz = 440.0f * expf(pitchBend * LOG_C1_RATIO);  // A4 base
-        const float carrier2Hz = 660.0f * expf(pitchBend * LOG_C2_RATIO); // 1.5× c1 base
-        const float ratio1 = 2.0f * expf(pitchBend * LOG_R1_RATIO);
-        const float ratio2 = 4.0f * expf(pitchBend * LOG_R2_RATIO);
-        const float modulator1Hz = carrier1Hz * ratio1;
-        const float modulator2Hz = carrier2Hz * ratio2;
+        // --- FM voice tuning — reuses pitchBend from above ---
+        // Carriers scale together; irrational ratios stay fixed (changing
+        // ratios changes timbre, not pitch — we only want pitch shift here).
+        // Range: 500→3000 Hz (c1) and 1050→6300 Hz (c2) — ~2.5 octaves
+        static const float LOG_FM_C1_RATIO = logf(3000.0f / 500.0f);  // 500→3000 Hz
+        static const float LOG_FM_C2_RATIO = logf(6300.0f / 1050.0f); // 1050→6300 Hz
 
-        // FM depth: slightly more at the top end, but still capped
-        const float depth1 = 0.06f + 0.52f * (pitchBend * pitchBend);
-        const float depth2 = 0.04f + 0.44f * (pitchBend * pitchBend);
+        const float carrier1Hz = 500.0f * expf(pitchBend * LOG_FM_C1_RATIO);
+        const float carrier2Hz = 1050.0f * expf(pitchBend * LOG_FM_C2_RATIO);
+        const float modulator1Hz = carrier1Hz * 2.236f;  // √5 fixed ratio
+        const float modulator2Hz = carrier2Hz * 1.414f;  // √2 fixed ratio
+
+        // FM depth: increases with pitch to maintain brightness at high end
+        const float depth1 = 0.45f + 0.35f * pitchBend;
+        const float depth2 = 0.35f + 0.30f * pitchBend;
+
+        // FM shaping filters track pitch (gentle, keeps volume steady)
+        const float fmBpfHz = 4000.0f + 4000.0f * pitchBend;   // 4000→8000 Hz
+        const float fmHpfHz = 1500.0f + 1500.0f * pitchBend;   // 1500→3000 Hz
 
         AudioNoInterrupts();
 
-        // Voice 2 FM hats
+        // FM voice
         d3W1.frequency(carrier1Hz);
         d3W3.frequency(carrier2Hz);
         d3W2.frequency(modulator1Hz);
         d3W4.frequency(modulator2Hz);
         d3W2.amplitude(depth1);
         d3W4.amplitude(depth2);
+        d3BPF.frequency(fmBpfHz);
+        d3Filter.frequency(fmHpfHz);
 
-        // Voice 1 606 hat oscillator bank
+        // 606 voice oscillator bank
         d3606W1.frequency(hatBaseHz * 1.00f);
         d3606W2.frequency(hatBaseHz * 1.08f);
         d3606W3.frequency(hatBaseHz * 1.17f);
@@ -2100,7 +2107,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         d3606HPF.frequency(hpfHz);
         d3606BPF.frequency(bpfHz);
 
-        // Voice 3 noise-based hat — A2(110) → A6(1760), independent of FM carriers
+        // PERC voice — A2(110) → A6(1760), independent of FM carriers
         static const float LOG_NOISE_RATIO = logf(1760.0f / 110.0f);  // A2→A6
         drum3.frequency(110.0f * expf(pitchBend * LOG_NOISE_RATIO));
 
@@ -2116,85 +2123,90 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         break;
       }
 
-    case 18:  // D3 Voice Mix - 3-way
+    case 18:  // D3 Voice Mix — 606 / FM / PERC
       {
         const int value = knobValue;
 
-        // Zone boundaries
-        const int PURE1_MAX = int(1023 * 0.06f);
-        const int PURE2_MIN = int(1023 * 0.46f);
-        const int PURE2_MAX = int(1023 * 0.65f);
-        const int PURE3_MIN = int(1023 * 0.94f);
+        // Zone boundaries (pure solo regions for each voice)
+        const int ZONE_606_MAX  = int(1023 * 0.06f);
+        const int ZONE_FM_MIN   = int(1023 * 0.46f);
+        const int ZONE_FM_MAX   = int(1023 * 0.65f);
+        const int ZONE_PERC_MIN = int(1023 * 0.94f);
 
-        const float MAX_GAIN = 0.9f;
+        const float MIX_SCALE = 0.9f;
 
-        // Voice level trims
-        const float VOICE1_BOOST = 3.8f;
-        const float VOICE2_TRIM = 2.75f;
-        const float VOICE3_TRIM = 0.65f;
+        // Voice level trims (matched so each voice solos at ~0.5 peak)
+        const float TRIM_606  = 1.5f;
+        const float TRIM_FM   = 2.5f;
+        const float TRIM_PERC = 0.65f;
 
-        float gainVoice1 = 0.0f;
-        float gainVoice2 = 0.0f;
-        float gainVoice3 = 0.0f;
+        float gain606  = 0.0f;
+        float gainFM   = 0.0f;
+        float gainPerc = 0.0f;
 
         // Calculate voice gains based on knob position
-        if (value <= PURE1_MAX) {
-          gainVoice1 = 1.0f;
-        } else if (value < PURE2_MIN) {
-          const float blend = float(value - PURE1_MAX) / float(PURE2_MIN - PURE1_MAX);
-          gainVoice1 = 1.0f - blend;
-          gainVoice2 = blend;
-        } else if (value <= PURE2_MAX) {
-          gainVoice2 = 1.0f;
-        } else if (value < PURE3_MIN) {
-          const float blend = float(value - PURE2_MAX) / float(PURE3_MIN - PURE2_MAX);
-          gainVoice2 = 1.0f - blend;
-          gainVoice3 = blend;
+        if (value <= ZONE_606_MAX) {
+          gain606 = 1.0f;
+        } else if (value < ZONE_FM_MIN) {
+          const float blend = float(value - ZONE_606_MAX) / float(ZONE_FM_MIN - ZONE_606_MAX);
+          gain606 = 1.0f - blend;
+          gainFM = blend;
+        } else if (value <= ZONE_FM_MAX) {
+          gainFM = 1.0f;
+        } else if (value < ZONE_PERC_MIN) {
+          const float blend = float(value - ZONE_FM_MAX) / float(ZONE_PERC_MIN - ZONE_FM_MAX);
+          gainFM = 1.0f - blend;
+          gainPerc = blend;
         } else {
-          gainVoice3 = 1.0f;
+          gainPerc = 1.0f;
         }
 
         AudioNoInterrupts();
-        d3WfMixer.gain(0, gainVoice1 * MAX_GAIN * VOICE1_BOOST);
-        d3WfMixer.gain(1, gainVoice2 * MAX_GAIN * VOICE2_TRIM);
-        d3WfMixer.gain(2, gainVoice3 * MAX_GAIN * VOICE3_TRIM);
+        d3WfMixer.gain(0, gain606  * MIX_SCALE * TRIM_606);
+        d3WfMixer.gain(1, gainFM   * MIX_SCALE * TRIM_FM);
+        d3WfMixer.gain(2, gainPerc * MIX_SCALE * TRIM_PERC);
         AudioInterrupts();
         break;
       }
 
-    case 19:  // D3 Wavefolder Drive
+    case 19:  // D3 Distort (sine-driven wavefolder)
       {
         // True OFF in the first tiny region
-        if (knobValue < 10) {
-          d3DCwf.amplitude(0.0f);
+        if (knobValue < 5) {
+          d3WfSine.amplitude(0.0f);
           AudioNoInterrupts();
-          d3Mixer.gain(0, 0.25f);  // dry at default
+          d3Mixer.gain(0, 0.45f);  // dry at default
           d3Mixer.gain(1, 0.0f);   // wavefolder return off
           AudioInterrupts();
           break;
         }
 
         float norm = normKnob(knobValue);
-        // Remap past deadband: bottom 10% stays off, rest spans 0..1
-        float active = (norm - 0.10f) / 0.90f;
-        if (active < 0.0f) active = 0.0f;
-        if (active > 1.0f) active = 1.0f;
+        // Two ramps: amplitude plateaus at 58% of knob range, frequency uses full range
+        float ampActive = norm / 0.58f;
+        if (ampActive > 1.0f) ampActive = 1.0f;
 
-        // Drive goes 0..0.50 (linear)
-        float drive = 0.50f * active;
-        d3DCwf.amplitude(drive);
+        float freqActive = norm;
 
-        // Dry pulls down slightly as drive rises (0.25 → 0.22)
-        float dryGain = 0.25f - 0.03f * active;
-        // Wet return ramps up with drive (0.0 → 0.30)
-        float wetGain = active * 0.30f;
+        // Amplitude: 0.05 → 0.50 (caps at 1:00, stays flat after)
+        float drive = 0.05f + 0.45f * ampActive;
+        d3WfSine.amplitude(drive);
+
+        // Frequency: 50 → 900 Hz (exponential, full knob range)
+        float freqHz = 50.0f * expf(freqActive * 2.89f);  // ln(18) ≈ 2.89
+        d3WfSine.frequency(freqHz);
+
+        // Dry pulls down slightly as drive rises (0.45 → 0.40)
+        float dryGain = 0.45f - 0.05f * ampActive;
+        // Wet return ramps up with drive (0.0 → 0.35)
+        float wetGain = ampActive * 0.35f;
         // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
         float comp;
-        if (active <= 0.55f) {
-          comp = 1.0f - 0.12f * active;
+        if (ampActive <= 0.55f) {
+          comp = 1.0f - 0.12f * ampActive;
         } else {
           float base = 1.0f - 0.12f * 0.55f;  // 0.934
-          float extra = (active - 0.55f) / 0.45f; // 0→1 over 55%–100%
+          float extra = (ampActive - 0.55f) / 0.45f; // 0→1 over 55%–100%
           comp = base - 0.25f * extra;
         }
         dryGain *= comp;
@@ -2220,12 +2232,12 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        // Cutoff: quadratic curve so the last 20 percent is dramatic
+        // Cutoff: quadratic curve so the last 20% is dramatic (3kHz–11kHz)
         float normSquared = norm * norm;
-        float cutoffHz = 4500.0f + normSquared * (8000.0f - 4500.0f);
+        float cutoffHz = 3000.0f + normSquared * (11000.0f - 3000.0f);
 
-        // Resonance: cubic curve so it stays tame, then goes wild
-        float resonance = 0.2f + (norm * norm * norm) * (0.9f - 0.2f);
+        // Resonance: cubic curve, minimum 0.35 for volume compensation at low cutoffs
+        float resonance = 0.35f + (norm * norm * norm) * (0.9f - 0.35f);
 
         AudioNoInterrupts();
         d3MasterFilter.frequency(cutoffHz);
@@ -2590,9 +2602,9 @@ void renderVoiceRails() {
   } else if (activeRail == RAIL_D3_VOICE) {
     drawCaretRail(railX, railY, railW, railH, railX + (int)(uiMixD3Voice * railW));
     int third = railW / 3;
-    labelAtCenter("1", railX + third * 0 + third / 2, labelY);
-    labelAtCenter("2", railX + third * 1 + third / 2, labelY);
-    labelAtCenter("3", railX + third * 2 + third / 2, labelY);
+    labelAtCenter("606", railX + third * 0 + third / 2, labelY);
+    labelAtCenter("FM", railX + third * 1 + third / 2, labelY);
+    labelAtCenter("PERC", railX + third * 2 + third / 2, labelY);
     int zone = (uiMixD3Voice < 1.0f / 3.0f)   ? 0
                : (uiMixD3Voice < 2.0f / 3.0f) ? 1
                                               : 2;
@@ -2692,8 +2704,13 @@ void updateDisplay() {
     display.print("EXT");
     display.setCursor(0, 10);
     if (extBpmDisplay > 0) {
-      float rounded = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;  // Round to nearest 0.5
-      display.print(rounded, 1);
+      // Round to nearest 0.5 with hysteresis to prevent display bouncing
+      static float lastSnapped = 0.0f;
+      float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
+      if (lastSnapped <= 0.0f || fabsf(snapped - lastSnapped) > 0.3f) {
+        lastSnapped = snapped;
+      }
+      display.print(lastSnapped, 1);
     }
   } else {
     display.print("BPM");

@@ -17,6 +17,14 @@ extern float d3Vol;
 inline void audioInit() {
 
   // ============================================================================
+  // AUDIT CHANGES (search "AUDIT" to find/revert if sound changes unexpectedly):
+  //   - A1: Added clap1AmpEnv.sustain(0.0f) and clap2AmpEnv.sustain(0.0f)
+  //         (Teensy default was 1.0 — envelopes never decayed to silence on their own)
+  //   - A2: Added d1PitchEnv.attack(0.0f)
+  //         (Teensy default was ~10.5ms — kick pitch sweep was ramping instead of snapping)
+  // ============================================================================
+
+  // ============================================================================
   // SGTL5000 CODEC SETUP
   // ============================================================================
 
@@ -80,6 +88,7 @@ inline void audioInit() {
   // D1 pitch envelope and modulation
   d1DC.amplitude(0.25f);
   d1DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
+  d1PitchEnv.attack(0.0f);   // AUDIT A2: instant onset (Teensy default was ~10.5ms)
   d1PitchEnv.decay(25.0f);
   d1PitchEnv.sustain(0.0f);
 
@@ -109,7 +118,7 @@ inline void audioInit() {
   // D1 EQ — pass-through by default; set at runtime by knob 6 (D1 Body)
 
   // D1 output amp
-  d1Amp.gain(0.8f);
+  d1Amp.gain(0.7f);
 
   // ============================================================================
   // D2 - SNARE / CLAP
@@ -153,7 +162,7 @@ inline void audioInit() {
   d2Mixer.gain(0, 0.33f);
   d2Mixer.gain(1, 0.1f);
   d2Mixer.gain(2, 0.1f);
-  d2Mixer.gain(3, 0.2f);
+  d2Mixer.gain(3, 0.15f);
 
   // D2 main filter
   d2Filter.frequency(400.0f);
@@ -189,10 +198,12 @@ inline void audioInit() {
   clap1AmpEnv.attack(0.5f);
   clap1AmpEnv.hold(4.0f);
   clap1AmpEnv.decay(20.0f);
+  clap1AmpEnv.sustain(0.0f);  // AUDIT A1: decay to silence (Teensy default was 1.0)
 
   clap2AmpEnv.attack(0.5f);
   clap2AmpEnv.hold(5.0f);
   clap2AmpEnv.decay(24.0f);
+  clap2AmpEnv.sustain(0.0f);  // AUDIT A1: decay to silence (Teensy default was 1.0)
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
@@ -255,7 +266,7 @@ inline void audioInit() {
   // D3 - HI-HAT
   // ============================================================================
 
-  // --- D3 Voice 1: 606-style 6-oscillator bank ---
+  // --- D3 "606" voice: 6-oscillator square bank ---
 
   float d3606baseFreq = 350.0f;
 
@@ -289,37 +300,51 @@ inline void audioInit() {
   d3606AmpEnv.decay(45.0f);
   d3606AmpEnv.sustain(0.0f);
 
-  // --- D3 Voice 2: FM hats ---
+  // --- D3 "FM" voice: dual carrier/modulator metallic synthesis ---
+  //
+  // Two carrier/modulator pairs with irrational ratios for metallic,
+  // pitch-free spectra.  Carriers are spaced (500, 1050 Hz) so
+  // their sum/difference tones never coincide.  Modulator ratios of
+  // √5 ≈ 2.236 and √2 ≈ 1.414 guarantee maximally inharmonic sidebands.
+  // High modulation depth (0.65/0.55) fills the spectrum with dense
+  // metallic partials — two aggressive pairs rival six mild ones.
 
   const float carrier1Freq = 500.0f;
-  const float carrier2Freq = 850.0f;
-  const float ratio1       = 7.13f;
-  const float ratio2       = 9.41f;
-  const float mod1Freq     = carrier1Freq * ratio1;  // 3565 Hz
-  const float mod2Freq     = carrier2Freq * ratio2;  // 7998.5 Hz
+  const float carrier2Freq = 1050.0f;
+  const float ratio1       = 2.236f;   // √5 — maximally inharmonic
+  const float ratio2       = 1.414f;   // √2 — classic metallic ratio
+  const float mod1Freq     = carrier1Freq * ratio1;  // ≈ 1118 Hz
+  const float mod2Freq     = carrier2Freq * ratio2;  // ≈ 1484.7 Hz
 
-  d3W1.begin(0.28f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
-  d3W1.frequencyModulation(6);  // 4..8 is a good hat range
+  d3W1.begin(0.30f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
+  d3W1.frequencyModulation(8);  // wide FM bandwidth for dense sidebands
 
-  d3W3.begin(0.28f, carrier2Freq, WAVEFORM_SINE);  // carrier 2
-  d3W3.frequencyModulation(6);
+  d3W3.begin(0.30f, carrier2Freq, WAVEFORM_SINE);  // carrier 2
+  d3W3.frequencyModulation(8);
 
-  d3W2.begin(0.25f, mod1Freq, WAVEFORM_SINE);  // modulator 1 (depth = amplitude)
-  d3W4.begin(0.20f, mod2Freq, WAVEFORM_SINE);  // modulator 2
+  d3W2.begin(0.65f, mod1Freq, WAVEFORM_SINE);  // modulator 1 — aggressive depth
+  d3W4.begin(0.55f, mod2Freq, WAVEFORM_SINE);  // modulator 2
 
-  d3Mixer1.gain(0, 0.5f);
-  d3Mixer1.gain(1, 0.0f);
+  d3Mixer1.gain(0, 0.75f);  // FM carrier 1
+  d3Mixer1.gain(1, 0.75f);  // FM carrier 2
   d3Mixer1.gain(2, 0.0f);
   d3Mixer1.gain(3, 0.0f);
 
-  d3MasterMixer.gain(0, 0.5f);
-  d3MasterMixer.gain(1, 0.0f);  // d3Mixer2 removed in wavefoldermixer graph
+  d3MasterMixer.gain(0, 1.0f);  // FM voice at full into filter chain
+  d3MasterMixer.gain(1, 0.0f);  // channel 1: unused (no patch cord connected)
+
+  // FM voice shaping filters (d3MasterMixer → d3BPF → d3Filter → d3AmpEnv)
+  d3BPF.frequency(4000.0f);     // bandpass: tracks pitch knob (4000–8000 Hz)
+  d3BPF.resonance(0.9f);
+
+  d3Filter.frequency(1500.0f);  // highpass: tracks pitch knob (1500–3000 Hz)
+  d3Filter.resonance(0.7f);
 
   d3AmpEnv.attack(1.0f);
   d3AmpEnv.decay(45.0f);
   d3AmpEnv.sustain(0.0f);
 
-  // --- D3 Voice 3: Noise-based hat ---
+  // --- D3 "PERC" voice: noise-based percussion ---
 
   drum3.pitchMod(0.5f);
   drum3.frequency(700.0f);
@@ -327,16 +352,16 @@ inline void audioInit() {
 
   // --- D3 output mixing ---
 
-  d3DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
+  d3WfSine.begin(0.0f, 400.0f, WAVEFORM_SINE);  // fold-depth modulator — off at boot, knob 19 sets amplitude + freq
 
-  // D3 wavefolder mixer (voice 1 + voice 2 + voice 3)
+  // D3 wavefolder mixer (606 + FM + PERC)
   d3WfMixer.gain(0, 0.25f);
   d3WfMixer.gain(1, 0.25f);
   d3WfMixer.gain(2, 0.25f);
 
   // D3 final mixer (dry + wavefolder)
-  d3Mixer.gain(0, 0.25f);  // d3WfMixer (dry)
-  d3Mixer.gain(1, 0.25f);  // d3Wavefolder (wet)
+  d3Mixer.gain(0, 0.45f);  // d3WfMixer (dry)
+  d3Mixer.gain(1, 0.0f);   // d3Wavefolder (wet) — off at boot, knob 19 enables
   // inputs 2–3: unconnected
 
   // D3 master filter
@@ -367,7 +392,7 @@ inline void audioInit() {
   wfMixer.gain(2, 0.0f);
   wfMixer.gain(3, 0.0f);
 
-  // Final output amplifier
+  // Final output amplifier — 3× makeup gain compensates for master filter chain attenuation
   finalAmp.gain(3.0f);
 
   // Master mixer (dry drums + wavefolder + delay return)
@@ -400,7 +425,7 @@ inline void audioInit() {
   masterBandPass.frequency(1000.0f);  // 1kHz bandpass — intentional coloring of master output
   masterBandPass.resonance(1.0f);
 
-  finalFilter.setHighShelf(0, 3500.0f, 0.5f, 5.0f);
+  finalFilter.setHighShelf(0, 3500.0f, 0.5f, 5.0f);  // +5dB air/presence above 3.5kHz
 }
 
 #endif

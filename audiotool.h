@@ -1,3 +1,6 @@
+#ifndef AUDIOTOOL_H
+#define AUDIOTOOL_H
+
 #include <Audio.h>
 #include <Wire.h>
 #include <SPI.h>
@@ -64,7 +67,7 @@ AudioMixer4              d1Mixer;        //xy=1220,130
 AudioSynthWaveformSine   d2WfSine;       //xy=1220,380
 AudioAmplifier           clapAmp;        //xy=1220,530
 AudioMixer4              d3WfMixer;      //xy=1220,880
-AudioSynthWaveformDc     d3DCwf;         //xy=1220,950
+AudioSynthWaveform       d3WfSine;       //xy=1220,950
 AudioFilterStateVariable d1Filter;       //xy=1380,130
 AudioMixer4              snareClapMixer; //xy=1380,310
 AudioAmplifier           d2WfAmp;        //xy=1380,380
@@ -161,7 +164,7 @@ AudioConnection          patchCord62(drum1, drum1Amp);
 AudioConnection          patchCord63(d1DCwf, 0, d1Wavefolder, 1);
 AudioConnection          patchCord64(d3WfMixer, 0, d3Wavefolder, 0);
 AudioConnection          patchCord65(d3WfMixer, 0, d3Mixer, 0);
-AudioConnection          patchCord66(d3DCwf, 0, d3Wavefolder, 1);
+AudioConnection          patchCord66(d3WfSine, 0, d3Wavefolder, 1);
 AudioConnection          patchCord67(d2Mixer, 0, d2Filter, 0);
 AudioConnection          patchCord68(clapAmp, clapMasterEnv);
 AudioConnection          patchCord69(clapMasterFilter, 2, clapAmp, 0);
@@ -210,3 +213,5 @@ AudioConnection          patchCord111(finalAmp, 0, i2s1, 0);
 AudioConnection          patchCord112(finalAmp, 0, i2s1, 1);
 AudioControlSGTL5000     sgtl5000_1;     //xy=3300,1140
 // GUItool: end automatically generated code
+
+#endif // AUDIOTOOL_H

@@ -34,7 +34,7 @@
 Adafruit_SH1106G display(128, 64, OLED_MOSI, OLED_CLK, OLED_DC, OLED_RST, OLED_CS);
 
 // LED shift register (2x 74HC595 = 16 outputs)
-ShiftRegister74HC595<2> sr(LED_DATA, LED_CLOCK, LED_LATCH);
+ShiftRegister74HC595<2> ledShiftReg(LED_DATA, LED_CLOCK, LED_LATCH);
 
 // Analog/digital multiplexers (4-bit address → 16 channels each)
 using namespace admux;

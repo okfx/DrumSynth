@@ -65,7 +65,7 @@ extern void applyMasterGainFromState();
 //    currentStep               — uint8_t, atomic on ARM, ISR writes via triggerStepFromISR
 //    ledUpdatePending          — bool, atomic on ARM, ISR sets, main loop clears
 //    lastD1/D2/D3TriggerUs     — uint32_t, written by both ISR and main loop
-//    subdivRemaining           — uint8_t, ISR + resetExternalClockState (inside noInterrupts)
+//    subdivRemaining           — uint8_t, ISR writes, setTransport() clears when leaving RUN_EXT
 //
 //  Main loop writes (read by ISR):
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
@@ -306,19 +306,17 @@ void rearmStepTimer() {
   stepTimer.begin(stepISR, (uint32_t)stepPeriodUs);
 }
 
-// Clear all external clock state — called on timeout or transport reset
+// Clear all external clock state — called after setTransport() on timeout.
+// extStepAcc and subdivRemaining are already cleared by setTransport(),
+// so only pulse-tracking and display state is reset here.
 static inline void resetExternalClockState() {
   noInterrupts();
   extPulseCount = 0;
-  extStepAcc = 0;
   lastPulseMicros = 0;
   lastPulseInterval = 0;
   extIntervalEMA = 0;
   prevAcceptedInterval = 0;
   ledUpdatePending = false;
-  // Per-voice retrigger timestamps (lastD1/D2/D3TriggerUs) not reset here —
-  // they self-correct on next trigger.
-  subdivRemaining = 0;
   interrupts();
   extBpmDisplay = 0.0f;
 }
