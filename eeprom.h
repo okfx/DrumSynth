@@ -8,7 +8,7 @@
 //  PPQN is stored separately after the pattern slots.
 //
 //  Include AFTER: hw_setup.h (numSteps), EEPROM.h, sequence arrays,
-//  ppqn, PPQN_OPTIONS, UI overlay variables.
+//  ppqn, PPQN_DEFAULT, PPQN_OPTIONS, UI overlay variables.
 // ============================================================================
 
 #include <Arduino.h>
@@ -188,7 +188,7 @@ void loadPpqnFromEEPROM() {
       if (PPQN_OPTIONS[i] == val) { ppqn = val; return; }
     }
   }
-  ppqn = 2;  // Default if nothing saved or invalid
+  ppqn = PPQN_DEFAULT;  // Defined in main .ino — shared single source of truth
 }
 
 void savePpqnToEEPROM(uint8_t val) {

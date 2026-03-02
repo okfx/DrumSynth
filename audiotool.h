@@ -1,3 +1,6 @@
+#ifndef AUDIOTOOL_H
+#define AUDIOTOOL_H
+
 #include <Audio.h>
 #include <Wire.h>
 #include <SPI.h>
@@ -210,3 +213,5 @@ AudioConnection          patchCord111(finalAmp, 0, i2s1, 0);
 AudioConnection          patchCord112(finalAmp, 0, i2s1, 1);
 AudioControlSGTL5000     sgtl5000_1;     //xy=3300,1140
 // GUItool: end automatically generated code
+
+#endif // AUDIOTOOL_H

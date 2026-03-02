@@ -17,6 +17,14 @@ extern float d3Vol;
 inline void audioInit() {
 
   // ============================================================================
+  // AUDIT CHANGES (search "AUDIT" to find/revert if sound changes unexpectedly):
+  //   - A1: Added clap1AmpEnv.sustain(0.0f) and clap2AmpEnv.sustain(0.0f)
+  //         (Teensy default was 1.0 — envelopes never decayed to silence on their own)
+  //   - A2: Added d1PitchEnv.attack(0.0f)
+  //         (Teensy default was ~10.5ms — kick pitch sweep was ramping instead of snapping)
+  // ============================================================================
+
+  // ============================================================================
   // SGTL5000 CODEC SETUP
   // ============================================================================
 
@@ -80,6 +88,7 @@ inline void audioInit() {
   // D1 pitch envelope and modulation
   d1DC.amplitude(0.25f);
   d1DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
+  d1PitchEnv.attack(0.0f);   // AUDIT A2: instant onset (Teensy default was ~10.5ms)
   d1PitchEnv.decay(25.0f);
   d1PitchEnv.sustain(0.0f);
 
@@ -189,10 +198,12 @@ inline void audioInit() {
   clap1AmpEnv.attack(0.5f);
   clap1AmpEnv.hold(4.0f);
   clap1AmpEnv.decay(20.0f);
+  clap1AmpEnv.sustain(0.0f);  // AUDIT A1: decay to silence (Teensy default was 1.0)
 
   clap2AmpEnv.attack(0.5f);
   clap2AmpEnv.hold(5.0f);
   clap2AmpEnv.decay(24.0f);
+  clap2AmpEnv.sustain(0.0f);  // AUDIT A1: decay to silence (Teensy default was 1.0)
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
@@ -320,7 +331,7 @@ inline void audioInit() {
   d3Mixer1.gain(3, 0.0f);
 
   d3MasterMixer.gain(0, 1.0f);  // FM voice at full into filter chain
-  d3MasterMixer.gain(1, 0.0f);  // d3Mixer2 removed in wavefoldermixer graph
+  d3MasterMixer.gain(1, 0.0f);  // channel 1: unused (no patch cord connected)
 
   // FM voice shaping filters (d3MasterMixer → d3BPF → d3Filter → d3AmpEnv)
   d3BPF.frequency(4000.0f);     // bandpass: tracks pitch knob (4000–8000 Hz)
@@ -381,7 +392,7 @@ inline void audioInit() {
   wfMixer.gain(2, 0.0f);
   wfMixer.gain(3, 0.0f);
 
-  // Final output amplifier
+  // Final output amplifier — 3× makeup gain compensates for master filter chain attenuation
   finalAmp.gain(3.0f);
 
   // Master mixer (dry drums + wavefolder + delay return)
@@ -414,7 +425,7 @@ inline void audioInit() {
   masterBandPass.frequency(1000.0f);  // 1kHz bandpass — intentional coloring of master output
   masterBandPass.resonance(1.0f);
 
-  finalFilter.setHighShelf(0, 3500.0f, 0.5f, 5.0f);
+  finalFilter.setHighShelf(0, 3500.0f, 0.5f, 5.0f);  // +5dB air/presence above 3.5kHz
 }
 
 #endif

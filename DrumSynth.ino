@@ -127,7 +127,8 @@ volatile bool sequencePlaying = false;     // Read by stepISR, externalClockISR
 // PPQN for external clock — loaded from EEPROM at boot, selectable via UI.
 // ISR reads (externalClockISR), main loop writes (PPQN selection mode).
 // uint8_t is atomic on ARM Cortex-M7 — no interrupt guards needed.
-volatile uint8_t ppqn = 2;
+static constexpr uint8_t PPQN_DEFAULT = 2;  // shared with eeprom.h fallback
+volatile uint8_t ppqn = PPQN_DEFAULT;
 
 // ---------------------------------------------------------------------------
 // Mid-file includes: These headers define functions/ISRs that reference globals
@@ -154,7 +155,7 @@ int masterLPFBarX = LPF_BAR_MAX;
 
 // drum decays
 float d1DecayBase = 75.0f;
-float d1Decay = 75.0f;
+float d1Decay = 75.0f;  // Effective D1 decay (base + choke). Written by applyChokeToDecays(), read by updateD1EnvelopeCache().
 float d2DecayBase = 75.0f;
 float d3DecayBase = 25.0f;
 
@@ -176,7 +177,7 @@ float d1CachedDecayMs = 75.0f;   // defaults; see updateD1EnvelopeCache()
 char displayParameter1[24] = "";
 char displayParameter2[24] = "";
 const int KNOB_NONE = -1;                    // sentinel: no active knob
-int lastActiveKnob = KNOB_NONE;
+int lastActiveKnob = KNOB_NONE;              // NOTE: currently write-only — reserved for future per-knob display logic
 uint32_t parameterOverlayStartTick = 0;
 
 // UI voice rails
@@ -439,17 +440,17 @@ inline void updateDrumDelayGains() {
 
   float s1 = d1DelaySend * 0.6f;   // D1 tapped post-amp (0.8×) — scale down to match D2 level
   float s2 = d2DelaySend;          // D2 tapped at snareClapMixer — reference level
-  float s3 = d3DelaySend * 1.75f;  // D3 tapped post-filter (quiet) — scale up to match D2 level
+  float s3 = d3DelaySend * 1.75f;  // D3 tapped post-filter (quieter than D2) — 1.75× compensates for filter attenuation
 
   // Keep the combined delay input from getting too hot.
   // (Prevents clipping when multiple sends are high at once.)
   const float SEND_SUM_TARGET = 0.90f;
   float sum = s1 + s2 + s3;
   if (sum > SEND_SUM_TARGET) {
-    float k = SEND_SUM_TARGET / sum;
-    s1 *= k;
-    s2 *= k;
-    s3 *= k;
+    float scaleFactor = SEND_SUM_TARGET / sum;
+    s1 *= scaleFactor;
+    s2 *= scaleFactor;
+    s3 *= scaleFactor;
   }
 
   delayMixer.gain(0, s1);
@@ -475,9 +476,9 @@ static inline void updateD1EnvelopeCache() {
 
 void applyChokeToDecays() {
   // D1: floor at 17 ms
-  float eff1 = d1DecayBase + chokeOffsetMs;
-  if (eff1 < 17.0f) eff1 = 17.0f;
-  d1Decay = eff1;
+  float d1EffDecay = d1DecayBase + chokeOffsetMs;
+  if (d1EffDecay < 17.0f) d1EffDecay = 17.0f;
+  d1Decay = d1EffDecay;
 
   // Update D1 envelope cache
   updateD1EnvelopeCache();
@@ -584,7 +585,7 @@ void setup() {
   // ============================================================================
 
   // Initialize shift register and LEDs
-  sr.setAllLow();
+  ledShiftReg.setAllLow();
   updateLEDs();
 
   // Initialize knob smoothing filters
@@ -734,26 +735,25 @@ void setTransport(TransportState s) {
   if (transportState == s) return;
   transportState = s;
 
-  // When leaving RUN_EXT, clear step accumulator and cancel subdivisions
+  // When leaving RUN_EXT, clear step accumulator and subdivisions
   if (transportState != RUN_EXT) {
     extStepAcc = 0;
-    stepTimer.end();        // Cancel any in-flight subdivision timer
     subdivRemaining = 0;
   }
 
   switch (transportState) {
     case RUN_INT:
-      rearmStepTimer();
+      rearmStepTimer();     // ends + restarts internal clock timer
       break;
     case RUN_EXT:
-      stepTimer.end();
+      stepTimer.end();      // stop internal clock — pulses drive steps now
       // Don't clear extStepAcc here — the ISR may have already written a valid
       // accumulator value on the locking pulse before main loop calls setTransport().
       // Clearing happens when *leaving* RUN_EXT (see above).
       break;
     case STOPPED:
     default:
-      stepTimer.end();
+      stepTimer.end();      // stop all timers
       break;
   }
 }
@@ -974,29 +974,31 @@ void updateOtherButtons() {
           case 1: selectSequence(1); break;
           case 2: selectSequence(2); break;
 
-          case 3: break;  // Buttons 3-5: hardware-present but unassigned
-          case 4: break;
-          case 5: break;
+          // cases 3, 4, 5: hardware-present but unassigned
 
           case 6:
             if (!sequencePlaying) {
-              // START — reset step position so first emitted step becomes 0
+              // START — reset step position so first emitted step becomes 0.
+              // Interrupts stay disabled through setTransport + triggerStep to
+              // prevent the ext clock ISR from double-advancing step 0.
               noInterrupts();
               currentStep = numSteps - 1;
               pendingStepCount = 0;
               extStepAcc = 0;
-              interrupts();
-
               sequencePlaying = true;
 
-              // If external clock is already running, go straight to RUN_EXT.
-              // Don't fire step 0 here — let the next real pulse trigger it
-              // so the sequence lands exactly on the external beat grid.
+              // If external clock is already running, go straight to RUN_EXT
+              // and fire step 0 immediately so the pattern starts on the user's
+              // button press. The next pulse advances to step 1 — the gap between
+              // step 0 and step 1 may be shorter than normal, but this matches
+              // how hardware drum machines handle drop-in sync.
               if (isExtClockRunning()) {
                 setTransport(RUN_EXT);
+                triggerStepFromISR();  // fire step 0 now (advances 15→0)
               } else {
                 setTransport(RUN_INT);
               }
+              interrupts();
             } else {
               // STOP — setTransport(STOPPED) clears extStepAcc internally
               sequencePlaying = false;
@@ -1011,7 +1013,7 @@ void updateOtherButtons() {
             applyMasterGainFromState();
 
             loadStateFromEEPROM(activeSaveSlot);
-            updateLEDs();
+            // updateLEDs() already called inside loadStateFromEEPROM()
 
             // Ensure next START begins at step 0 again
             noInterrupts();
@@ -1093,7 +1095,7 @@ void updateLEDs() {
   if (preview) {
     for (int i = 0; i < numSteps; i++) {
       bool on = (mask >> (15 - i)) & 1;
-      sr.set(i, on);
+      ledShiftReg.set(i, on);
     }
     return;
   }
@@ -1117,7 +1119,7 @@ void updateLEDs() {
       ledState = true;
     }
 
-    sr.set(i, ledState);
+    ledShiftReg.set(i, ledState);
   }
 }
 
@@ -1155,7 +1157,7 @@ void updateStepButtons() {
         } else {
           // Normal mode — toggle step immediately
           seq[i] ^= 1;
-          sr.set(i, seq[i]);
+          ledShiftReg.set(i, seq[i]);
           patternDirty = true;
         }
       } else {
@@ -1167,7 +1169,7 @@ void updateStepButtons() {
           } else {
             // Short press on a different step — toggle it
             seq[i] ^= 1;
-            sr.set(i, seq[i]);
+            ledShiftReg.set(i, seq[i]);
             patternDirty = true;
           }
         }
@@ -1569,7 +1571,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORT");
-        if (knobValue < 10) {
+        if (knobValue < 5) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
           int percent = (int)(norm * 100.0f + 0.5f);
@@ -1590,7 +1592,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
         float normSquared = norm * norm;
-        float cutoffHz = 4500.0f + normSquared * (11000.0f - 4500.0f);
+        float cutoffHz = 3000.0f + normSquared * (11000.0f - 3000.0f);
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
@@ -2131,10 +2133,10 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const int ZONE_FM_MAX   = int(1023 * 0.65f);
         const int ZONE_PERC_MIN = int(1023 * 0.94f);
 
-        const float MAX_GAIN = 0.9f;
+        const float MIX_SCALE = 0.9f;
 
         // Voice level trims (matched so each voice solos at ~0.5 peak)
-        const float TRIM_606  = 0.8f;
+        const float TRIM_606  = 1.5f;
         const float TRIM_FM   = 2.5f;
         const float TRIM_PERC = 0.65f;
 
@@ -2160,9 +2162,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         AudioNoInterrupts();
-        d3WfMixer.gain(0, gain606  * MAX_GAIN * TRIM_606);
-        d3WfMixer.gain(1, gainFM   * MAX_GAIN * TRIM_FM);
-        d3WfMixer.gain(2, gainPerc * MAX_GAIN * TRIM_PERC);
+        d3WfMixer.gain(0, gain606  * MIX_SCALE * TRIM_606);
+        d3WfMixer.gain(1, gainFM   * MIX_SCALE * TRIM_FM);
+        d3WfMixer.gain(2, gainPerc * MIX_SCALE * TRIM_PERC);
         AudioInterrupts();
         break;
       }
@@ -2170,7 +2172,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 19:  // D3 Distort (sine-driven wavefolder)
       {
         // True OFF in the first tiny region
-        if (knobValue < 10) {
+        if (knobValue < 5) {
           d3WfSine.amplitude(0.0f);
           AudioNoInterrupts();
           d3Mixer.gain(0, 0.45f);  // dry at default
@@ -2180,14 +2182,11 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         float norm = normKnob(knobValue);
-        // Two ramps: amplitude plateaus at 58% (≈1:00), frequency uses full range
-        float ampActive = (norm - 0.10f) / 0.48f;
-        if (ampActive < 0.0f) ampActive = 0.0f;
+        // Two ramps: amplitude plateaus at 58% of knob range, frequency uses full range
+        float ampActive = norm / 0.58f;
         if (ampActive > 1.0f) ampActive = 1.0f;
 
-        float freqActive = (norm - 0.10f) / 0.90f;
-        if (freqActive < 0.0f) freqActive = 0.0f;
-        if (freqActive > 1.0f) freqActive = 1.0f;
+        float freqActive = norm;
 
         // Amplitude: 0.05 → 0.50 (caps at 1:00, stays flat after)
         float drive = 0.05f + 0.45f * ampActive;
@@ -2233,12 +2232,12 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        // Cutoff: quadratic curve so the last 20 percent is dramatic
+        // Cutoff: quadratic curve so the last 20% is dramatic (3kHz–11kHz)
         float normSquared = norm * norm;
-        float cutoffHz = 4500.0f + normSquared * (11000.0f - 4500.0f);
+        float cutoffHz = 3000.0f + normSquared * (11000.0f - 3000.0f);
 
-        // Resonance: cubic curve so it stays tame, then goes wild
-        float resonance = 0.2f + (norm * norm * norm) * (0.9f - 0.2f);
+        // Resonance: cubic curve, minimum 0.35 for volume compensation at low cutoffs
+        float resonance = 0.35f + (norm * norm * norm) * (0.9f - 0.35f);
 
         AudioNoInterrupts();
         d3MasterFilter.frequency(cutoffHz);
