@@ -118,7 +118,7 @@ inline void audioInit() {
   // D1 EQ — pass-through by default; set at runtime by knob 6 (D1 Body)
 
   // D1 output amp
-  d1Amp.gain(0.8f);
+  d1Amp.gain(0.7f);
 
   // ============================================================================
   // D2 - SNARE / CLAP
@@ -162,7 +162,7 @@ inline void audioInit() {
   d2Mixer.gain(0, 0.33f);
   d2Mixer.gain(1, 0.1f);
   d2Mixer.gain(2, 0.1f);
-  d2Mixer.gain(3, 0.2f);
+  d2Mixer.gain(3, 0.15f);
 
   // D2 main filter
   d2Filter.frequency(400.0f);

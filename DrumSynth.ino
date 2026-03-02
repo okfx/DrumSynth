@@ -32,7 +32,7 @@
 #include "hw_setup.h"
 static_assert(numSteps == 16, "Accent mask logic assumes 16 steps");
 
-#define FIRMWARE_VERSION "1.0"
+#define FIRMWARE_VERSION "03.02.26"
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -1520,7 +1520,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 14:  // D2 Noise
       {
         float norm = normKnob(knobValue);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 NOISE");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE NOISE");
         if (knobValue < 5) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
