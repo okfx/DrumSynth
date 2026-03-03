@@ -17,14 +17,6 @@ extern float d3Vol;
 inline void audioInit() {
 
   // ============================================================================
-  // AUDIT CHANGES (search "AUDIT" to find/revert if sound changes unexpectedly):
-  //   - A1: Added clap1AmpEnv.sustain(0.0f) and clap2AmpEnv.sustain(0.0f)
-  //         (Teensy default was 1.0 — envelopes never decayed to silence on their own)
-  //   - A2: Added d1PitchEnv.attack(0.0f)
-  //         (Teensy default was ~10.5ms — kick pitch sweep was ramping instead of snapping)
-  // ============================================================================
-
-  // ============================================================================
   // SGTL5000 CODEC SETUP
   // ============================================================================
 
@@ -88,7 +80,7 @@ inline void audioInit() {
   // D1 pitch envelope and modulation
   d1DC.amplitude(0.25f);
   d1DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
-  d1PitchEnv.attack(0.0f);   // AUDIT A2: instant onset (Teensy default was ~10.5ms)
+  d1PitchEnv.attack(0.0f);   // Instant onset — pitch sweep snaps, no ramp
   d1PitchEnv.decay(25.0f);
   d1PitchEnv.sustain(0.0f);
 
@@ -115,7 +107,8 @@ inline void audioInit() {
   d1Filter.frequency(85.0f);
   d1Filter.resonance(2.0f);
 
-  // D1 EQ — pass-through by default; set at runtime by knob 6 (D1 Body)
+  // D1 EQ — stages 0-2 set at runtime by knob 6 (D1 Body)
+  d1EQ.setLowpass(3, 8000.0f, 0.707f);  // Stage 3: permanent hiss filter
 
   // D1 output amp
   d1Amp.gain(0.7f);
@@ -162,7 +155,7 @@ inline void audioInit() {
   d2Mixer.gain(0, 0.33f);
   d2Mixer.gain(1, 0.1f);
   d2Mixer.gain(2, 0.1f);
-  d2Mixer.gain(3, 0.15f);
+  d2Mixer.gain(3, 0.12f);
 
   // D2 main filter
   d2Filter.frequency(400.0f);
@@ -198,12 +191,12 @@ inline void audioInit() {
   clap1AmpEnv.attack(0.5f);
   clap1AmpEnv.hold(4.0f);
   clap1AmpEnv.decay(20.0f);
-  clap1AmpEnv.sustain(0.0f);  // AUDIT A1: decay to silence (Teensy default was 1.0)
+  clap1AmpEnv.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
 
   clap2AmpEnv.attack(0.5f);
   clap2AmpEnv.hold(5.0f);
   clap2AmpEnv.decay(24.0f);
-  clap2AmpEnv.sustain(0.0f);  // AUDIT A1: decay to silence (Teensy default was 1.0)
+  clap2AmpEnv.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
@@ -219,13 +212,13 @@ inline void audioInit() {
   // Clap delay mixers (tapering gains — first hits louder)
   clapMixer1.gain(0, 0.30f);
   clapMixer1.gain(1, 0.25f);
-  clapMixer1.gain(2, 0.20f);
-  clapMixer1.gain(3, 0.15f);
+  clapMixer1.gain(2, 0.15f);  // tapers down — shorter tail reduces phasing
+  clapMixer1.gain(3, 0.10f);
 
   clapMixer2.gain(0, 0.25f);
   clapMixer2.gain(1, 0.20f);
-  clapMixer2.gain(2, 0.15f);
-  clapMixer2.gain(3, 0.10f);
+  clapMixer2.gain(2, 0.10f);
+  clapMixer2.gain(3, 0.05f);
 
   clapMixerMaster.gain(0, 1.0f);
   clapMixerMaster.gain(1, 1.0f);
@@ -365,8 +358,8 @@ inline void audioInit() {
   // inputs 2–3: unconnected
 
   // D3 master filter
-  d3MasterFilter.frequency(3000.0f);
-  d3MasterFilter.resonance(1.0f);
+  d3MasterFilter.frequency(8000.0f);   // mostly open at boot (knob overrides from EEPROM)
+  d3MasterFilter.resonance(0.4f);
 
   // ============================================================================
   // MASTER EFFECTS AND ROUTING
@@ -376,7 +369,7 @@ inline void audioInit() {
   drumMixer.gain(0, d1Vol);  // D1 bus
   drumMixer.gain(1, d2Vol);  // D2 bus (from d2MasterMixer)
   drumMixer.gain(2, d3Vol);  // D3 bus
-  drumMixer.gain(3, 0.0f);   // unused with new D2 routing
+  drumMixer.gain(3, 0.0f);   // unconnected
 
   // Master wavefolder oscillators (wfSine + wfSaw → wfMixer → masterWf input 1)
   wfSine.begin(WAVEFORM_SINE);
