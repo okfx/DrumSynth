@@ -8,10 +8,12 @@
 //  internal clock with external pulse clock sync on pin 12.
 //
 //  Transport: STOPPED / RUN_INT / RUN_EXT
-//  External clock ISR triggers audio directly (zero-latency) with two-part
-//  glitch filter (300µs floor + 25% relative). Lock-in requires 2 consecutive
-//  similar intervals. Subdivision scheduling uses measured interval (not EMA).
-//  ISR signals main loop via wantSwitchToExt flag.
+//  External clock ISR queues steps via pendingStepCount; main loop fires
+//  audio via playSequence() → playSequenceCore() (same path as internal clock).
+//  Two-part glitch filter (300µs floor + 40% relative EMA).
+//  Lock-in requires 3 accepted pulses (2 consecutive similar intervals).
+//  For ppqn < 4, ISR queues step A on the pulse; main loop fires deferred
+//  steps B/C/D at evenly-spaced timestamps (checkExtSubdivision).
 //  Timeout falls back to RUN_INT (if playing) or STOPPED.
 // ============================================================================
 
@@ -683,6 +685,11 @@ void loop() {
     // Both internal and external clock queue steps via pendingStepCount.
     // playSequence() consumes them and fires audio from main loop context.
     playSequence();
+
+    // For ppqn < 4, fire deferred subdivision steps at the right timestamps.
+    // checkExtSubdivision() fires at most one step per call so each trigger
+    // gets its own audio block. No-op when extSubdivRemaining == 0.
+    checkExtSubdivision();
   }
   // Gain is already applied by knob handlers — no per-loop update needed when stopped
 
@@ -716,6 +723,17 @@ void loop() {
   if ((uint32_t)(tickCopy - lastDrawCopy) >= OLED_FRAME_INTERVAL_MS) {
     updateDisplay();
   }
+
+  // ============================================================================
+  // POST-OLED STEP CATCH-UP
+  // ============================================================================
+  // OLED refresh can block for 15-25ms. Run step processing again so any
+  // steps queued during the OLED stall fire promptly instead of waiting
+  // for the next full loop iteration. At high tempos this prevents audible lag.
+  if (sequencePlaying) {
+    playSequence();
+    checkExtSubdivision();
+  }
 }
 
 // transport helpers — v126 pattern: clean state transitions
@@ -723,9 +741,10 @@ void setTransport(TransportState s) {
   if (transportState == s) return;
   transportState = s;
 
-  // When leaving RUN_EXT, clear step accumulator
+  // When leaving RUN_EXT, clear step accumulator and cancel deferred subdivisions
   if (transportState != RUN_EXT) {
     extStepAcc = 0;
+    extSubdivRemaining = 0;
   }
 
   switch (transportState) {
@@ -758,10 +777,14 @@ void playSequence() {
 
   if (toDo == 0) return;
 
-  if (toDo > 32) toDo = 32;
-  while (toDo--) {
-    playSequenceCore();
+  // If multiple steps queued up (main loop was slow), skip ahead to the
+  // latest one. A skipped step is less noticeable than an off-beat step.
+  // Advance currentStep by (toDo - 1) without triggering audio, then
+  // fire the final step normally via playSequenceCore().
+  if (toDo > 1) {
+    currentStep = (currentStep + toDo - 1) & 0x0F;  // numSteps is always 16
   }
+  playSequenceCore();
 }
 
 // Advance one step and trigger active drums.
@@ -811,7 +834,7 @@ void triggerD1() {
   drum1.noteOn();
 }
 
-// Trigger D2 (snare/clap) — shared by ISR and main-loop step functions.
+// Trigger D2 (snare/clap) — called from main loop via playSequenceCore().
 // Handles retrigger guard and envelope noteOff/noteOn.
 // Decay values are already set by applyChokeToDecays() when choke or decay knob changes.
 void triggerD2() {
@@ -835,7 +858,7 @@ void triggerD2() {
   d2NoiseEnvelope.noteOn();
 }
 
-// Trigger D3 (hi-hat) — shared by ISR and main-loop step functions.
+// Trigger D3 (hi-hat) — called from main loop via playSequenceCore().
 // Applies accent pattern if active, handles retrigger guard.
 void triggerD3() {
   uint32_t now = micros();
@@ -918,6 +941,7 @@ void updateOtherButtons() {
             if (transportState == RUN_EXT) {
               noInterrupts();
               extStepAcc = 0;
+              extSubdivRemaining = 0;
               interrupts();
             }
             ppqnModeActive = false;
@@ -974,16 +998,15 @@ void updateOtherButtons() {
               currentStep = numSteps - 1;
               pendingStepCount = 0;
               extStepAcc = 0;
+              extSubdivRemaining = 0;
               sequencePlaying = true;
 
-              // If external clock is already running, go straight to RUN_EXT
-              // and queue step 0 so the pattern starts on the user's button press.
-              // The next pulse advances to step 1 — the gap between step 0 and
-              // step 1 may be shorter than normal, but this matches how hardware
-              // drum machines handle drop-in sync.
+              // If external clock is already running, go straight to RUN_EXT.
+              // Don't fire step 0 here — wait for the next real pulse so the
+              // pattern starts in phase with the external clock grid.
+              // currentStep is 15, so the first pulse advances to step 0.
               if (useExtClock) {
                 setTransport(RUN_EXT);
-                pendingStepCount = 1;  // queue step 0 (main loop fires it)
               } else {
                 setTransport(RUN_INT);
               }

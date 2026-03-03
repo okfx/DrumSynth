@@ -6,8 +6,10 @@
 //  Pulse-driven external clock for drum machine step sequencer.
 //  ISR queues steps via pendingStepCount; main loop fires audio via
 //  playSequence() → playSequenceCore() (same path as internal clock).
+//  For ppqn < 4, ISR queues step A on the pulse; main loop fires
+//  deferred steps B/C/D at evenly-spaced timestamps (checkExtSubdivision).
 //  Two-part glitch filter (300µs floor + 40% relative EMA).
-//  Lock-in requires 2 consecutive similar intervals.
+//  Lock-in requires 3 accepted pulses (2 consecutive similar intervals).
 //
 //  Include AFTER: TransportState enum, stepTimer, sequencer variables
 //  are declared in the main .ino file.
@@ -31,6 +33,8 @@ extern IntervalTimer stepTimer;
 // Transport control (defined in main .ino)
 extern void setTransport(TransportState s);
 extern void applyMasterGainFromState();
+extern void playSequenceCore();
+extern uint8_t currentStep;
 
 // ============================================================================
 //  CONCURRENCY CONTRACT
@@ -44,6 +48,9 @@ extern void applyMasterGainFromState();
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport()
 //    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears
 //    pendingStepCount          — uint8_t, atomic on ARM, written by both stepISR and externalClockISR
+//    extSubdivRemaining        — uint8_t, atomic on ARM, ISR sets, main loop decrements
+//    extSubdivNextUs           — uint32_t, ISR sets, main loop reads with noInterrupts()
+//    extSubdivIntervalUs       — uint32_t, ISR sets, main loop reads with noInterrupts()
 //
 //  Main loop writes (read by ISR):
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
@@ -75,11 +82,18 @@ volatile uint32_t lastPulseMicros = 0;     // Timestamp of last accepted pulse (
 volatile uint32_t lastPulseInterval = 0;   // Interval between last two accepted pulses (µs)
 volatile uint32_t extIntervalEMA = 0;      // Fast EMA (alpha=0.5) — glitch filter + BPM display
 volatile uint32_t prevAcceptedInterval = 0; // Previous accepted interval — lock-in similarity check
-volatile uint8_t  extPulseCount = 0;       // Accepted pulse count (2 needed for lock-in)
+volatile uint8_t  extPulseCount = 0;       // Accepted pulse count (3 needed for lock-in — see below)
 
 // Step generation
 volatile uint8_t  extStepAcc = 0;          // Accumulator for fractional step tracking (ppqn >= 4)
 volatile bool     wantSwitchToExt = false; // ISR→main-loop handoff: ISR sets, main loop clears
+
+// Subdivision scheduling (ppqn < 4): ISR queues step A immediately and sets
+// these for main loop to fire deferred steps B/C/D at the right timestamps.
+// ISR writes all three on each pulse; main loop reads and decrements remaining.
+volatile uint8_t  extSubdivRemaining = 0;  // Deferred steps still to fire (0 = idle)
+volatile uint32_t extSubdivNextUs = 0;     // Timestamp when next deferred step is due
+volatile uint32_t extSubdivIntervalUs = 0; // Time between subdivided steps (µs)
 
 // ============================================================================
 //  State variables — shared (used by both internal and external clock paths)
@@ -149,13 +163,13 @@ void externalClockISR() {
   // Good pulse — record timestamp
   lastPulseMicros = nowUs;
 
-  // Cap at 255 to prevent uint8_t overflow (only 2 needed for lock-in)
+  // Cap at 255 to prevent uint8_t overflow (3 needed for lock-in)
   if (extPulseCount < 255) extPulseCount++;
 
-  // Lock-in: switch to RUN_EXT after 2 consecutive intervals within 25%.
+  // Lock-in: switch to RUN_EXT after 2 consecutive similar intervals (3 pulses).
+  // Pulse 1 has no interval. Pulse 2 seeds prevAcceptedInterval but prev==0
+  // so the similarity test can't pass. Pulse 3 is the earliest possible lock-in.
   // Prevents a noise spike + real pulse from false lock-in.
-  // prevAcceptedInterval holds previous pulse's interval;
-  // lastPulseInterval holds current (0 if this is pulse #1).
   if (extPulseCount >= 2 && transportState != RUN_EXT) {
     uint32_t prev = prevAcceptedInterval;
     uint32_t curr = lastPulseInterval;
@@ -193,12 +207,20 @@ void externalClockISR() {
       }
 
     } else {
-      // --- BATCH PATH (ppqn 1 or 2): queue all steps for this pulse ---
-      //   ppqn=2 → 2 steps per pulse
-      //   ppqn=1 → 4 steps per pulse
+      // --- SUBDIVISION PATH (ppqn 1 or 2): queue step A now, defer the rest ---
+      // Step A fires immediately via pendingStepCount. Remaining steps fire
+      // at evenly-spaced timestamps checked by the main loop (checkExtSubdivision).
+      //   ppqn=2 → 2 steps/pulse → 1 deferred (step B at pulse + interval/2)
+      //   ppqn=1 → 4 steps/pulse → 3 deferred (steps B, C, D)
+      if (pendingStepCount < 255) pendingStepCount++;  // step A
+
       uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
-      if (pendingStepCount <= (255 - stepsPerPulse)) {
-        pendingStepCount += stepsPerPulse;
+      uint8_t deferred = stepsPerPulse - 1;
+      if (deferred > 0 && lastPulseInterval > 0) {
+        uint32_t subInterval = lastPulseInterval / stepsPerPulse;
+        extSubdivIntervalUs = subInterval;
+        extSubdivNextUs = nowUs + subInterval;
+        extSubdivRemaining = deferred;
       }
     }
   }
@@ -229,6 +251,8 @@ static inline void resetExternalClockState() {
   extIntervalEMA = 0;
   prevAcceptedInterval = 0;
   pendingStepCount = 0;
+  extSubdivRemaining = 0;
+  wantSwitchToExt = false;
   interrupts();
   extBpmDisplay = 0.0f;
 }
@@ -275,6 +299,52 @@ void checkExtClockTimeout() {
       resetExternalClockState();
     }
   }
+}
+
+// Fire deferred subdivision steps at the right timestamps (ppqn < 4 only).
+// Called from main loop after playSequence(). If multiple steps are overdue
+// (main loop was slow), skip ahead to the latest one — better to drop a step
+// than play it off-beat.
+void checkExtSubdivision() {
+  // Snapshot all subdivision state atomically — the early-return check must
+  // be inside the same noInterrupts block as the reads.  If the ISR fires
+  // between an unguarded remaining==0 check and the snapshot, we'd proceed
+  // with a stale "not zero" decision but read the NEW pulse's values.
+  uint32_t nextDue, subInterval;
+  uint8_t remaining;
+  noInterrupts();
+  remaining = extSubdivRemaining;
+  nextDue = extSubdivNextUs;
+  subInterval = extSubdivIntervalUs;
+  interrupts();
+
+  if (remaining == 0) return;
+
+  // Not yet time for the next deferred step
+  if ((int32_t)(micros() - nextDue) < 0) return;
+
+  // Count how many deferred steps are overdue
+  uint32_t now = micros();
+  uint8_t overdue = 0;
+  uint32_t checkTime = nextDue;
+  while (overdue < remaining && (int32_t)(now - checkTime) >= 0) {
+    overdue++;
+    checkTime += subInterval;
+  }
+
+  // Skip past any extra overdue steps (advance currentStep silently).
+  // numSteps is always 16 (constexpr in hw_setup.h).
+  if (overdue > 1) {
+    currentStep = (currentStep + overdue - 1) & 0x0F;
+  }
+
+  // Fire only the latest overdue step
+  playSequenceCore();
+
+  noInterrupts();
+  extSubdivRemaining -= overdue;
+  extSubdivNextUs = nextDue + (uint32_t)overdue * subInterval;
+  interrupts();
 }
 
 // Check if external clock is running steadily — call from main loop only.
