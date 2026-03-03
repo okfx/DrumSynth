@@ -55,9 +55,9 @@ static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
 
 // Per-step MIDI note for bass line (A1=33 to A4=69, 36 semitones)
-// Default A2 = MIDI 45
+// Default C3 = MIDI 48
 uint8_t bassLineNote[numSteps] = {
-  45,45,45,45, 45,45,45,45, 45,45,45,45, 45,45,45,45
+  48,48,48,48, 48,48,48,48, 48,48,48,48, 48,48,48,48
 };
 
 // Display constants
@@ -987,11 +987,36 @@ void updateOtherButtons() {
               sequencePlaying = true;
 
               // If external clock is already running, go straight to RUN_EXT.
-              // Don't fire step 0 here — wait for the next real pulse so the
-              // pattern starts in phase with the external clock grid.
               // currentStep is 15, so the first pulse advances to step 0.
               if (useExtClock) {
                 setTransport(RUN_EXT);
+
+                // Snap-to-recent-pulse: if the user pressed PLAY just after
+                // a pulse, they were slightly late. Fire step 0 now instead
+                // of waiting for the next pulse (which would put the pattern
+                // one step out of phase). Window is 25% of pulse interval,
+                // capped at 80ms — covers typical human timing error.
+                uint32_t snapEma = extIntervalEMA;
+                if (snapEma > 0 && lastPulseMicros > 0) {
+                  uint32_t elapsed = micros() - lastPulseMicros;
+                  uint32_t snapWindow = snapEma / 4;
+                  if (snapWindow > 80000) snapWindow = 80000;
+                  if (elapsed < snapWindow) {
+                    pendingStepCount = 1;
+
+                    // Low-PPQN modes (1 or 2): also schedule deferred steps
+                    if (ppqn < STEPS_PER_BEAT) {
+                      uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
+                      uint8_t deferred = stepsPerPulse - 1;
+                      if (deferred > 0) {
+                        uint32_t subInterval = snapEma / stepsPerPulse;
+                        extSubdivIntervalUs = subInterval;
+                        extSubdivNextUs = lastPulseMicros + subInterval;
+                        extSubdivRemaining = deferred;
+                      }
+                    }
+                  }
+                }
               } else {
                 setTransport(RUN_INT);
               }
