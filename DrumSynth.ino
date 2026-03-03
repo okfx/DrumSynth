@@ -112,7 +112,7 @@ volatile uint32_t sysTickMs = 0;  // Written by sysTickISR, read by main loop
 // Main-loop only — not accessed from any ISR. rearmStepTimer() is only
 // called from setTransport() and setup(), both main-loop context.
 float bpm = 120.0f;
-volatile uint8_t currentStep = 0;  // Written by ISR (triggerStepFromISR), read by main loop
+uint8_t currentStep = 0;  // Main loop only (playSequenceCore)
 
 // transport — three states: internal clock, external clock, or stopped
 enum TransportState : uint8_t {
@@ -680,21 +680,9 @@ void loop() {
   // ============================================================================
 
   if (sequencePlaying) {
-    if (transportState == RUN_EXT) {
-      // External clock: audio triggers fire directly in ISR (triggerStepFromISR).
-      // Main loop handles deferred LED update only.
-      if (ledUpdatePending) {
-        updateLEDs();
-        // Clear AFTER the update so any ISR that fires during updateLEDs()
-        // re-sets the flag and is caught on the next loop iteration.
-        noInterrupts();
-        ledUpdatePending = false;
-        interrupts();
-      }
-    } else {
-      // Internal clock: consume steps queued by stepISR
-      playSequence();
-    }
+    // Both internal and external clock queue steps via pendingStepCount.
+    // playSequence() consumes them and fires audio from main loop context.
+    playSequence();
   }
   // Gain is already applied by knob handlers — no per-loop update needed when stopped
 
@@ -735,10 +723,9 @@ void setTransport(TransportState s) {
   if (transportState == s) return;
   transportState = s;
 
-  // When leaving RUN_EXT, clear step accumulator and subdivisions
+  // When leaving RUN_EXT, clear step accumulator
   if (transportState != RUN_EXT) {
     extStepAcc = 0;
-    subdivRemaining = 0;
   }
 
   switch (transportState) {
@@ -799,12 +786,14 @@ void playSequenceCore() {
   updateLEDs();
 }
 
+static constexpr uint32_t MIN_RETRIGGER_US = 2000;  // 2ms — skip noteOff if retriggered faster
+
 void triggerD1() {
+  // Retrigger guard — uint32_t reads/writes are atomic on ARM Cortex-M7.
+  // Called from main loop context via playSequenceCore().
   uint32_t now = micros();
-  noInterrupts();
   bool skipNoteOff = (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
   lastD1TriggerUs = now;
-  interrupts();
 
   // Use pre-computed envelope params (updated by applyChokeToDecays / attack knob)
   AudioNoInterrupts();
@@ -827,10 +816,8 @@ void triggerD1() {
 // Decay values are already set by applyChokeToDecays() when choke or decay knob changes.
 void triggerD2() {
   uint32_t now = micros();
-  noInterrupts();
   bool skipNoteOff = (now - lastD2TriggerUs) < MIN_RETRIGGER_US;
   lastD2TriggerUs = now;
-  interrupts();
 
   if (!skipNoteOff) {
     d2AmpEnv.noteOff();
@@ -852,10 +839,8 @@ void triggerD2() {
 // Applies accent pattern if active, handles retrigger guard.
 void triggerD3() {
   uint32_t now = micros();
-  noInterrupts();
   bool skipNoteOff = (now - lastD3TriggerUs) < MIN_RETRIGGER_US;
   lastD3TriggerUs = now;
-  interrupts();
 
   // Use cached decay and accent mask (updated by applyChokeToDecays / accent knob)
   float applyDecay = d3CachedDecayMs;
@@ -978,9 +963,13 @@ void updateOtherButtons() {
 
           case 6:
             if (!sequencePlaying) {
+              // Check ext clock BEFORE noInterrupts — isExtClockRunning() has
+              // its own noInterrupts/interrupts pair that would break ours.
+              bool useExtClock = isExtClockRunning();
+
               // START — reset step position so first emitted step becomes 0.
-              // Interrupts stay disabled through setTransport + triggerStep to
-              // prevent the ext clock ISR from double-advancing step 0.
+              // Interrupts stay disabled through setTransport so the ext clock
+              // ISR can't queue steps before we finish initializing.
               noInterrupts();
               currentStep = numSteps - 1;
               pendingStepCount = 0;
@@ -988,13 +977,13 @@ void updateOtherButtons() {
               sequencePlaying = true;
 
               // If external clock is already running, go straight to RUN_EXT
-              // and fire step 0 immediately so the pattern starts on the user's
-              // button press. The next pulse advances to step 1 — the gap between
-              // step 0 and step 1 may be shorter than normal, but this matches
-              // how hardware drum machines handle drop-in sync.
-              if (isExtClockRunning()) {
+              // and queue step 0 so the pattern starts on the user's button press.
+              // The next pulse advances to step 1 — the gap between step 0 and
+              // step 1 may be shorter than normal, but this matches how hardware
+              // drum machines handle drop-in sync.
+              if (useExtClock) {
                 setTransport(RUN_EXT);
-                triggerStepFromISR();  // fire step 0 now (advances 15→0)
+                pendingStepCount = 1;  // queue step 0 (main loop fires it)
               } else {
                 setTransport(RUN_INT);
               }
@@ -1591,8 +1580,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 21:  // D3 Filter
       {
         float norm = normKnob(knobValue);
-        float normSquared = norm * norm;
-        float cutoffHz = 3000.0f + normSquared * (11000.0f - 3000.0f);
+        float cutoffHz = 5000.0f * expf(norm * 1.03f);  // 5000–14000 Hz exponential
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
@@ -2009,7 +1997,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
           float filterFreqHz = 3000.0f + 10.0f * decayMs;
           float norm = normKnob(knobValue);
-          float noiseGain = 0.045f + 0.27f * norm;
+          float noiseGain = 0.045f + 0.22f * norm;
 
           AudioNoInterrupts();
           d2NoiseEnvelope.hold(decayMs * 0.5f);
@@ -2136,9 +2124,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float MIX_SCALE = 0.9f;
 
         // Voice level trims (matched so each voice solos at ~0.5 peak)
-        const float TRIM_606  = 1.5f;
+        const float TRIM_606  = 2.5f;
         const float TRIM_FM   = 2.5f;
-        const float TRIM_PERC = 0.65f;
+        const float TRIM_PERC = 0.45f;
 
         float gain606  = 0.0f;
         float gainFM   = 0.0f;
@@ -2182,18 +2170,16 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         float norm = normKnob(knobValue);
-        // Two ramps: amplitude plateaus at 58% of knob range, frequency uses full range
-        float ampActive = norm / 0.58f;
-        if (ampActive > 1.0f) ampActive = 1.0f;
-
+        // Both ramps use full knob range — no plateau, no dead zone at either end
+        float ampActive = norm;
         float freqActive = norm;
 
         // Amplitude: 0.05 → 0.50 (caps at 1:00, stays flat after)
         float drive = 0.05f + 0.45f * ampActive;
         d3WfSine.amplitude(drive);
 
-        // Frequency: 50 → 900 Hz (exponential, full knob range)
-        float freqHz = 50.0f * expf(freqActive * 2.89f);  // ln(18) ≈ 2.89
+        // Frequency: 50 → 440 Hz (exponential, full knob range)
+        float freqHz = 50.0f * expf(freqActive * 2.17f);  // ln(8.74) ≈ 2.17
         d3WfSine.frequency(freqHz);
 
         // Dry pulls down slightly as drive rises (0.45 → 0.40)
@@ -2232,12 +2218,11 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        // Cutoff: quadratic curve so the last 20% is dramatic (3kHz–11kHz)
-        float normSquared = norm * norm;
-        float cutoffHz = 3000.0f + normSquared * (11000.0f - 3000.0f);
+        // Cutoff: exponential curve 5000–14000 Hz (log-spaced for natural feel)
+        float cutoffHz = 5000.0f * expf(norm * 1.03f);  // ln(14000/5000) ≈ 1.03
 
-        // Resonance: cubic curve, minimum 0.35 for volume compensation at low cutoffs
-        float resonance = 0.35f + (norm * norm * norm) * (0.9f - 0.35f);
+        // Resonance: gentle bump at low cutoffs for volume compensation, clean when open
+        float resonance = 0.35f + 0.15f * (1.0f - norm);  // 0.50 → 0.35
 
         AudioNoInterrupts();
         d3MasterFilter.frequency(cutoffHz);
@@ -2704,10 +2689,13 @@ void updateDisplay() {
     display.print("EXT");
     display.setCursor(0, 10);
     if (extBpmDisplay > 0) {
-      // Round to nearest 0.5 with hysteresis to prevent display bouncing
+      // Round to nearest 0.5 with hysteresis to prevent display bouncing.
+      // Compare raw BPM vs last displayed value — raw float wanders
+      // continuously so 0.3 BPM deadband works naturally regardless
+      // of grid alignment.
       static float lastSnapped = 0.0f;
       float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
-      if (lastSnapped <= 0.0f || fabsf(snapped - lastSnapped) > 0.3f) {
+      if (lastSnapped <= 0.0f || fabsf(extBpmDisplay - lastSnapped) > 0.3f) {
         lastSnapped = snapped;
       }
       display.print(lastSnapped, 1);
