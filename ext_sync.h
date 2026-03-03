@@ -72,6 +72,7 @@ extern uint8_t currentStep;
 static constexpr uint32_t EXT_GLITCH_US = 300;       // Hard floor for glitch rejection (µs)
 static constexpr uint32_t EXT_TIMEOUT_US = 2000000;  // No pulse for 2s → fall back to internal
 static constexpr uint8_t  STEPS_PER_BEAT = 4;        // 16th-note sequencer: 4 steps per quarter note
+static constexpr uint32_t STEP_LATE_THRESHOLD_US = 10000;  // 10ms — skip step instead of playing late
 
 // ============================================================================
 //  State variables — external clock
@@ -100,6 +101,7 @@ volatile uint32_t extSubdivIntervalUs = 0; // Time between subdivided steps (µs
 // ============================================================================
 
 volatile uint8_t  pendingStepCount = 0;    // Step queue: both stepISR and externalClockISR write, main loop consumes
+volatile uint32_t stepQueuedAtUs = 0;     // Timestamp of most recent pendingStepCount increment (ISR-written)
 
 // BPM display (main loop only, not volatile)
 float extBpmDisplay = 0.0f;
@@ -113,6 +115,7 @@ void stepISR() {
   if (transportState == RUN_INT && sequencePlaying) {
     if (pendingStepCount < 255) {
       pendingStepCount++;
+      stepQueuedAtUs = micros();
     }
   }
 }
@@ -197,6 +200,7 @@ void externalClockISR() {
       extStepAcc = acc;
       if (steps > 0 && pendingStepCount <= (255 - steps)) {
         pendingStepCount += steps;
+        stepQueuedAtUs = nowUs;
       }
 
     } else {
@@ -205,7 +209,10 @@ void externalClockISR() {
       // at evenly-spaced timestamps checked by the main loop (checkExtSubdivision).
       //   ppqn=2 → 2 steps/pulse → 1 deferred (step B at pulse + interval/2)
       //   ppqn=1 → 4 steps/pulse → 3 deferred (steps B, C, D)
-      if (pendingStepCount < 255) pendingStepCount++;  // step A
+      if (pendingStepCount < 255) {
+        pendingStepCount++;  // step A
+        stepQueuedAtUs = nowUs;
+      }
 
       uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
       uint8_t deferred = stepsPerPulse - 1;
@@ -243,6 +250,7 @@ static inline void resetExternalClockState() {
   extIntervalEMA = 0;
   prevAcceptedInterval = 0;
   pendingStepCount = 0;
+  stepQueuedAtUs = 0;
   extSubdivRemaining = 0;
   wantSwitchToExt = false;
   interrupts();
@@ -315,7 +323,7 @@ void checkExtSubdivision() {
   // Not yet time for the next deferred step
   if ((int32_t)(micros() - nextDue) < 0) return;
 
-  // Count how many deferred steps are overdue
+  // Re-read micros() for accurate overdue counting (first call was just an early-exit check)
   uint32_t now = micros();
   uint8_t overdue = 0;
   uint32_t checkTime = nextDue;
@@ -324,14 +332,20 @@ void checkExtSubdivision() {
     checkTime += subInterval;
   }
 
-  // Skip past any extra overdue steps (advance currentStep silently).
-  // numSteps is always 16 (constexpr in hw_setup.h).
-  if (overdue > 1) {
-    currentStep = (currentStep + overdue - 1) & 0x0F;
+  // Lateness guard: if the earliest overdue step is more than 10ms late,
+  // skip all overdue steps silently. A missing step is less noticeable
+  // than an off-beat one.
+  uint32_t lateness = now - nextDue;
+  if (lateness > STEP_LATE_THRESHOLD_US) {
+    currentStep = (currentStep + overdue) % numSteps;
+  } else {
+    // Skip past any extra overdue steps (advance currentStep silently).
+    if (overdue > 1) {
+      currentStep = (currentStep + overdue - 1) % numSteps;
+    }
+    // Fire only the latest overdue step
+    playSequenceCore();
   }
-
-  // Fire only the latest overdue step
-  playSequenceCore();
 
   noInterrupts();
   extSubdivRemaining -= overdue;

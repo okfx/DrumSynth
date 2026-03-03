@@ -26,16 +26,16 @@ enum Track : uint8_t {
 };
 
 // overlay and debounce timing
-const uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
-const uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
-const uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
-const uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
+static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
+static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
+static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
+static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
 
 // D3 accent LED preview state — Main-loop only, no ISR access
 bool accentPreviewActive = false;
 uint32_t accentPreviewUntilTick = 0;
 uint16_t accentPreviewMask = 0;  // 16-bit mask, bit15 = step0 ... bit0 = step15
-const uint16_t ACCENT_PREVIEW_DURATION_MS = 2000;
+static constexpr uint16_t ACCENT_PREVIEW_DURATION_MS = 2000;
 
 // PPQN selection mode state — main-loop only
 bool ppqnModeActive = false;
@@ -127,8 +127,9 @@ volatile uint8_t ppqn = PPQN_DEFAULT;
 // OLED watchdog and frame timing
 // Written: main loop (updateDisplay). Read: sysTickISR (watchdog), main loop (frame limiter).
 volatile uint32_t lastFrameDrawTick = 0;
-const uint32_t OLED_WATCHDOG_TIMEOUT_MS = 750;
-const uint32_t OLED_FRAME_INTERVAL_MS = 67;  // ~15 fps
+static constexpr uint32_t OLED_WATCHDOG_TIMEOUT_MS = 750;
+static constexpr uint32_t OLED_FRAME_INTERVAL_MS = 67;       // ~15 fps (normal)
+static constexpr uint32_t OLED_FRAME_INTERVAL_EXT_MS = 250;  // ~4 fps (ext sync — minimizes SPI blocking)
 volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main loop
 
 // Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
@@ -213,7 +214,7 @@ static constexpr const char* ratioLabels[] = {
   "1/2."
 };
 
-const int NUM_RATIOS = sizeof(quantizeRatios) / sizeof(quantizeRatios[0]);
+static constexpr int NUM_RATIOS = sizeof(quantizeRatios) / sizeof(quantizeRatios[0]);
 
 // master gain and wavefolder compensation
 float masterNominalGain = 1.0f;
@@ -251,18 +252,18 @@ uint8_t d3AltMode = ALT_OFF;
 uint16_t d3AccentMask = 0;  // Cached: accentMaskFromMode(d3AltMode), updated on accent knob change
 
 // Accented hi-hat decay multiplier (2.5x longer decay on accent steps)
-const float D3_ACCENT_FACTOR = 2.5f;
+static constexpr float D3_ACCENT_FACTOR = 2.5f;
 
 // patterns
-const uint16_t PAT_VARI1 = 0b1000100000101000;
-const uint16_t PAT_VARI2 = 0b1000100010001000;  // NOTE: intentionally same as QUARTER
-const uint16_t PAT_VARI3 = 0b1010010010100101;
-const uint16_t PAT_VARI4 = 0b0111011101110111;
-const uint16_t PAT_ALT5 = 0b0011001100110011;
-const uint16_t PAT_ALT6 = 0b0010010010010010;
-const uint16_t PAT_ALT7 = 0b1001001001001001;
-const uint16_t PAT_ALT8 = 0b0000111100001111;
-const uint16_t PAT_ALT9 = 0b1111000011110000;
+static constexpr uint16_t PAT_VARI1 = 0b1000100000101000;
+static constexpr uint16_t PAT_VARI2 = 0b1000100010001000;  // NOTE: intentionally same as QUARTER
+static constexpr uint16_t PAT_VARI3 = 0b1010010010100101;
+static constexpr uint16_t PAT_VARI4 = 0b0111011101110111;
+static constexpr uint16_t PAT_ALT5 = 0b0011001100110011;
+static constexpr uint16_t PAT_ALT6 = 0b0010010010010010;
+static constexpr uint16_t PAT_ALT7 = 0b1001001001001001;
+static constexpr uint16_t PAT_ALT8 = 0b0000111100001111;
+static constexpr uint16_t PAT_ALT9 = 0b1111000011110000;
 
 Track activeTrack = TRACK_D1;  // Main-loop only — no ISR access
 
@@ -395,27 +396,14 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
   }
 }
 
-// Safe even if 32 bit volatile reads can tear on your target.
-// On Teensy 3.x and 4.x aligned 32 bit is atomic, but this keeps the logic portable.
-static inline uint32_t atomicReadU32(volatile uint32_t& v) {
-  uint32_t a, b;
-  do {
-    a = v;
-    b = v;
-  } while (a != b);
-  return a;
-}
-
 // timers and interrupts
 
 void sysTickISR() {
   uint32_t now = sysTickMs + 1;
   sysTickMs = now;
 
-  // stable read of lastFrameDrawTick (handles non atomic 32 bit on some MCUs)
-  uint32_t lastDraw = atomicReadU32(lastFrameDrawTick);
-
-  if ((uint32_t)(now - lastDraw) > OLED_WATCHDOG_TIMEOUT_MS) {
+  // Aligned 32-bit reads are atomic on ARM Cortex-M7
+  if ((uint32_t)(now - lastFrameDrawTick) > OLED_WATCHDOG_TIMEOUT_MS) {
     requestOledReinit = true;
   }
 }
@@ -689,10 +677,20 @@ void loop() {
   updateStepButtons();
 
   // ============================================================================
+  // POST-INPUT STEP PROCESSING
+  // ============================================================================
+  // Fire any step queued by the PLAY button (snap-to-recent-pulse) immediately,
+  // before the OLED draw adds 15-25ms of latency.
+  if (sequencePlaying) {
+    playSequence();
+    checkExtSubdivision();
+  }
+
+  // ============================================================================
   // OSCILLOSCOPE DATA ACQUISITION
   // ============================================================================
 
-  updateScopeData();
+  if (transportState != RUN_EXT) updateScopeData();
 
   // ============================================================================
   // THROTTLED OLED REFRESH (15 FPS to reduce lag)
@@ -705,7 +703,10 @@ void loop() {
   lastDrawCopy = lastFrameDrawTick;
   interrupts();
 
-  if ((uint32_t)(tickCopy - lastDrawCopy) >= OLED_FRAME_INTERVAL_MS) {
+  uint32_t frameInterval = (transportState == RUN_EXT)
+                           ? OLED_FRAME_INTERVAL_EXT_MS
+                           : OLED_FRAME_INTERVAL_MS;
+  if ((uint32_t)(tickCopy - lastDrawCopy) >= frameInterval) {
     updateDisplay();
   }
 
@@ -740,6 +741,7 @@ void setTransport(TransportState s) {
       stepTimer.end();      // stop internal clock — pulses drive steps now
       // extStepAcc is preserved: the ISR may have already written a valid
       // accumulator value on the locking pulse that triggered this transition.
+      scopeQueue.clear();   // drain stale audio blocks — scope is disabled in ext mode
       break;
     case STOPPED:
     default:
@@ -754,8 +756,10 @@ void playSequence() {
   // pendingStepCount is uint8_t (atomic on ARM), but read-and-clear
   // must be done atomically to avoid losing a count
   uint8_t toDo;
+  uint32_t queuedAt;
   noInterrupts();
   toDo = pendingStepCount;
+  queuedAt = stepQueuedAtUs;
   pendingStepCount = 0;
   interrupts();
 
@@ -766,8 +770,17 @@ void playSequence() {
   // Advance currentStep by (toDo - 1) without triggering audio, then
   // fire the final step normally via playSequenceCore().
   if (toDo > 1) {
-    currentStep = (currentStep + toDo - 1) & 0x0F;  // numSteps is always 16
+    currentStep = (currentStep + toDo - 1) % numSteps;
   }
+
+  // Lateness guard: if the step was queued more than 10ms ago, it would
+  // sound off-beat. Skip it silently — a missing step is less noticeable
+  // than a late one. Only applies to ext sync (internal clock is authoritative).
+  if (transportState == RUN_EXT && (micros() - queuedAt) > STEP_LATE_THRESHOLD_US) {
+    currentStep = (currentStep + 1) % numSteps;
+    return;
+  }
+
   playSequenceCore();
 }
 
@@ -1003,13 +1016,14 @@ void updateOtherButtons() {
                   if (snapWindow > 80000) snapWindow = 80000;
                   if (elapsed < snapWindow) {
                     pendingStepCount = 1;
+                    stepQueuedAtUs = micros();
 
                     // Low-PPQN modes (1 or 2): also schedule deferred steps
                     if (ppqn < STEPS_PER_BEAT) {
                       uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
                       uint8_t deferred = stepsPerPulse - 1;
                       if (deferred > 0) {
-                        uint32_t subInterval = snapEma / stepsPerPulse;
+                        uint32_t subInterval = lastPulseInterval / stepsPerPulse;
                         extSubdivIntervalUs = subInterval;
                         extSubdivNextUs = lastPulseMicros + subInterval;
                         extSubdivRemaining = deferred;
@@ -1239,14 +1253,6 @@ int readKnobRaw(byte idx) {
   return map(raw, 3, 1020, 0, 1023);
 }
 
-void setOverlayTimer() {
-  uint32_t t;
-  noInterrupts();
-  t = sysTickMs;
-  interrupts();
-  parameterOverlayStartTick = t;
-}
-
 // ============================================================================
 //  Shared curve helpers — used by both display and engine switch blocks
 //  to keep the mapping in one place.
@@ -1264,7 +1270,7 @@ static inline float d1DecayCurve(int knobValue) {
   }
 }
 
-// D1 Pitch curve: piecewise 60–105 Hz (low) then 105–500 Hz (high)
+// D1 Pitch curve: piecewise 55–110 Hz (A1→A2) then 110–440 Hz (A2→A4)
 static inline float d1PitchCurve(int knobValue) {
   float norm = normKnob(knobValue);
   if (norm <= 0.33f) {
@@ -1390,7 +1396,9 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
 // KEEP IN SYNC with applyKnobToEngine() below (same case numbers).
 
 void updateParameterDisplay(byte idx, int knobValue) {
-  setOverlayTimer();
+  noInterrupts();
+  parameterOverlayStartTick = sysTickMs;
+  interrupts();
   activeRail = RAIL_NONE;
 
   switch (idx) {
@@ -1640,7 +1648,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 26:  // Master Lowpass Filter
       {
-        int freqHz = (int)map(knobValue, 0, 1023, 1000, 7500);
+        int freqHz = map(knobValue, 0, 1023, 1000, 7500);
         snprintf(displayParameter1, sizeof(displayParameter1), "MASTER LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", freqHz);
         break;
@@ -2129,8 +2137,6 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 18:  // D3 Voice Mix — 606 / FM / PERC
       {
-        const int value = knobValue;
-
         // Zone boundaries (pure solo regions for each voice)
         const int ZONE_606_MAX  = int(1023 * 0.06f);
         const int ZONE_FM_MIN   = int(1023 * 0.46f);
@@ -2149,16 +2155,16 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float gainPerc = 0.0f;
 
         // Calculate voice gains based on knob position
-        if (value <= ZONE_606_MAX) {
+        if (knobValue <= ZONE_606_MAX) {
           gain606 = 1.0f;
-        } else if (value < ZONE_FM_MIN) {
-          const float blend = float(value - ZONE_606_MAX) / float(ZONE_FM_MIN - ZONE_606_MAX);
+        } else if (knobValue < ZONE_FM_MIN) {
+          const float blend = float(knobValue - ZONE_606_MAX) / float(ZONE_FM_MIN - ZONE_606_MAX);
           gain606 = 1.0f - blend;
           gainFM = blend;
-        } else if (value <= ZONE_FM_MAX) {
+        } else if (knobValue <= ZONE_FM_MAX) {
           gainFM = 1.0f;
-        } else if (value < ZONE_PERC_MIN) {
-          const float blend = float(value - ZONE_FM_MAX) / float(ZONE_PERC_MIN - ZONE_FM_MAX);
+        } else if (knobValue < ZONE_PERC_MIN) {
+          const float blend = float(knobValue - ZONE_FM_MAX) / float(ZONE_PERC_MIN - ZONE_FM_MAX);
           gainFM = 1.0f - blend;
           gainPerc = blend;
         } else {
@@ -2759,8 +2765,14 @@ void updateDisplay() {
     display.drawBitmap(116, 4, image_stop_bits, 10, 10, 1);
   }
 
-  // Oscilloscope — always drawn (not replaced by overlay)
-  drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
+  // Oscilloscope — skip during ext sync to minimize SPI blocking time
+  if (transportState != RUN_EXT) {
+    drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
+  } else {
+    display.setTextSize(1);
+    display.setCursor(18, 38);
+    display.print("EXTERNAL SYNC");
+  }
 
   // Parameter overlay at bottom of screen (on top of scope)
   if (overlayActiveNow) {
@@ -2782,6 +2794,13 @@ void updateDisplay() {
       // Voice rail only — rail graphic already contains labels, no extra text
       renderVoiceRails();
     }
+  }
+
+  // Fire any steps queued during framebuffer drawing, before the
+  // blocking SPI transfer adds another 15-25ms of latency.
+  if (sequencePlaying) {
+    playSequence();
+    checkExtSubdivision();
   }
 
   display.display();
