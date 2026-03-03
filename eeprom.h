@@ -44,7 +44,6 @@ extern const uint8_t PPQN_OPTIONS[];
 
 // UI overlay feedback (for "PATTERN LOADED" / "SAVED" messages)
 extern RailMode activeRail;
-extern int lastActiveKnob;
 extern char displayParameter1[24];
 extern char displayParameter2[24];
 extern uint32_t parameterOverlayStartTick;
@@ -134,7 +133,6 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
 
   // Show "PATTERN LOADED" overlay message
   activeRail = RAIL_NONE;
-  lastActiveKnob = KNOB_NONE;
   snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
   snprintf(displayParameter2, sizeof(displayParameter2), "LOADED");
 

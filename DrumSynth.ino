@@ -160,8 +160,6 @@ float d1CachedDecayMs = 75.0f;   // defaults; see updateD1EnvelopeCache()
 // parameter overlay text — Main-loop only, no ISR access
 char displayParameter1[24] = "";
 char displayParameter2[24] = "";
-const int KNOB_NONE = -1;                    // sentinel: no active knob
-int lastActiveKnob = KNOB_NONE;              // NOTE: currently write-only — reserved for future per-knob display logic
 uint32_t parameterOverlayStartTick = 0;
 
 // UI voice rails
@@ -553,7 +551,6 @@ void setup() {
 
   // Clear overlay and parameter strings at boot (now sysTickMs is valid)
   activeRail = RAIL_NONE;
-  lastActiveKnob = KNOB_NONE;
   displayParameter1[0] = 0;
   displayParameter2[0] = 0;
 
@@ -932,7 +929,6 @@ void updateOtherButtons() {
             snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
             parameterOverlayStartTick = nowTick;
             activeRail = RAIL_NONE;
-            lastActiveKnob = KNOB_NONE;
           } else {
             // Short press — normal cycle memory slot
             activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
@@ -1021,7 +1017,6 @@ void updateOtherButtons() {
           case 9:
             {
               activeRail = RAIL_NONE;
-              lastActiveKnob = KNOB_NONE;
 
               if (patternDirty) {
                 saveStateToEEPROM(activeSaveSlot);
@@ -1070,7 +1065,6 @@ void updateOtherButtons() {
                  bassLineModeActive ? "BASSLINE MODE" : "EXITING BASSLINE");
         displayParameter2[0] = 0;
         parameterOverlayStartTick = nowTick;
-        lastActiveKnob = KNOB_NONE;
       }
     }
 
@@ -1187,7 +1181,6 @@ void updateStepButtons() {
         snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
         parameterOverlayStartTick = nowTick;
-        lastActiveKnob = KNOB_NONE;
       } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
         // Just crossed the hold threshold — enter note-select for this step
         bassLineHeldStep = i;
@@ -1215,8 +1208,7 @@ int readKnobRaw(byte idx) {
   return map(raw, 3, 1020, 0, 1023);
 }
 
-void setOverlayTimer(byte idx) {
-  lastActiveKnob = idx;
+void setOverlayTimer() {
   uint32_t t;
   noInterrupts();
   t = sysTickMs;
@@ -1367,7 +1359,7 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
 // KEEP IN SYNC with applyKnobToEngine() below (same case numbers).
 
 void updateParameterDisplay(byte idx, int knobValue) {
-  setOverlayTimer(idx);
+  setOverlayTimer();
   activeRail = RAIL_NONE;
 
   switch (idx) {
