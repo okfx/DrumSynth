@@ -182,12 +182,15 @@ RailMode activeRail = RAIL_NONE;
 
 // delay ratios (in quarter-note units)
 static constexpr float quantizeRatios[] = {
-  0.25f,        // 1/4  of a quarter = 1/16
-  0.33333333f,  // 1/3  of a quarter = 1/8T
-  0.5f,         // 1/2  of a quarter = 1/8
+  0.25f,        // 1/4  of a quarter  = 1/16
+  0.33333333f,  // 1/3  of a quarter  = 1/8T
+  0.375f,       // 3/8  of a quarter  = 1/16.
+  0.5f,         // 1/2  of a quarter  = 1/8
   0.66666667f,  // 2/3  of a quarter = 1/4T
   0.75f,        // 3/4  of a quarter = 1/8.
   1.0f,         // 1    quarter      = 1/4
+  1.25f,        // 5/4  quarters     = 5/16
+  1.33333333f,  // 4/3  quarters     = 1/3
   1.5f,         // 3/2  quarters     = 1/4.
   2.0f,         // 2    quarters     = 1/2
   2.5f,         // 5/2  quarters     = 5/8
@@ -197,10 +200,13 @@ static constexpr float quantizeRatios[] = {
 static constexpr const char* ratioLabels[] = {
   "1/16",
   "1/8T",
+  "1/16.",
   "1/8",
   "1/4T",
   "1/8.",
   "1/4",
+  "5/16",
+  "1/2T",
   "1/4.",
   "1/2",
   "5/8",
@@ -1371,7 +1377,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 0:  // D1 Drive/Distortion
       {
         int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORT");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORTION");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1443,7 +1449,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 7:  // D1 Delay Send
       {
         int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DLY SEND");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DELAY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1479,48 +1485,33 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 11:  // D2 Wavefolder Drive
       {
-        float norm = normKnob(knobValue);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 DISTORT");
-        if (knobValue < 10) {
-          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
-        } else {
-          int percent = (int)(norm * 100.0f + 0.5f);
-          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
-        }
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 DISTORTION");
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
 
     case 12:  // D2 Delay Send
       {
         int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D2 DLY SEND");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D2 DELAY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
 
     case 13:  // D2 Reverb
       {
-        float norm = normKnob(knobValue);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 REVERB");
-        if (norm <= 0.02f) {
-          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
-        } else {
-          int percent = (int)(norm * 100.0f + 0.5f);
-          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
-        }
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
 
     case 14:  // D2 Noise
       {
-        float norm = normKnob(knobValue);
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE NOISE");
-        if (knobValue < 5) {
-          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
-        } else {
-          int percent = (int)(norm * 100.0f + 0.5f);
-          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
-        }
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
 
@@ -1540,7 +1531,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
       {
         int tune = (int)(normKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%3d", tune);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
         break;
       }
 
@@ -1563,21 +1554,16 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 19:  // D3 Distort (sine-driven wavefolder)
       {
-        float norm = normKnob(knobValue);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORT");
-        if (knobValue < 5) {
-          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
-        } else {
-          int percent = (int)(norm * 100.0f + 0.5f);
-          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
-        }
+        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORTION");
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
 
     case 20:  // D3 Delay Send
       {
         int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D3 DLY SEND");
+        snprintf(displayParameter1, sizeof(displayParameter1), "D3 DELAY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1585,7 +1571,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 21:  // D3 Filter
       {
         float norm = normKnob(knobValue);
-        float cutoffHz = 5000.0f * expf(norm * 1.03f);  // 5000–14000 Hz exponential
+        float cutoffHz = 5000.0f * expf(norm * 0.405f);  // 5000–7500 Hz exponential
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
@@ -1622,7 +1608,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 25:  // Wavefold Frequency
       {
         int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FRQ");
+        snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1630,7 +1616,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 26:  // Master Lowpass Filter
       {
         int freqHz = (int)map(knobValue, 0, 1023, 1000, 7500);
-        snprintf(displayParameter1, sizeof(displayParameter1), "MASTER LPF");
+        snprintf(displayParameter1, sizeof(displayParameter1), "MASTER LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", freqHz);
         break;
       }
@@ -1668,7 +1654,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 28:  // Master Volume
       {
         int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "MASTER VOL");
+        snprintf(displayParameter1, sizeof(displayParameter1), "MASTER VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1678,7 +1664,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
         float norm = normKnob(knobValue);
         int percent = (int)((norm - 0.5f) * 200.0f);  // -100 to +100
 
-        snprintf(displayParameter1, sizeof(displayParameter1), "DECAY OFFST");
+        snprintf(displayParameter1, sizeof(displayParameter1), "DECAY OFFSET");
         snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", percent);
         break;
       }
@@ -1693,7 +1679,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
         // Perceived intensity follows drive² curve
         int percent = (int)(active * active * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD INT");
+        snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD DRIVE");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
@@ -1701,7 +1687,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 31:  // Master Delay Mix/Feedback
       {
         float norm = normKnob(knobValue);
-        snprintf(displayParameter1, sizeof(displayParameter1), "DELAY AMT");
+        snprintf(displayParameter1, sizeof(displayParameter1), "DELAY AMOUNT");
         if (norm <= 0.02f) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
@@ -2100,9 +2086,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         d3606HPF.frequency(hpfHz);
         d3606BPF.frequency(bpfHz);
 
-        // PERC voice — A2(110) → A6(1760), independent of FM carriers
-        static const float LOG_NOISE_RATIO = logf(1760.0f / 110.0f);  // A2→A6
-        drum3.frequency(110.0f * expf(pitchBend * LOG_NOISE_RATIO));
+        // PERC voice — A3(220) → A6(1760), independent of FM carriers
+        static const float LOG_NOISE_RATIO = logf(1760.0f / 220.0f);  // A3→A6
+        drum3.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
 
         AudioInterrupts();
         break;
@@ -2223,8 +2209,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normKnob(knobValue);
 
-        // Cutoff: exponential curve 5000–14000 Hz (log-spaced for natural feel)
-        float cutoffHz = 5000.0f * expf(norm * 1.03f);  // ln(14000/5000) ≈ 1.03
+        // Cutoff: exponential curve 5000–7500 Hz (log-spaced for natural feel)
+        float cutoffHz = 5000.0f * expf(norm * 0.405f);  // ln(7500/5000) ≈ 0.405
 
         // Resonance: gentle bump at low cutoffs for volume compensation, clean when open
         float resonance = 0.35f + 0.15f * (1.0f - norm);  // 0.50 → 0.35

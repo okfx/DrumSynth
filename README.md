@@ -13,7 +13,7 @@ A 3-voice drum synthesizer + bass line built on Teensy 4.0.
 | D2 Wavefolder | Wavefolder osc | 27.5–880 Hz (A0–A5) |
 | D3 606 Hats | Analog-style hats | 400–6000 Hz |
 | D3 FM Hats | FM carriers | 440–3520 Hz (A4–A7) |
-| D3 Noise Hat | Noise hat | 110–1760 Hz (A2–A6) |
+| D3 Noise Hat | Noise hat | 220–1760 Hz (A3–A6) |
 
 ## Bass Line Mode
 
