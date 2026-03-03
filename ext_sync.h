@@ -41,7 +41,7 @@ extern uint8_t currentStep;
 //
 //  ISR writes (externalClockISR / stepISR):
 //    lastPulseMicros           — uint32_t, read in main loop with noInterrupts()
-//    lastPulseInterval         — uint32_t, ISR-only (lock-in comparison)
+//    lastPulseInterval         — uint32_t, ISR writes, ISR reads (subdivision + lock-in), reset clears
 //    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM display)
 //    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
 //    extPulseCount             — uint8_t, atomic on ARM
@@ -101,13 +101,6 @@ volatile uint32_t extSubdivIntervalUs = 0; // Time between subdivided steps (µs
 
 volatile uint8_t  pendingStepCount = 0;    // Step queue: both stepISR and externalClockISR write, main loop consumes
 
-// Per-voice retrigger timestamps — written by triggerD1/D2/D3 (main loop
-// via playSequenceCore), used to avoid noteOff() killing a just-triggered
-// envelope when two steps fire in rapid succession.
-uint32_t lastD1TriggerUs = 0;
-uint32_t lastD2TriggerUs = 0;
-uint32_t lastD3TriggerUs = 0;
-
 // BPM display (main loop only, not volatile)
 float extBpmDisplay = 0.0f;
 
@@ -127,7 +120,7 @@ void stepISR() {
 // External clock ISR — attached to EXT_CLK_PIN (pin 12) rising edge
 // Every accepted pulse queues steps via pendingStepCount for main loop.
 // Two-part glitch filter (hard floor + relative). Lock-in requires
-// two consecutive similar intervals.
+// two consecutive similar intervals (3 pulses).
 void externalClockISR() {
   uint32_t nowUs = micros();
   uint32_t prevUs = lastPulseMicros;
@@ -240,9 +233,8 @@ void rearmStepTimer() {
   stepTimer.begin(stepISR, (uint32_t)stepPeriodUs);
 }
 
-// Clear all external clock state — called after setTransport() on timeout.
-// extStepAcc is already cleared by setTransport(),
-// so only pulse-tracking and display state is reset here.
+// Clear all external clock state — pulse tracking, subdivision, and display.
+// Called from checkExtClockTimeout() after switching transport away from RUN_EXT.
 static inline void resetExternalClockState() {
   noInterrupts();
   extPulseCount = 0;
@@ -364,8 +356,7 @@ bool isExtClockRunning() {
 
 // Derive EXT BPM from the fast EMA (alpha=0.5) — same interval the engine
 // uses for glitch filtering, so the display matches what the engine hears.
-// Light display-side smoothing (alpha=0.25) damps jitter without the long
-// settle time the old slow EMA had.
+// Light display-side smoothing (alpha=0.25) damps jitter for stable readout.
 void updateExtBpmDisplay() {
   if (transportState == RUN_EXT) {
     noInterrupts();

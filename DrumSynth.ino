@@ -1,21 +1,4 @@
-// ============================================================================
-//  DrumSynth
-//  Teensy 4.0 (ARM Cortex-M7 @ 600MHz)
-//  Last modified: 2026-02-14 (Session 9 — v130, BPM display fix)
-//
-//  3 synthesized drum voices, 32 knobs (2x 16-ch mux), 16 step buttons,
-//  10 control buttons, 16 LEDs (shift register), 128x64 OLED (SH1106, software SPI),
-//  internal clock with external pulse clock sync on pin 12.
-//
-//  Transport: STOPPED / RUN_INT / RUN_EXT
-//  External clock ISR queues steps via pendingStepCount; main loop fires
-//  audio via playSequence() → playSequenceCore() (same path as internal clock).
-//  Two-part glitch filter (300µs floor + 40% relative EMA).
-//  Lock-in requires 3 accepted pulses (2 consecutive similar intervals).
-//  For ppqn < 4, ISR queues step A on the pulse; main loop fires deferred
-//  steps B/C/D at evenly-spaced timestamps (checkExtSubdivision).
-//  Timeout falls back to RUN_INT (if playing) or STOPPED.
-// ============================================================================
+// DrumSynth
 
 #include <Arduino.h>
 #include <Mux.h>
@@ -32,7 +15,6 @@
 #include "audio_init.h"
 #include "bitmaps.h"
 #include "hw_setup.h"
-static_assert(numSteps == 16, "Accent mask logic assumes 16 steps");
 
 #define FIRMWARE_VERSION "03.02.26"
 
@@ -139,7 +121,7 @@ volatile uint8_t ppqn = PPQN_DEFAULT;
 // ---------------------------------------------------------------------------
 
 // External clock sync — ISRs, state variables, glitch filter, EMA, helpers
-// (depends on: TransportState, stepTimer, bpm, ppqn, sequences, triggerD1/D2/D3)
+// (depends on: TransportState, stepTimer, bpm, ppqn, playSequenceCore, currentStep)
 #include "ext_sync.h"
 
 // OLED watchdog and frame timing
@@ -736,7 +718,7 @@ void loop() {
   }
 }
 
-// transport helpers — v126 pattern: clean state transitions
+// Transport state machine — manages clock timer and ext sync cleanup on transitions
 void setTransport(TransportState s) {
   if (transportState == s) return;
   transportState = s;
@@ -753,9 +735,8 @@ void setTransport(TransportState s) {
       break;
     case RUN_EXT:
       stepTimer.end();      // stop internal clock — pulses drive steps now
-      // Don't clear extStepAcc here — the ISR may have already written a valid
-      // accumulator value on the locking pulse before main loop calls setTransport().
-      // Clearing happens when *leaving* RUN_EXT (see above).
+      // extStepAcc is preserved: the ISR may have already written a valid
+      // accumulator value on the locking pulse that triggered this transition.
       break;
     case STOPPED:
     default:
@@ -810,6 +791,13 @@ void playSequenceCore() {
 }
 
 static constexpr uint32_t MIN_RETRIGGER_US = 2000;  // 2ms — skip noteOff if retriggered faster
+
+// Per-voice retrigger timestamps — main loop only (via playSequenceCore).
+// Avoid noteOff() killing a just-triggered envelope when two steps fire
+// in rapid succession (e.g. skip-ahead fires step N then subdivision fires N+1).
+uint32_t lastD1TriggerUs = 0;
+uint32_t lastD2TriggerUs = 0;
+uint32_t lastD3TriggerUs = 0;
 
 void triggerD1() {
   // Retrigger guard — uint32_t reads/writes are atomic on ARM Cortex-M7.
@@ -938,12 +926,7 @@ void updateOtherButtons() {
             // In PPQN mode — confirm and save
             ppqn = ppqnModeSelection;
             savePpqnToEEPROM(ppqn);
-            if (transportState == RUN_EXT) {
-              noInterrupts();
-              extStepAcc = 0;
-              extSubdivRemaining = 0;
-              interrupts();
-            }
+            // Playback is already stopped (forced on PPQN mode entry).
             ppqnModeActive = false;
             snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
             snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
@@ -1012,7 +995,7 @@ void updateOtherButtons() {
               }
               interrupts();
             } else {
-              // STOP — setTransport(STOPPED) clears extStepAcc internally
+              // STOP
               sequencePlaying = false;
               setTransport(STOPPED);
               applyMasterGainFromState();
@@ -1064,6 +1047,13 @@ void updateOtherButtons() {
     // btn7PressTick/btn7EnteredPpqn shared with the state-change block above.
     if (i == 7 && btnState[7] && !ppqnModeActive && !btn7EnteredPpqn) {
       if ((uint32_t)(nowTick - btn7PressTick) >= PPQN_LONG_PRESS_MS) {
+        // Stop playback before entering PPQN mode — changing PPQN mid-playback
+        // would leave the accumulator and subdivision state in an ambiguous state.
+        if (sequencePlaying) {
+          sequencePlaying = false;
+          setTransport(STOPPED);
+          applyMasterGainFromState();
+        }
         ppqnModeActive = true;
         ppqnModeLastActivityTick = nowTick;
         ppqnModeSelection = ppqn;
