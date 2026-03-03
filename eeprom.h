@@ -75,7 +75,7 @@ struct EepromSlot {
 //  Constants
 // ============================================================================
 
-static constexpr uint16_t EEPROM_MAGIC      = 0x4244;  // Bumped: added CRC8 field
+static constexpr uint16_t EEPROM_MAGIC      = 0x4244;  // Identifies valid slot (CRC8 format)
 static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
 // PPQN stored after all save slots
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
