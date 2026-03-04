@@ -45,19 +45,20 @@ static constexpr uint32_t PPQN_MODE_TIMEOUT_MS = 5000;
 static constexpr uint32_t PPQN_LONG_PRESS_MS = 2000;
 
 // PPQN options table
-const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 24, 48, 96};
-constexpr uint8_t PPQN_OPTION_COUNT = 6;
+const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
+constexpr uint8_t PPQN_OPTION_COUNT = 7;
 
 // Bass Line mode state — main-loop only
 bool bassLineModeActive = false;
 static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
+bool bassLineKnobPickedUp = false;  // Soft-pickup: ignore knob until it matches stored note
 
 // Per-step MIDI note for bass line (A1=33 to A4=69, 36 semitones)
-// Default C3 = MIDI 48
+// Default C2 = MIDI 36
 uint8_t bassLineNote[numSteps] = {
-  48,48,48,48, 48,48,48,48, 48,48,48,48, 48,48,48,48
+  36,36,36,36, 36,36,36,36, 36,36,36,36, 36,36,36,36
 };
 
 // Display constants
@@ -297,8 +298,6 @@ inline void applyD1Freq() {
   AudioInterrupts();
 }
 
-float d1AttackAmt = 0.0f;
-
 // choke mapping helper
 static inline int chokeOffsetFromKnob(int v) {
   const int CENTER = 512;
@@ -440,11 +439,11 @@ inline void applyMasterGainFromState() {
   masterAmp.gain(g);
 }
 
-// Recompute cached D1 envelope params. Snap shapes attack and hold;
-// decay uses d1Decay directly. Call on choke, decay, or snap change.
+// Recompute cached D1 envelope params. Attack is fixed at 0.5ms (808-style
+// instant punch); hold scales with decay. Call on choke or decay change.
 static inline void updateD1EnvelopeCache() {
-  d1CachedAttackMs = 0.5f + 9.5f * d1AttackAmt;
-  d1CachedHoldMs = d1Decay * 0.75f + 7.0f * d1AttackAmt;
+  d1CachedAttackMs = 0.5f;
+  d1CachedHoldMs = d1Decay * 0.75f;
 }
 
 // choke application on all relevant decays
@@ -1193,6 +1192,7 @@ void updateStepButtons() {
           if (bassLineHeldStep == i) {
             // Was in note-select — just clear, no toggle
             bassLineHeldStep = -1;
+            bassLineKnobPickedUp = false;
           } else {
             // Short press on a different step — toggle it
             seq[i] ^= 1;
@@ -1215,6 +1215,7 @@ void updateStepButtons() {
       } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
         // Just crossed the hold threshold — enter note-select for this step
         bassLineHeldStep = i;
+        bassLineKnobPickedUp = false;
       }
     }
 
@@ -1423,7 +1424,17 @@ void updateParameterDisplay(byte idx, int knobValue) {
         if (bassLineModeActive) {
           if (bassLineHeldStep >= 0) {
             uint8_t note = bassLineKnobToNote(knobValue);
-            bassLineNote[bassLineHeldStep] = note;
+            // Soft-pickup: ignore knob until it matches the stored note,
+            // then track normally. Prevents note jump on first touch.
+            if (!bassLineKnobPickedUp) {
+              if (note == bassLineNote[bassLineHeldStep]) {
+                bassLineKnobPickedUp = true;
+              }
+              note = bassLineNote[bassLineHeldStep];  // show stored note until pickup
+            }
+            if (bassLineKnobPickedUp) {
+              bassLineNote[bassLineHeldStep] = note;
+            }
             char noteName[5];
             bassLinePitch(note, noteName);
             snprintf(displayParameter1, sizeof(displayParameter1),
@@ -1806,7 +1817,15 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (bassLineModeActive) {
           if (bassLineHeldStep >= 0) {
             uint8_t note = bassLineKnobToNote(knobValue);
-            bassLineNote[bassLineHeldStep] = note;
+            // Soft-pickup: ignore knob until it matches stored note
+            if (!bassLineKnobPickedUp) {
+              if (note == bassLineNote[bassLineHeldStep]) {
+                bassLineKnobPickedUp = true;
+              }
+            }
+            if (bassLineKnobPickedUp) {
+              bassLineNote[bassLineHeldStep] = note;
+            }
             // Don't change d1BaseFreq — frequency set at playback time
           }
           break;
@@ -1825,7 +1844,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         break;
       }
 
-    case 5:  // D1 Attack/Snap
+    case 5:  // D1 Snap (transient character only — does NOT affect amp envelope)
       {
         float norm = normKnob(knobValue);
 
@@ -1836,10 +1855,6 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // Transient emphasis, capped at unity
         float transientGain = 0.85f + (0.15f * norm);
         d1Mixer.gain(1, transientGain);
-
-        // Store and update cached envelope params
-        d1AttackAmt = norm;
-        updateD1EnvelopeCache();
         break;
       }
 

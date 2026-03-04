@@ -203,7 +203,7 @@ AudioConnection          patchCord101(delayAmp, 0, masterMixer, 2);
 AudioConnection          patchCord102(masterDelay, 0, delayFilter, 0);
 AudioConnection          patchCord103(delayFilter, 0, delayMixer, 3);
 AudioConnection          patchCord104(delayMixer, masterDelay);
-AudioConnection          patchCord105(delayMixer, delayAmp);
+AudioConnection          patchCord105(delayFilter, 0, delayAmp, 0);
 AudioConnection          patchCord106(masterHiPass, 2, masterLowPass, 0);
 AudioConnection          patchCord107(masterLowPass, 0, masterBandPass, 0);
 AudioConnection          patchCord108(masterBandPass, 1, masterAmp, 0);
