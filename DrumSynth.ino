@@ -37,9 +37,12 @@ static constexpr int fwDay =
     (__DATE__[4] == ' ') ? (__DATE__[5] - '0')
                          : (__DATE__[4] - '0') * 10 + (__DATE__[5] - '0');
 static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
+// __TIME__ format: "14:34:05" (HH:MM:SS, always 8 chars)
+static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
+static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-#define FIRMWARE_VERSION_FMT "%02d.%02d.%02d"
-#define FIRMWARE_VERSION_ARGS fwMonth, fwDay, fwYear
+#define FIRMWARE_VERSION_FMT "%02d.%02d.%02d-%02d:%02d"
+#define FIRMWARE_VERSION_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -537,9 +540,9 @@ void setup() {
     display.setTextSize(1);
     display.setCursor(40, 20);
     display.print("VERSION");
-    display.setCursor(43, 36);
-    char versionBuf[12];
-    snprintf(versionBuf, sizeof(versionBuf), "v" FIRMWARE_VERSION_FMT, FIRMWARE_VERSION_ARGS);
+    display.setCursor(19, 36);
+    char versionBuf[20];
+    snprintf(versionBuf, sizeof(versionBuf), FIRMWARE_VERSION_FMT, FIRMWARE_VERSION_ARGS);
     display.print(versionBuf);
     display.display();
     delay(800);
@@ -1756,7 +1759,11 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 29:  // Master Choke Offset
       {
         snprintf(displayParameter1, sizeof(displayParameter1), "CHOKE");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", chokeDisplayPercent);
+        if (chokeDisplayPercent == 0) {
+          snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
+        } else {
+          snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", chokeDisplayPercent);
+        }
         break;
       }
 
@@ -2530,7 +2537,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 31:  // Master Delay Mix/Feedback
       {
         float norm = normKnob(knobValue);
-        const float PEAK_LEVEL = 0.79f;
+        const float PEAK_LEVEL = 0.73f;
 
         // Compute all gains before applying as one atomic update
         float ampGain, returnGain, fbGain;
@@ -2893,7 +2900,7 @@ void updateDisplay() {
   display.print("CHOKE");
   display.setCursor(62, 10);
   if (chokeSnap == 0) {
-    display.print("0%");
+    display.print("OFF");
   } else {
     char chokeBuf[6];
     snprintf(chokeBuf, sizeof(chokeBuf), "%+d%%", chokeSnap);
