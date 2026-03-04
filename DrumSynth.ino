@@ -129,7 +129,9 @@ volatile uint8_t ppqn = PPQN_DEFAULT;
 volatile uint32_t lastFrameDrawTick = 0;
 static constexpr uint32_t OLED_WATCHDOG_TIMEOUT_MS = 750;
 static constexpr uint32_t OLED_FRAME_INTERVAL_MS = 42;        // ~24 fps
+static constexpr uint32_t OLED_FRAME_INTERVAL_EXT_MS = 100;   // ~10 fps (ext sync — reduces SPI blocking)
 volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main loop
+uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (main-loop only)
 
 // Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
 #include "oscilloscope.h"
@@ -695,7 +697,10 @@ void loop() {
   lastDrawCopy = lastFrameDrawTick;
   interrupts();
 
-  if ((uint32_t)(tickCopy - lastDrawCopy) >= OLED_FRAME_INTERVAL_MS) {
+  uint32_t frameInterval = (transportState == RUN_EXT)
+                           ? OLED_FRAME_INTERVAL_EXT_MS
+                           : OLED_FRAME_INTERVAL_MS;
+  if ((uint32_t)(tickCopy - lastDrawCopy) >= frameInterval) {
     updateDisplay();
   }
 
@@ -752,10 +757,16 @@ void playSequence() {
 
   if (toDo == 0) return;
 
-  // If multiple steps queued up (main loop was slow), skip ahead to the
-  // latest one. A skipped step is less noticeable than an off-beat step.
-  // Advance currentStep by (toDo - 1) without triggering audio, then
-  // fire the final step normally via playSequenceCore().
+  // During ext sync with 2 accumulated steps (common at ppqn=2 if the main
+  // loop was briefly blocked), fire both to preserve rhythmic density.
+  // For 3+ steps or internal clock, skip ahead — a missing step is less
+  // noticeable than an off-beat one.
+  if (toDo == 2 && transportState == RUN_EXT) {
+    playSequenceCore();  // fire first step
+    playSequenceCore();  // fire second step
+    return;
+  }
+
   if (toDo > 1) {
     currentStep = (currentStep + toDo - 1) % numSteps;
   }
@@ -984,16 +995,18 @@ void updateOtherButtons() {
               // currentStep is 15, so the first pulse advances to step 0.
               if (useExtClock) {
                 setTransport(RUN_EXT);
+                displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
 
                 // Snap-to-recent-pulse: if the user pressed PLAY just after
                 // a pulse, they were slightly late. Fire step 0 now instead
                 // of waiting for the next pulse (which would put the pattern
-                // one step out of phase). Window is 25% of pulse interval,
-                // capped at 80ms — covers typical human timing error.
+                // one step out of phase). Window is 50% of pulse interval,
+                // capped at 80ms — covers typical human timing error
+                // without risking a false snap near the next pulse boundary.
                 uint32_t snapEma = extIntervalEMA;
                 if (snapEma > 0 && lastPulseMicros > 0) {
                   uint32_t elapsed = micros() - lastPulseMicros;
-                  uint32_t snapWindow = snapEma / 4;
+                  uint32_t snapWindow = snapEma / 2;
                   if (snapWindow > 80000) snapWindow = 80000;
                   if (elapsed < snapWindow) {
                     pendingStepCount = 1;
@@ -2623,11 +2636,38 @@ void updateDisplay() {
     display.print("PPQN:");
     display.print(ppqnModeSelection);
 
-    // Same SPI push guard as the main display path
+    // SPI push guard — never start a blocking display transfer when audio
+    // timing work is pending or imminent. Musical timing always wins.
     bool safeToPush = true;
-    if (transportState == RUN_EXT && subdivTimerDueUs > 0) {
-      int32_t margin = (int32_t)(subdivTimerDueUs - micros());
-      if (margin < 25000) safeToPush = false;
+
+    // Steps waiting: consume them first, never block with pending audio work
+    if (pendingStepCount > 0) safeToPush = false;
+
+    // Drop-in display block (suppress push for 500ms after PLAY press)
+    if (safeToPush && displayBlockedUntilMs > 0) {
+      if ((int32_t)(displayBlockedUntilMs - nowMs) > 0) {
+        safeToPush = false;
+      } else {
+        displayBlockedUntilMs = 0;
+      }
+    }
+
+    // Protect step B (subdivision timer due within 25ms)
+    if (safeToPush && transportState == RUN_EXT && subdivTimerDueUs > 0) {
+      uint32_t dt = subdivTimerDueUs - micros();
+      if (dt < 25000) safeToPush = false;
+    }
+
+    // Protect step A (next pulse predicted within 25ms from EMA)
+    if (safeToPush && transportState == RUN_EXT) {
+      noInterrupts();
+      uint32_t ema = extIntervalEMA;
+      uint32_t lastP = lastPulseMicros;
+      interrupts();
+      if (ema > 0 && lastP > 0) {
+        uint32_t dt = (lastP + ema) - micros();  // wrap-safe unsigned subtraction
+        if (dt < 25000) safeToPush = false;
+      }
     }
 
     if (safeToPush) {
@@ -2778,13 +2818,38 @@ void updateDisplay() {
     playSequence();
   }
 
-  // Guard: if the subdivision one-shot timer will fire within 25ms, skip
-  // the SPI push this frame. Audio timing takes priority over display.
-  // The framebuffer survives in RAM and draws next frame.
+  // SPI push guard — never start a blocking display transfer when audio
+  // timing work is pending or imminent. Musical timing always wins.
   bool safeToPush = true;
-  if (transportState == RUN_EXT && subdivTimerDueUs > 0) {
-    int32_t margin = (int32_t)(subdivTimerDueUs - micros());
-    if (margin < 25000) safeToPush = false;
+
+  // Steps waiting: consume them first, never block with pending audio work
+  if (pendingStepCount > 0) safeToPush = false;
+
+  // Drop-in display block (suppress push for 500ms after PLAY press)
+  if (safeToPush && displayBlockedUntilMs > 0) {
+    if ((int32_t)(displayBlockedUntilMs - nowMs) > 0) {
+      safeToPush = false;
+    } else {
+      displayBlockedUntilMs = 0;
+    }
+  }
+
+  // Protect step B (subdivision timer due within 25ms)
+  if (safeToPush && transportState == RUN_EXT && subdivTimerDueUs > 0) {
+    uint32_t dt = subdivTimerDueUs - micros();
+    if (dt < 25000) safeToPush = false;
+  }
+
+  // Protect step A (next pulse predicted within 25ms from EMA)
+  if (safeToPush && transportState == RUN_EXT) {
+    noInterrupts();
+    uint32_t ema = extIntervalEMA;
+    uint32_t lastP = lastPulseMicros;
+    interrupts();
+    if (ema > 0 && lastP > 0) {
+      uint32_t dt = (lastP + ema) - micros();  // wrap-safe unsigned subtraction
+      if (dt < 25000) safeToPush = false;
+    }
   }
 
   if (safeToPush) {
