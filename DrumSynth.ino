@@ -2461,30 +2461,30 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 31:  // Master Delay Mix/Feedback
       {
         float norm = normKnob(knobValue);
+        const float PEAK_LEVEL = 0.79f;
 
         // Dead band below 2% — delay fully OFF
         if (norm <= 0.02f) {
           delayAmp.gain(0.0f);
           masterMixer.gain(2, 0.0f);  // delay return
-        } else {
-          // Level ramps from 0 to peak over 2%–25%, then plateaus at peak.
-          // sqrt curve gives audible control in the ramp zone.
-          const float RAMP_END = 0.25f;
-          const float PEAK_LEVEL = 0.79f;
-          float level;
-          if (norm < RAMP_END) {
-            float blend = (norm - 0.02f) / (RAMP_END - 0.02f);  // 0→1 over 2%–25%
-            level = sqrtf(blend) * PEAK_LEVEL;
-          } else {
-            level = PEAK_LEVEL;  // plateau
-          }
-          delayAmp.gain(level * 2.0f);
+          delayMixer.gain(3, 0.0f);   // feedback off
+        } else if (norm <= 0.50f) {
+          // Bottom half (2%–50%): volume ramp from 0 to peak, no feedback.
+          // sqrt curve for smoother audible control in the quiet zone.
+          float blend = (norm - 0.02f) / (0.50f - 0.02f);  // 0→1 over 2%–50%
+          float level = sqrtf(blend) * PEAK_LEVEL;
+          delayAmp.gain(level);
           masterMixer.gain(2, level);
+          delayMixer.gain(3, 0.0f);   // no feedback in bottom half
+        } else {
+          // Top half (50%–100%): level locked at peak, feedback ramps 0→0.4.
+          // Squared curve for finer control at low feedback values.
+          delayAmp.gain(PEAK_LEVEL);
+          masterMixer.gain(2, PEAK_LEVEL);
+          float fbBlend = (norm - 0.50f) / 0.50f;  // 0→1 over 50%–100%
+          float feedback = fbBlend * fbBlend * 0.4f;
+          delayMixer.gain(3, feedback);
         }
-
-        // Feedback amount (squared curve for finer low-end control), capped at 0.4
-        float feedback = norm * norm * 0.4f;
-        delayMixer.gain(3, feedback);
         break;
       }
 

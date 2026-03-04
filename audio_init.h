@@ -403,7 +403,7 @@ inline void audioInit() {
   delayFilter.frequency(4000.0f);
   delayFilter.resonance(2.5f);
 
-  delayAmp.gain(1.5f);
+  delayAmp.gain(0.79f);  // matches PEAK_LEVEL in delay amount knob handler
 
   // Delay mixer and feedback
   delayMixer.gain(0, 0.0f);  // D1 send
