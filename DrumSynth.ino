@@ -1028,19 +1028,8 @@ void updateOtherButtons() {
             break;
 
           case 8:
-            sequencePlaying = false;
-            setTransport(STOPPED);
-            applyMasterGainFromState();
-
             loadStateFromEEPROM(activeSaveSlot);
             // updateLEDs() already called inside loadStateFromEEPROM()
-
-            // Ensure next START begins at step 0 again
-            noInterrupts();
-            currentStep = numSteps - 1;
-            pendingStepCount = 0;
-            interrupts();
-
             break;
 
           case 9:
