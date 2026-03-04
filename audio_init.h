@@ -24,7 +24,7 @@ inline void audioInit() {
   sgtl5000_1.enable();
 
   // Analog output staging
-  sgtl5000_1.volume(0.75f);     // Headphone amp gain (0.8 ~= max clean)
+  sgtl5000_1.volume(0.75f);     // Headphone amp gain (0.8 is ~max clean; 0.75 gives margin)
   sgtl5000_1.lineOutLevel(29);  // Line out voltage swing (Teensy default)
 
   // Enable DAP (required for EQ / AVC on output)
@@ -100,7 +100,7 @@ inline void audioInit() {
   // D1 voice mixer (dry oscillators + drum transient + wavefolder)
   d1Mixer.gain(0, 0.3f);   // d1LowPass (dry osc)
   d1Mixer.gain(1, 0.9f);   // drum1Amp (transient)
-  // input 2: unconnected
+  d1Mixer.gain(2, 0.0f);   // unconnected
   d1Mixer.gain(3, 0.25f);  // d1Wavefolder (wet)
 
   // D1 filters

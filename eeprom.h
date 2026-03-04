@@ -158,8 +158,8 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   slot.magic = EEPROM_MAGIC;
   slot.seq = eepromSeq;
 
-  // Copy arrays with interrupts disabled so a step trigger
-  // mid-copy can't read a half-saved pattern (~1µs on Cortex-M7).
+  // Copy arrays with interrupts disabled so the snapshot is consistent —
+  // a step trigger mid-copy could see a mix of old and new step values (~1µs on Cortex-M7).
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
     slot.patterns.drum1[step] = drum1Sequence[step];

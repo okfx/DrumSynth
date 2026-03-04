@@ -238,10 +238,10 @@ enum AccentMode : uint8_t {
   ACCENT_QUARTER,
   ACCENT_EIGHTH,
   ACCENT_EIGHTHUP,
-  ACCENT_VARI1,
-  ACCENT_VARI2,
-  ACCENT_VARI3,
-  ACCENT_VARI4,
+  ACCENT_PAT1,
+  ACCENT_PAT2,
+  ACCENT_PAT3,
+  ACCENT_PAT4,
   ACCENT_PAT5,
   ACCENT_PAT6,
   ACCENT_PAT7,
@@ -255,16 +255,6 @@ uint16_t d3AccentMask = 0;  // Cached: accentMaskFromMode(d3AccentMode), updated
 // Accented hi-hat decay multiplier (2.5x longer decay on accent steps)
 static constexpr float D3_ACCENT_FACTOR = 2.5f;
 
-// patterns
-static constexpr uint16_t PAT_VARI1 = 0b1000100000101000;
-static constexpr uint16_t PAT_VARI2 = 0b1000100010001000;  // NOTE: intentionally same as QUARTER
-static constexpr uint16_t PAT_VARI3 = 0b1010010010100101;
-static constexpr uint16_t PAT_VARI4 = 0b0111011101110111;
-static constexpr uint16_t PAT_ACCENT5 = 0b0011001100110011;
-static constexpr uint16_t PAT_ACCENT6 = 0b0010010010010010;
-static constexpr uint16_t PAT_ACCENT7 = 0b1001001001001001;
-static constexpr uint16_t PAT_ACCENT8 = 0b0000111100001111;
-static constexpr uint16_t PAT_ACCENT9 = 0b1111000011110000;
 
 Track activeTrack = TRACK_D1;  // Main-loop only — no ISR access
 
@@ -374,7 +364,7 @@ inline void applyMasterGainFromState();
 void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 
-// Accent pattern bitmask — single source of truth for all 13 accent modes.
+// Accent pattern bitmask — single source of truth for all 14 accent modes (OFF + 13 patterns).
 // Bit 15 = step 0, bit 0 = step 15.  Used by isAccent() and LED preview.
 static inline uint16_t accentMaskFromMode(uint8_t mode) {
   switch (mode) {
@@ -382,15 +372,15 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
     case ACCENT_QUARTER: return 0b1000100010001000;  // steps 0,4,8,12
     case ACCENT_EIGHTH: return 0b1010101010101010;    // even steps (eighth-note pattern)
     case ACCENT_EIGHTHUP: return 0b0101010101010101;  // odd steps (eighth-note upbeat)
-    case ACCENT_VARI1: return PAT_VARI1;
-    case ACCENT_VARI2: return PAT_VARI2;
-    case ACCENT_VARI3: return PAT_VARI3;
-    case ACCENT_VARI4: return PAT_VARI4;
-    case ACCENT_PAT5: return PAT_ACCENT5;
-    case ACCENT_PAT6: return PAT_ACCENT6;
-    case ACCENT_PAT7: return PAT_ACCENT7;
-    case ACCENT_PAT8: return PAT_ACCENT8;
-    case ACCENT_PAT9: return PAT_ACCENT9;
+    case ACCENT_PAT1: return 0b1000100000101000;  // steps 0,4,10,12
+    case ACCENT_PAT2: return 0b0010001000100010;  // offbeat quarter (steps 2,6,10,14)
+    case ACCENT_PAT3: return 0b1010010010100101;  // steps 0,2,5,8,10,13,15
+    case ACCENT_PAT4: return 0b0111011101110111;  // all except downbeats (steps 1-3,5-7,9-11,13-15)
+    case ACCENT_PAT5: return 0b0011001100110011;  // pairs (steps 2-3,6-7,10-11,14-15)
+    case ACCENT_PAT6: return 0b0010010010010010;  // 3-step grouping (steps 2,5,8,11,14)
+    case ACCENT_PAT7: return 0b1001001001001001;  // dotted quarter (steps 0,3,6,9,12,15)
+    case ACCENT_PAT8: return 0b0000111100001111;  // back halves (steps 4-7,12-15)
+    case ACCENT_PAT9: return 0b1111000011110000;  // front halves (steps 0-3,8-11)
     default: return 0;
   }
 }
@@ -413,7 +403,7 @@ inline void updateDrumDelayGains() {
   // Decouple delay sends from the drum output levels.
   // This keeps delay tails and throws consistent even if a drum is turned down or muted.
 
-  float s1 = d1DelaySend * 0.6f;   // D1 tapped post-amp (0.8×) — scale down to match D2 level
+  float s1 = d1DelaySend * 0.6f;   // D1 tapped post-amp (0.7×) — scale down to match D2 level
   float s2 = d2DelaySend;          // D2 tapped at snareClapMixer — reference level
   float s3 = d3DelaySend * 1.75f;  // D3 tapped post-filter (quieter than D2) — 1.75× compensates for filter attenuation
 
@@ -1038,6 +1028,7 @@ void updateOtherButtons() {
               // STOP
               sequencePlaying = false;
               setTransport(STOPPED);
+              resetExternalClockState();  // Clear pulse tracking so ext clock can't re-lock-in after STOP
               applyMasterGainFromState();
             }
             break;
@@ -1148,7 +1139,7 @@ void updateLEDs() {
   // Normal pattern display with optional current step indicator
   byte* seq = seqByTrack(activeTrack);
 
-  // Snapshot play state (volatile, ISR-written) with interrupts disabled
+  // Snapshot play state — sequencePlaying is volatile, currentStep is main-loop-only
   uint8_t currentStepSnap;
   bool playingSnap;
   noInterrupts();
@@ -1355,7 +1346,7 @@ static inline float bpmFromKnob(int knobValue) {
   return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
 }
 
-// Accent mode from knob position — maps knob to one of 13 accent patterns
+// Accent mode from knob position — maps knob to one of 14 accent modes (OFF + 13 patterns)
 static inline uint8_t accentModeFromKnob(int knobValue) {
   const int ACCENT_DEADBAND = 24;
   if (knobValue <= ACCENT_DEADBAND) {
@@ -1367,10 +1358,10 @@ static inline uint8_t accentModeFromKnob(int knobValue) {
     case 2: return ACCENT_QUARTER;
     case 3: return ACCENT_EIGHTH;
     case 4: return ACCENT_EIGHTHUP;
-    case 5: return ACCENT_VARI1;
-    case 6: return ACCENT_VARI2;
-    case 7: return ACCENT_VARI3;
-    case 8: return ACCENT_VARI4;
+    case 5: return ACCENT_PAT1;
+    case 6: return ACCENT_PAT2;
+    case 7: return ACCENT_PAT3;
+    case 8: return ACCENT_PAT4;
     case 9: return ACCENT_PAT5;
     case 10: return ACCENT_PAT6;
     case 11: return ACCENT_PAT7;
@@ -2555,6 +2546,11 @@ void initKnobsFromHardware() {
 
     applyKnobToEngine(idx, rawValue);
   }
+
+  // Re-sync delay time: knob 24 (delay) was processed before knob 27 (BPM),
+  // so it computed against the default 120 BPM. Now that BPM is finalized,
+  // recalculate the delay to match the actual physical BPM knob position.
+  applyKnobToEngine(24, analog[24]->getValue());
 }
 
 // OPTIMIZATION: round-robin knob scanning — reads 8 knobs per loop iteration
@@ -2638,9 +2634,11 @@ void renderVoiceRails() {
     labelAtCenter("SIN", railX + third * 0 + third / 2, labelY);
     labelAtCenter("SAW", railX + third * 1 + third / 2, labelY);
     labelAtCenter("SQR", railX + third * 2 + third / 2, labelY);
-    int zone = (uiMixD1Shape < 1.0f / 3.0f)   ? 0
-               : (uiMixD1Shape < 2.0f / 3.0f) ? 1
-                                              : 2;
+    // Zone thresholds match engine crossfade (case 1):
+    // sine+saw blend for first half, saw+square blend for second half
+    int zone = (uiMixD1Shape < 0.25f) ? 0    // SIN dominant
+             : (uiMixD1Shape < 0.75f) ? 1    // SAW dominant (peaks at 50%)
+                                      : 2;   // SQR dominant
     int zx = railX + zone * third + 1;
     int zw = third - 2;
     display.fillRect(zx, railY + 1, zw, railH - 2, 1);
@@ -2659,9 +2657,11 @@ void renderVoiceRails() {
     labelAtCenter("606", railX + third * 0 + third / 2, labelY);
     labelAtCenter("FM", railX + third * 1 + third / 2, labelY);
     labelAtCenter("PERC", railX + third * 2 + third / 2, labelY);
-    int zone = (uiMixD3Voice < 1.0f / 3.0f)   ? 0
-               : (uiMixD3Voice < 2.0f / 3.0f) ? 1
-                                              : 2;
+    // Zone thresholds match engine crossfade midpoints (case 18):
+    // 606 solo < 6%, crossfade 6–46%, FM solo 46–65%, crossfade 65–94%, PERC solo > 94%
+    int zone = (uiMixD3Voice < 0.27f)  ? 0    // 606 side (solo + crossfade into FM)
+             : (uiMixD3Voice < 0.80f)  ? 1    // FM zone (crossfade + solo + crossfade)
+                                       : 2;   // PERC side (crossfade from FM + solo)
     int zx = railX + zone * third + 1;
     int zw = third - 2;
     display.fillRect(zx, railY + 1, zw, railH - 2, 1);
@@ -2713,21 +2713,27 @@ void updateDisplay() {
       }
     }
 
-    // Protect step B (subdivision timer due within 25ms)
-    if (safeToPush && transportState == RUN_EXT && subdivTimerDueUs > 0) {
-      uint32_t dt = subdivTimerDueUs - micros();
-      if (dt < 25000) safeToPush = false;
-    }
-
-    // Protect step A (next pulse predicted within 25ms from EMA)
+    // Protect steps B and A — read all ISR-shared timing variables atomically
     if (safeToPush && transportState == RUN_EXT) {
+      uint32_t subdivDue;
+      uint32_t ema;
+      uint32_t lastP;
       noInterrupts();
-      uint32_t ema = extIntervalEMA;
-      uint32_t lastP = lastPulseMicros;
+      subdivDue = subdivTimerDueUs;
+      ema = extIntervalEMA;
+      lastP = lastPulseMicros;
       interrupts();
-      if (ema > 0 && lastP > 0) {
-        uint32_t dt = (lastP + ema) - micros();  // wrap-safe unsigned subtraction
-        if (dt < 25000) safeToPush = false;
+
+      // Step B: subdivision timer due within 25ms
+      if (subdivDue > 0) {
+        int32_t remaining = (int32_t)(subdivDue - micros());
+        if (remaining > 0 && remaining < 25000) safeToPush = false;
+      }
+
+      // Step A: next pulse predicted within 25ms from EMA
+      if (safeToPush && ema > 0 && lastP > 0) {
+        int32_t remaining = (int32_t)((lastP + ema) - micros());
+        if (remaining > 0 && remaining < 25000) safeToPush = false;
       }
     }
 
@@ -2897,21 +2903,27 @@ void updateDisplay() {
     }
   }
 
-  // Protect step B (subdivision timer due within 25ms)
-  if (safeToPush && transportState == RUN_EXT && subdivTimerDueUs > 0) {
-    uint32_t dt = subdivTimerDueUs - micros();
-    if (dt < 25000) safeToPush = false;
-  }
-
-  // Protect step A (next pulse predicted within 25ms from EMA)
+  // Protect steps B and A — read all ISR-shared timing variables atomically
   if (safeToPush && transportState == RUN_EXT) {
+    uint32_t subdivDue;
+    uint32_t ema;
+    uint32_t lastP;
     noInterrupts();
-    uint32_t ema = extIntervalEMA;
-    uint32_t lastP = lastPulseMicros;
+    subdivDue = subdivTimerDueUs;
+    ema = extIntervalEMA;
+    lastP = lastPulseMicros;
     interrupts();
-    if (ema > 0 && lastP > 0) {
-      uint32_t dt = (lastP + ema) - micros();  // wrap-safe unsigned subtraction
-      if (dt < 25000) safeToPush = false;
+
+    // Step B: subdivision timer due within 25ms
+    if (subdivDue > 0) {
+      int32_t remaining = (int32_t)(subdivDue - micros());
+      if (remaining > 0 && remaining < 25000) safeToPush = false;
+    }
+
+    // Step A: next pulse predicted within 25ms from EMA
+    if (safeToPush && ema > 0 && lastP > 0) {
+      int32_t remaining = (int32_t)((lastP + ema) - micros());
+      if (remaining > 0 && remaining < 25000) safeToPush = false;
     }
   }
 

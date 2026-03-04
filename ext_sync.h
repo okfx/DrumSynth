@@ -45,9 +45,9 @@ extern uint8_t currentStep;
 //    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM + subdivision)
 //    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
 //    extPulseCount             — uint8_t, atomic on ARM
-//    extStepAcc                — uint8_t, written by ISR, reset by setTransport()
-//    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears
-//    pendingStepCount          — uint8_t, atomic on ARM, written by stepISR, externalClockISR, and subdivTimerCallback
+//    extStepAcc                — uint8_t, written by ISR, reset by setTransport() and PLAY handler
+//    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears (checkExtClockLockIn, resetExternalClockState)
+//    pendingStepCount          — uint8_t, atomic on ARM, ISR writes (stepISR, externalClockISR, subdivTimerCallback); main loop clears (playSequence) and sets (PLAY snap-to-pulse)
 //    subdivIntervalUs          — uint32_t, ISR sets, timer callback reads (chaining)
 //    subdivStepsRemaining      — uint8_t, atomic on ARM, ISR sets, timer callback decrements, main loop resets
 //    subdivTimerDueUs          — uint32_t, ISR sets, timer callback updates, main loop reads (SPI push guard)
