@@ -439,9 +439,9 @@ inline void applyMasterGainFromState() {
   masterAmp.gain(g);
 }
 
-// Recompute cached D1 envelope params. Attack is fixed at 0.5ms (808-style
+// Recompute cached D1 hold time. Attack is fixed at 0.5ms (808-style
 // instant punch); hold scales with decay. Call on choke or decay change.
-static inline void updateD1EnvelopeCache() {
+static inline void updateD1HoldCache() {
   d1CachedAttackMs = 0.5f;
   d1CachedHoldMs = d1Decay * 0.75f;
 }
@@ -454,8 +454,8 @@ void applyChokeToDecays() {
   if (d1EffDecay < 17.0f) d1EffDecay = 17.0f;
   d1Decay = d1EffDecay;
 
-  // Update D1 envelope cache
-  updateD1EnvelopeCache();
+  // Update D1 hold cache
+  updateD1HoldCache();
 
   AudioNoInterrupts();
   d1AmpEnv.hold(d1CachedHoldMs);
@@ -776,9 +776,6 @@ void playSequence() {
 // Advance one step and trigger active drums.
 // Called from main loop context (internal clock path), so safe to call updateLEDs().
 void playSequenceCore() {
-  if (currentStep >= numSteps) {
-    currentStep = numSteps - 1;
-  }
   currentStep = (currentStep + 1) % numSteps;
 
   if (drum1Sequence[currentStep]) {
@@ -1055,9 +1052,7 @@ void updateOtherButtons() {
               activeRail = RAIL_NONE;
               snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
               snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
-              noInterrupts();
-              parameterOverlayStartTick = sysTickMs;
-              interrupts();
+              parameterOverlayStartTick = nowTick;
             }
             // updateLEDs() called inside loadStateFromEEPROM() on success
             break;
@@ -1647,7 +1642,10 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 24:  // Master Delay Time (quantized to tempo)
       {
-        int ratioIdx = delayRatioFromKnob(knobValue, bpm);
+        // Use external BPM when synced, fall back to internal knob BPM
+        float activeBpm = (transportState == RUN_EXT && extBpmDisplay > 0.0f)
+                          ? extBpmDisplay : bpm;
+        int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
         snprintf(displayParameter1, sizeof(displayParameter1), "DELAY TIME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", ratioLabels[ratioIdx]);
         break;
@@ -1843,6 +1841,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
             }
             if (bassLineKnobPickedUp) {
               bassLineNote[bassLineHeldStep] = note;
+              patternDirty = true;
             }
             // Don't change d1BaseFreq — frequency set at playback time
           }
@@ -2204,7 +2203,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (knobValue < 5) {
           d3WfSine.amplitude(0.0f);
           AudioNoInterrupts();
-          d3Mixer.gain(0, 0.45f);  // dry at default
+          d3Mixer.gain(0, 0.70f);  // dry at default (parity with D1/D2)
           d3Mixer.gain(1, 0.0f);   // wavefolder return off
           AudioInterrupts();
           break;
@@ -2223,8 +2222,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float freqHz = 50.0f * expf(freqActive * 2.17f);  // ln(8.74) ≈ 2.17
         d3WfSine.frequency(freqHz);
 
-        // Dry pulls down slightly as drive rises (0.45 → 0.40)
-        float dryGain = 0.45f - 0.05f * ampActive;
+        // Dry pulls down slightly as drive rises (0.70 → 0.62, before loudness comp)
+        float dryGain = 0.70f - 0.08f * ampActive;
         // Wet return ramps up with drive (0.0 → 0.35)
         float wetGain = ampActive * 0.35f;
         // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
@@ -2318,8 +2317,11 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 24:  // Master Delay Time (quantized to tempo)
       {
-        int ratioIdx = delayRatioFromKnob(knobValue, bpm);
-        float msPerBeat = 60000.0f / bpm;
+        // Use external BPM when synced, fall back to internal knob BPM
+        float activeBpm = (transportState == RUN_EXT && extBpmDisplay > 0.0f)
+                          ? extBpmDisplay : bpm;
+        int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
+        float msPerBeat = 60000.0f / activeBpm;
 
         float delayMs = msPerBeat * quantizeRatios[ratioIdx];
         if (delayMs > 1400.0f) delayMs = 1400.0f;
@@ -2678,6 +2680,8 @@ void updateDisplay() {
 
     // SPI push guard — never start a blocking display transfer when audio
     // timing work is pending or imminent. Musical timing always wins.
+    // WARNING: This guard is duplicated — keep in sync with the copy in the
+    // normal display path below (search "SPI push guard" for the other copy).
     bool safeToPush = true;
 
     // Steps waiting: consume them first, never block with pending audio work
@@ -2860,6 +2864,8 @@ void updateDisplay() {
 
   // SPI push guard — never start a blocking display transfer when audio
   // timing work is pending or imminent. Musical timing always wins.
+  // WARNING: This guard is duplicated — keep in sync with the copy in the
+  // PPQN mode display path above (search "SPI push guard" for the other copy).
   bool safeToPush = true;
 
   // Steps waiting: consume them first, never block with pending audio work
