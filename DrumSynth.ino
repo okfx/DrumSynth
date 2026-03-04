@@ -117,10 +117,12 @@ IntervalTimer stepTimer;
 volatile uint32_t sysTickMs = 0;  // Written by sysTickISR, read by main loop
 
 // tempo
-// Main-loop only — not accessed from any ISR. rearmStepTimer() is only
+// bpm: main-loop only — not accessed from any ISR. rearmStepTimer() is only
 // called from setTransport() and setup(), both main-loop context.
 float bpm = 120.0f;
-uint8_t currentStep = 0;  // Main loop only (playSequenceCore)
+// currentStep: ISR-written (stepISR, externalClockISR, subdivTimerCallback),
+// main loop reads. See concurrency contract in ext_sync.h.
+volatile uint8_t currentStep = 0;
 
 // transport — three states: internal clock, external clock, or stopped
 enum TransportState : uint8_t {
@@ -372,10 +374,10 @@ void updateLEDs();
 void updateDisplay();
 void selectSequence(int index);
 void playSequence();
-void playSequenceCore();
+void playSequenceCore(uint8_t step);
 void triggerD1();
 void triggerD2();
-void triggerD3();
+void triggerD3(uint8_t step);
 inline int readKnobRaw(byte idx);
 inline void updateParameterDisplay(byte idx, int knobValue);
 inline void applyKnobToEngine(byte idx, int knobValue);
@@ -763,50 +765,51 @@ void setTransport(TransportState s) {
 // sequencing and triggers
 
 void playSequence() {
-  // pendingStepCount is uint8_t (atomic on ARM), but read-and-clear
-  // must be done atomically to avoid losing a count
+  // Snapshot pendingStepCount and currentStep atomically.
+  // ISR advances currentStep and increments pendingStepCount together;
+  // reading both inside noInterrupts ensures a consistent snapshot.
   uint8_t toDo;
+  uint8_t targetStep;
   noInterrupts();
   toDo = pendingStepCount;
   pendingStepCount = 0;
+  targetStep = currentStep;
   interrupts();
 
   if (toDo == 0) return;
 
   // During ext sync with 2 accumulated steps (common at ppqn=2 if the main
   // loop was briefly blocked), fire both to preserve rhythmic density.
+  // ISR already advanced currentStep twice, so targetStep is the second step.
   // For 3+ steps or internal clock, skip ahead — a missing step is less
   // noticeable than an off-beat one.
   if (toDo == 2 && transportState == RUN_EXT) {
-    playSequenceCore();  // fire first step
-    playSequenceCore();  // fire second step
-    return;
+    uint8_t firstStep = (targetStep - 1 + numSteps) % numSteps;
+    playSequenceCore(firstStep);   // fire first step
+    playSequenceCore(targetStep);  // fire second step
+  } else {
+    // Single step or skip-ahead — fire only the latest step.
+    // ISR already advanced currentStep past any skipped steps.
+    playSequenceCore(targetStep);
   }
 
-  if (toDo > 1) {
-    currentStep = (currentStep + toDo - 1) % numSteps;
-  }
-
-  playSequenceCore();
+  updateLEDs();
 }
 
-// Advance one step and trigger active drums.
-// Called from main loop context (internal clock path), so safe to call updateLEDs().
-void playSequenceCore() {
-  currentStep = (currentStep + 1) % numSteps;
-
-  if (drum1Sequence[currentStep]) {
+// Trigger active drums for a specific step.
+// Step advancement happens in ISR (stepISR / externalClockISR / subdivTimerCallback),
+// so this function only fires audio — no step counter mutation.
+// Called from main loop context via playSequence().
+void playSequenceCore(uint8_t step) {
+  if (drum1Sequence[step]) {
     if (bassLineModeActive) {
-      d1BaseFreq = bassLineFreq(bassLineNote[currentStep]);
+      d1BaseFreq = bassLineFreq(bassLineNote[step]);
       applyD1Freq();
     }
     triggerD1();
   }
-  if (drum2Sequence[currentStep]) triggerD2();
-  if (drum3Sequence[currentStep]) triggerD3();
-
-  // Update LEDs — safe in main-loop context (SPI not safe from ISR)
-  updateLEDs();
+  if (drum2Sequence[step]) triggerD2();
+  if (drum3Sequence[step]) triggerD3(step);
 }
 
 static constexpr uint32_t MIN_RETRIGGER_US = 2000;  // 2ms — skip noteOff if retriggered faster
@@ -867,7 +870,7 @@ void triggerD2() {
 
 // Trigger D3 (hi-hat) — called from main loop via playSequenceCore().
 // Applies accent pattern if active, handles retrigger guard.
-void triggerD3() {
+void triggerD3(uint8_t step) {
   uint32_t now = micros();
   bool skipNoteOff = (now - lastD3TriggerUs) < MIN_RETRIGGER_US;
   lastD3TriggerUs = now;
@@ -875,7 +878,7 @@ void triggerD3() {
   // Use cached decay and accent mask (updated by applyChokeToDecays / accent knob)
   float applyDecay = d3CachedDecayMs;
 
-  if (d3AccentMask && ((d3AccentMask >> (15 - (currentStep & 15))) & 1)) {
+  if (d3AccentMask && ((d3AccentMask >> (15 - (step & 15))) & 1)) {
     applyDecay *= D3_ACCENT_FACTOR;
   }
 
@@ -1021,7 +1024,7 @@ void updateOtherButtons() {
               sequencePlaying = true;
 
               // If external clock is already running, go straight to RUN_EXT.
-              // currentStep is 15, so the first pulse advances to step 0.
+              // currentStep is 15, so the first ISR pulse advances to step 0.
               if (useExtClock) {
                 setTransport(RUN_EXT);
                 displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
@@ -1038,9 +1041,14 @@ void updateOtherButtons() {
                   uint32_t snapWindow = snapEma / 2;
                   if (snapWindow > 80000) snapWindow = 80000;
                   if (elapsed < snapWindow) {
+                    // Advance currentStep here (not in ISR — this is a snap,
+                    // not a new pulse). The ISR model expects currentStep to
+                    // already point at the step to play when pendingStepCount > 0.
+                    currentStep = 0;
                     pendingStepCount = 1;
 
-                    // Low-PPQN modes (1 or 2): arm one-shot timer for deferred steps
+                    // Low-PPQN modes (1 or 2): arm one-shot timer for deferred steps.
+                    // subdivTimerCallback will advance currentStep for step B/C/D.
                     if (ppqn < STEPS_PER_BEAT) {
                       uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
                       uint8_t deferred = stepsPerPulse - 1;
@@ -1194,7 +1202,7 @@ void updateLEDs() {
   // Normal pattern display with optional current step indicator
   byte* seq = seqByTrack(activeTrack);
 
-  // Snapshot play state — sequencePlaying is volatile, currentStep is main-loop-only
+  // Snapshot play state — both volatile (ISR-written)
   uint8_t currentStepSnap;
   bool playingSnap;
   noInterrupts();

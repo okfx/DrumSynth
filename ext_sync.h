@@ -4,8 +4,8 @@
 //  External Clock Sync — ext_sync.h
 //
 //  Pulse-driven external clock for drum machine step sequencer.
-//  ISR queues steps via pendingStepCount; main loop fires audio via
-//  playSequence() → playSequenceCore() (same path as internal clock).
+//  ISR advances currentStep at pulse time and queues via pendingStepCount;
+//  main loop fires audio via playSequence() → playSequenceCore().
 //  For ppqn < 4, ISR queues step A on the pulse; a hardware one-shot
 //  timer (subdivTimer) queues deferred steps B/C/D at precise intervals.
 //  Two-part glitch filter (300µs floor + 40% relative EMA).
@@ -33,8 +33,8 @@ extern IntervalTimer stepTimer;
 // Transport control (defined in main .ino)
 extern void setTransport(TransportState s);
 extern void applyMasterGainFromState();
-extern void playSequenceCore();
-extern uint8_t currentStep;
+extern void playSequenceCore(uint8_t step);
+extern volatile uint8_t currentStep;
 
 // ============================================================================
 //  CONCURRENCY CONTRACT
@@ -47,7 +47,7 @@ extern uint8_t currentStep;
 //    extPulseCount             — uint8_t, atomic on ARM
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport() and PLAY handler
 //    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears (checkExtClockLockIn, resetExternalClockState)
-//    pendingStepCount          — uint8_t, atomic on ARM, ISR writes (stepISR, externalClockISR, subdivTimerCallback); main loop clears (playSequence) and sets (PLAY snap-to-pulse)
+//    pendingStepCount          — uint8_t, atomic on ARM, ISR writes (stepISR, externalClockISR, subdivTimerCallback); main loop clears (playSequence) and sets (PLAY snap-to-pulse). Always written alongside currentStep.
 //    subdivIntervalUs          — uint32_t, ISR sets, timer callback reads (chaining)
 //    subdivStepsRemaining      — uint8_t, atomic on ARM, ISR sets, timer callback decrements, main loop resets
 //    subdivTimerDueUs          — uint32_t, ISR sets, timer callback updates, main loop reads (SPI push guard)
@@ -57,9 +57,15 @@ extern uint8_t currentStep;
 //    sequencePlaying           — bool, atomic on ARM, safe for ISR to read
 //    ppqn                      — volatile uint8_t, main loop writes (PPQN mode), ISR reads. Atomic on ARM.
 //
-//  Main loop reads/writes (not shared with ISR):
-//    currentStep, drum1/2/3Sequence[], triggerD1/D2/D3, updateLEDs()
-//    — all accessed only from main loop via playSequence() → playSequenceCore()
+//  ISR writes, main loop reads:
+//    currentStep               — uint8_t, atomic on ARM. ISR advances on each step
+//                                (stepISR, externalClockISR, subdivTimerCallback).
+//                                Main loop reads (playSequence snapshot, LED display).
+//                                PLAY handler writes inside noInterrupts (snap-to-pulse init).
+//
+//  Main loop only (not shared with ISR):
+//    drum1/2/3Sequence[], triggerD1/D2/D3, updateLEDs()
+//    — accessed only from main loop via playSequence() → playSequenceCore()
 //
 //  Rule: On ARM Cortex-M7, naturally-aligned 32-bit loads/stores are
 //  single-instruction atomic (LDR/STR).  We still use noInterrupts()
@@ -113,22 +119,25 @@ float extBpmDisplay = 0.0f;
 // ============================================================================
 
 // Internal clock step generation — only active when in RUN_INT mode.
-// NOTE: pendingStepCount++ is a non-atomic read-modify-write (LDRB/ADD/STRB).
-// This is safe because stepISR, subdivTimerCallback, and externalClockISR all
-// run at the same default NVIC priority (128) on Teensy 4.0, so they cannot
-// preempt each other. If ISR priorities are ever differentiated, protect
-// pendingStepCount with __LDREXB/__STREXB or a shared noInterrupts() guard.
+// Advances currentStep at ISR time so the step boundary is anchored to the
+// timer tick, not the main loop. Main loop fires audio via playSequence().
+// NOTE: pendingStepCount++ and currentStep mutation are non-atomic RMW
+// (LDRB/ADD/STRB). This is safe because stepISR, subdivTimerCallback, and
+// externalClockISR all run at the same default NVIC priority (128) on
+// Teensy 4.0, so they cannot preempt each other. If ISR priorities are ever
+// differentiated, protect these with __LDREXB/__STREXB or noInterrupts().
 void stepISR() {
   if (transportState == RUN_INT && sequencePlaying && !wantSwitchToExt) {
     if (pendingStepCount < 255) {
+      currentStep = (currentStep + 1) % numSteps;
       pendingStepCount++;
     }
   }
 }
 
-// One-shot subdivision timer callback — queues the next deferred step and
-// chains to the following one if more remain. Uses absolute timestamps to
-// avoid drift from callback processing time.
+// One-shot subdivision timer callback — advances currentStep and queues the
+// next deferred step, then chains to the following one if more remain.
+// Uses absolute timestamps to avoid drift from callback processing time.
 void subdivTimerCallback() {
   // Staleness guard: if a new pulse reconfigured the timer after this
   // callback was NVIC-pending, subdivTimerDueUs now points far into the
@@ -141,6 +150,7 @@ void subdivTimerCallback() {
   subdivTimer.end();  // one-shot: stop (this is the valid callback)
 
   if (pendingStepCount < 255) {
+    currentStep = (currentStep + 1) % numSteps;
     pendingStepCount++;
   }
 
@@ -219,10 +229,10 @@ void externalClockISR() {
   // Update previous interval for next lock-in comparison
   prevAcceptedInterval = lastPulseInterval;
 
-  // Step generation — queue steps for main loop via pendingStepCount.
-  // Main loop fires audio via playSequence() → playSequenceCore(), same
-  // path as the internal clock.  This avoids triggering audio from ISR
-  // context (which blocks audio DMA and causes envelope glitches).
+  // Step generation — advance currentStep and queue for main loop via
+  // pendingStepCount. currentStep is advanced HERE at pulse time so the
+  // step boundary is anchored to the external pulse, not the main loop.
+  // Main loop fires audio via playSequence() → playSequenceCore().
   // Fires both in steady-state RUN_EXT and on the locking pulse
   // so the first step aligns with a real pulse, not a synthesized main-loop call.
   bool canStep = (transportState == RUN_EXT || wantSwitchToExt);
@@ -242,6 +252,7 @@ void externalClockISR() {
       }
       extStepAcc = acc;
       if (steps > 0 && pendingStepCount <= (255 - steps)) {
+        currentStep = (currentStep + steps) % numSteps;
         pendingStepCount += steps;
       }
 
@@ -259,7 +270,8 @@ void externalClockISR() {
       subdivTimer.end();
 
       if (pendingStepCount < 255) {
-        pendingStepCount++;  // step A
+        currentStep = (currentStep + 1) % numSteps;  // step A — advance at pulse time
+        pendingStepCount++;
       }
 
       uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
