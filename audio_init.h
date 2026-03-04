@@ -81,10 +81,13 @@ inline void audioInit() {
   d1DC.amplitude(0.25f);
   d1DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
   d1PitchEnv.attack(0.0f);   // Instant onset — pitch sweep snaps, no ramp
+  d1PitchEnv.hold(2.5f);     // Library default — peak pitch sustains briefly before decay
   d1PitchEnv.decay(25.0f);
   d1PitchEnv.sustain(0.0f);
 
   // D1 amplitude envelope
+  d1AmpEnv.attack(1.5f);     // Library default — overridden per-trigger by snap envelope
+  d1AmpEnv.hold(2.5f);       // Library default — overridden per-trigger by snap envelope
   d1AmpEnv.decay(100.0f);
   d1AmpEnv.sustain(0.0f);
 
@@ -155,7 +158,7 @@ inline void audioInit() {
   d2Mixer.gain(0, 0.33f);
   d2Mixer.gain(1, 0.1f);
   d2Mixer.gain(2, 0.1f);
-  d2Mixer.gain(3, 0.12f);
+  d2Mixer.gain(3, 0.09f);
 
   // D2 main filter
   d2Filter.frequency(400.0f);

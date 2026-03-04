@@ -66,6 +66,11 @@ static inline void updateScopeData() {
 // ============================================================================
 
 static inline void drawScopeWaveform(int x, int y, int h) {
+  // Snapshot write index before any reads. Both updateScopeData() and this
+  // function run sequentially in loop(), so the index can't change mid-call,
+  // but snapshotting makes that assumption explicit and safe against refactoring.
+  uint8_t writeSnap = scopeBufferWriteIndex;
+
   // Find min/max for AC auto-scaling (signed signal)
   float minVal = 0.0f, maxVal = 0.0f;
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
@@ -102,9 +107,6 @@ static inline void drawScopeWaveform(int x, int y, int h) {
   } else {
     scopeMidpoint += midDiff * 0.06f;  // very slow release (fall)
   }
-
-  // Snapshot write index so it doesn't change mid-render
-  uint8_t writeSnap = scopeBufferWriteIndex;
 
   // Precompute y-coordinates for all samples, centered on smoothed midpoint.
   // writeSnap+i wraps at most once, so a conditional subtract replaces modulo.

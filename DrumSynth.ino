@@ -42,7 +42,7 @@ bool ppqnModeActive = false;
 uint32_t ppqnModeLastActivityTick = 0;  // Last knob/button interaction
 uint8_t ppqnModeSelection = 2;          // Currently selected value in mode
 static constexpr uint32_t PPQN_MODE_TIMEOUT_MS = 5000;
-static constexpr uint32_t PPQN_LONG_PRESS_MS = 3000;
+static constexpr uint32_t PPQN_LONG_PRESS_MS = 2000;
 
 // PPQN options table
 const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 24, 48, 96};
@@ -50,7 +50,7 @@ constexpr uint8_t PPQN_OPTION_COUNT = 6;
 
 // Bass Line mode state — main-loop only
 bool bassLineModeActive = false;
-static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 3000;
+static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
 
@@ -128,8 +128,7 @@ volatile uint8_t ppqn = PPQN_DEFAULT;
 // Written: main loop (updateDisplay). Read: sysTickISR (watchdog), main loop (frame limiter).
 volatile uint32_t lastFrameDrawTick = 0;
 static constexpr uint32_t OLED_WATCHDOG_TIMEOUT_MS = 750;
-static constexpr uint32_t OLED_FRAME_INTERVAL_MS = 67;       // ~15 fps (normal)
-static constexpr uint32_t OLED_FRAME_INTERVAL_EXT_MS = 250;  // ~4 fps (ext sync — minimizes SPI blocking)
+static constexpr uint32_t OLED_FRAME_INTERVAL_MS = 42;        // ~24 fps
 volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main loop
 
 // Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
@@ -147,7 +146,7 @@ float d3DecayBase = 25.0f;
 // global choke offset in ms
 int chokeOffsetMs = 0;
 
-// D2 noise and clap bases
+// D2 clap effective decay
 float clapEffDecayMs = 120.0f;  // Cached: clap decay (from D2 decay) + chokeOffsetMs, floored at 10
 
 // D3 cached effective decay (updated by applyChokeToDecays / accent knob)
@@ -156,7 +155,6 @@ float d3CachedDecayMs = 25.0f;
 // D1 cached envelope params (updated on knob change / choke change)
 float d1CachedAttackMs = 0.5f;
 float d1CachedHoldMs = 56.25f;   // defaults; see updateD1EnvelopeCache()
-float d1CachedDecayMs = 75.0f;   // defaults; see updateD1EnvelopeCache()
 
 // parameter overlay text — Main-loop only, no ISR access
 char displayParameter1[24] = "";
@@ -191,7 +189,7 @@ static constexpr float quantizeRatios[] = {
   0.75f,        // 3/4  of a quarter = 1/8.
   1.0f,         // 1    quarter      = 1/4
   1.25f,        // 5/4  quarters     = 5/16
-  1.33333333f,  // 4/3  quarters     = 1/3
+  1.33333333f,  // 4/3  quarters     = 1/2T
   1.5f,         // 3/2  quarters     = 1/4.
   2.0f,         // 2    quarters     = 1/2
   2.5f,         // 5/2  quarters     = 5/8
@@ -440,12 +438,11 @@ inline void applyMasterGainFromState() {
   masterAmp.gain(g);
 }
 
-// Recompute cached D1 envelope params from d1Decay and d1AttackAmt.
-// Call whenever either changes (choke offset, decay knob, or attack knob).
+// Recompute cached D1 envelope params. Snap shapes attack and hold;
+// decay uses d1Decay directly. Call on choke, decay, or snap change.
 static inline void updateD1EnvelopeCache() {
-  d1CachedAttackMs = 0.5f + 20.0f * d1AttackAmt;
-  d1CachedHoldMs = d1Decay * 0.75f + 12.0f * d1AttackAmt;
-  d1CachedDecayMs = d1Decay * (1.0f - 0.25f * d1AttackAmt);
+  d1CachedAttackMs = 0.5f + 9.5f * d1AttackAmt;
+  d1CachedHoldMs = d1Decay * 0.75f + 7.0f * d1AttackAmt;
 }
 
 // choke application on all relevant decays
@@ -461,7 +458,7 @@ void applyChokeToDecays() {
 
   AudioNoInterrupts();
   d1AmpEnv.hold(d1CachedHoldMs);
-  d1AmpEnv.decay(d1CachedDecayMs);
+  d1AmpEnv.decay(d1Decay);
   AudioInterrupts();
 
   // D2 main decay using helper
@@ -657,12 +654,8 @@ void loop() {
   if (sequencePlaying) {
     // Both internal and external clock queue steps via pendingStepCount.
     // playSequence() consumes them and fires audio from main loop context.
+    // Subdivision steps (ppqn < 4) are queued by hardware one-shot timer.
     playSequence();
-
-    // For ppqn < 4, fire deferred subdivision steps at the right timestamps.
-    // checkExtSubdivision() fires at most one step per call so each trigger
-    // gets its own audio block. No-op when extSubdivRemaining == 0.
-    checkExtSubdivision();
   }
   // Gain is already applied by knob handlers — no per-loop update needed when stopped
 
@@ -683,17 +676,16 @@ void loop() {
   // before the OLED draw adds 15-25ms of latency.
   if (sequencePlaying) {
     playSequence();
-    checkExtSubdivision();
   }
 
   // ============================================================================
   // OSCILLOSCOPE DATA ACQUISITION
   // ============================================================================
 
-  if (transportState != RUN_EXT) updateScopeData();
+  updateScopeData();
 
   // ============================================================================
-  // THROTTLED OLED REFRESH (15 FPS to reduce lag)
+  // THROTTLED OLED REFRESH (~24 FPS)
   // ============================================================================
 
   uint32_t tickCopy, lastDrawCopy;
@@ -703,10 +695,7 @@ void loop() {
   lastDrawCopy = lastFrameDrawTick;
   interrupts();
 
-  uint32_t frameInterval = (transportState == RUN_EXT)
-                           ? OLED_FRAME_INTERVAL_EXT_MS
-                           : OLED_FRAME_INTERVAL_MS;
-  if ((uint32_t)(tickCopy - lastDrawCopy) >= frameInterval) {
+  if ((uint32_t)(tickCopy - lastDrawCopy) >= OLED_FRAME_INTERVAL_MS) {
     updateDisplay();
   }
 
@@ -718,7 +707,6 @@ void loop() {
   // for the next full loop iteration. At high tempos this prevents audible lag.
   if (sequencePlaying) {
     playSequence();
-    checkExtSubdivision();
   }
 }
 
@@ -727,10 +715,12 @@ void setTransport(TransportState s) {
   if (transportState == s) return;
   transportState = s;
 
-  // When leaving RUN_EXT, clear step accumulator and cancel deferred subdivisions
+  // When leaving RUN_EXT, clear step accumulator and stop subdivision timer
   if (transportState != RUN_EXT) {
     extStepAcc = 0;
-    extSubdivRemaining = 0;
+    subdivTimer.end();
+    subdivStepsRemaining = 0;
+    subdivTimerDueUs = 0;
   }
 
   switch (transportState) {
@@ -741,7 +731,6 @@ void setTransport(TransportState s) {
       stepTimer.end();      // stop internal clock — pulses drive steps now
       // extStepAcc is preserved: the ISR may have already written a valid
       // accumulator value on the locking pulse that triggered this transition.
-      scopeQueue.clear();   // drain stale audio blocks — scope is disabled in ext mode
       break;
     case STOPPED:
     default:
@@ -756,10 +745,8 @@ void playSequence() {
   // pendingStepCount is uint8_t (atomic on ARM), but read-and-clear
   // must be done atomically to avoid losing a count
   uint8_t toDo;
-  uint32_t queuedAt;
   noInterrupts();
   toDo = pendingStepCount;
-  queuedAt = stepQueuedAtUs;
   pendingStepCount = 0;
   interrupts();
 
@@ -771,14 +758,6 @@ void playSequence() {
   // fire the final step normally via playSequenceCore().
   if (toDo > 1) {
     currentStep = (currentStep + toDo - 1) % numSteps;
-  }
-
-  // Lateness guard: if the step was queued more than 10ms ago, it would
-  // sound off-beat. Skip it silently — a missing step is less noticeable
-  // than a late one. Only applies to ext sync (internal clock is authoritative).
-  if (transportState == RUN_EXT && (micros() - queuedAt) > STEP_LATE_THRESHOLD_US) {
-    currentStep = (currentStep + 1) % numSteps;
-    return;
   }
 
   playSequenceCore();
@@ -826,7 +805,7 @@ void triggerD1() {
   AudioNoInterrupts();
   d1AmpEnv.attack(d1CachedAttackMs);
   d1AmpEnv.hold(d1CachedHoldMs);
-  d1AmpEnv.decay(d1CachedDecayMs);
+  d1AmpEnv.decay(d1Decay);
   AudioInterrupts();
 
   if (!skipNoteOff) {
@@ -992,11 +971,13 @@ void updateOtherButtons() {
               // START — reset step position so first emitted step becomes 0.
               // Interrupts stay disabled through setTransport so the ext clock
               // ISR can't queue steps before we finish initializing.
+              subdivTimer.end();
               noInterrupts();
               currentStep = numSteps - 1;
               pendingStepCount = 0;
               extStepAcc = 0;
-              extSubdivRemaining = 0;
+              subdivStepsRemaining = 0;
+              subdivTimerDueUs = 0;
               sequencePlaying = true;
 
               // If external clock is already running, go straight to RUN_EXT.
@@ -1016,17 +997,20 @@ void updateOtherButtons() {
                   if (snapWindow > 80000) snapWindow = 80000;
                   if (elapsed < snapWindow) {
                     pendingStepCount = 1;
-                    stepQueuedAtUs = micros();
 
-                    // Low-PPQN modes (1 or 2): also schedule deferred steps
+                    // Low-PPQN modes (1 or 2): arm one-shot timer for deferred steps
                     if (ppqn < STEPS_PER_BEAT) {
                       uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
                       uint8_t deferred = stepsPerPulse - 1;
-                      if (deferred > 0) {
-                        uint32_t subInterval = lastPulseInterval / stepsPerPulse;
-                        extSubdivIntervalUs = subInterval;
-                        extSubdivNextUs = lastPulseMicros + subInterval;
-                        extSubdivRemaining = deferred;
+                      if (deferred > 0 && snapEma > 0) {
+                        uint32_t subInterval = snapEma / stepsPerPulse;
+                        subdivIntervalUs = subInterval;
+                        subdivStepsRemaining = deferred;
+                        subdivTimerDueUs = lastPulseMicros + subInterval;
+                        uint32_t now = micros();
+                        int32_t delay = (int32_t)(subdivTimerDueUs - now);
+                        if (delay < (int32_t)SUBDIV_MIN_DELAY_US) delay = SUBDIV_MIN_DELAY_US;
+                        subdivTimer.begin(subdivTimerCallback, (uint32_t)delay);
                       }
                     }
                   }
@@ -1082,7 +1066,7 @@ void updateOtherButtons() {
       }
     }
 
-    // Button 7 continuous hold check — enters PPQN mode after 5s while held.
+    // Button 7 continuous hold check — enters PPQN mode after 2s while held.
     // Runs on every scan iteration (not just state change). Uses function-scope
     // btn7PressTick/btn7EnteredPpqn shared with the state-change block above.
     if (i == 7 && btnState[7] && !ppqnModeActive && !btn7EnteredPpqn) {
@@ -1101,7 +1085,7 @@ void updateOtherButtons() {
       }
     }
 
-    // Button 0 continuous hold check — enters/exits bass line mode after 3s while held.
+    // Button 0 continuous hold check — enters/exits bass line mode after 2s while held.
     if (i == 0 && btnState[0] && !btn0EnteredBassLine) {
       if ((uint32_t)(nowTick - btn0PressTick) >= BASSLINE_LONG_PRESS_MS) {
         bassLineModeActive = !bassLineModeActive;
@@ -1144,7 +1128,7 @@ void updateLEDs() {
   // Normal pattern display with optional current step indicator
   byte* seq = seqByTrack(activeTrack);
 
-  // Snapshot current step and play state atomically
+  // Snapshot play state (volatile, ISR-written) with interrupts disabled
   uint8_t currentStepSnap;
   bool playingSnap;
   noInterrupts();
@@ -2545,15 +2529,17 @@ void updateKnobs() {
 
 // UI helpers
 
-// Draw text with 1-pixel black outline for readability on top of the scope waveform.
-// Uses 4 cardinal offsets (N/S/E/W) instead of 8 — half the draws, visually identical at 1px.
+// Draw white text with a 2-pixel black outline for readability over the scope waveform.
 void drawOutlinedText(int x, int y, const char* text) {
-  display.setTextColor(0);        // black outline
-  display.setCursor(x, y - 1); display.print(text);  // N
-  display.setCursor(x, y + 1); display.print(text);  // S
-  display.setCursor(x - 1, y); display.print(text);  // W
-  display.setCursor(x + 1, y); display.print(text);  // E
-  display.setTextColor(1);        // white foreground
+  display.setTextColor(0);                // black
+  for (int dy = -2; dy <= 2; dy++) {      // stamp the text at every offset in a 5x5 grid
+    for (int dx = -2; dx <= 2; dx++) {    // to create a solid black border around each glyph
+      if (dx == 0 && dy == 0) continue;   // skip center (that's where the white text goes)
+      display.setCursor(x + dx, y + dy);
+      display.print(text);
+    }
+  }
+  display.setTextColor(1);
   display.setCursor(x, y);
   display.print(text);
 }
@@ -2648,12 +2634,19 @@ void updateDisplay() {
     display.print("PPQN:");
     display.print(ppqnModeSelection);
 
-    display.display();
+    // Same SPI push guard as the main display path
+    bool safeToPush = true;
+    if (transportState == RUN_EXT && subdivTimerDueUs > 0) {
+      int32_t margin = (int32_t)(subdivTimerDueUs - micros());
+      if (margin < 25000) safeToPush = false;
+    }
 
-    // Update watchdog timestamp so OLED reinit doesn't fire during PPQN mode
-    noInterrupts();
-    lastFrameDrawTick = nowMs;
-    interrupts();
+    if (safeToPush) {
+      display.display();
+      noInterrupts();
+      lastFrameDrawTick = nowMs;
+      interrupts();
+    }
     return;
   }
 
@@ -2765,14 +2758,8 @@ void updateDisplay() {
     display.drawBitmap(116, 4, image_stop_bits, 10, 10, 1);
   }
 
-  // Oscilloscope — skip during ext sync to minimize SPI blocking time
-  if (transportState != RUN_EXT) {
-    drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
-  } else {
-    display.setTextSize(1);
-    display.setCursor(18, 38);
-    display.print("EXTERNAL SYNC");
-  }
+  // Oscilloscope waveform
+  drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
 
   // Parameter overlay at bottom of screen (on top of scope)
   if (overlayActiveNow) {
@@ -2800,13 +2787,25 @@ void updateDisplay() {
   // blocking SPI transfer adds another 15-25ms of latency.
   if (sequencePlaying) {
     playSequence();
-    checkExtSubdivision();
   }
 
-  display.display();
+  // Guard: if the subdivision one-shot timer will fire within 25ms, skip
+  // the SPI push this frame. Audio timing takes priority over display.
+  // The framebuffer survives in RAM and draws next frame.
+  bool safeToPush = true;
+  if (transportState == RUN_EXT && subdivTimerDueUs > 0) {
+    int32_t margin = (int32_t)(subdivTimerDueUs - micros());
+    if (margin < 25000) safeToPush = false;
+  }
 
-  // Update OLED watchdog timestamp only after a successful draw
-  noInterrupts();
-  lastFrameDrawTick = nowMs;
-  interrupts();
+  if (safeToPush) {
+    display.display();
+
+    // Update OLED watchdog timestamp only after a successful push.
+    // On skipped pushes, the stale timestamp causes an immediate retry
+    // next loop iteration — by then step B has fired and the push succeeds.
+    noInterrupts();
+    lastFrameDrawTick = nowMs;
+    interrupts();
+  }
 }

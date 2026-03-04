@@ -17,7 +17,7 @@ A 3-voice drum synthesizer + bass line built on Teensy 4.0.
 
 ## Bass Line Mode
 
-Long-press (3s) the track-select button on D1 to toggle bass line mode. Each step gets its own chromatic pitch (A1–A4). Hold a step button for 300ms to enter note-select, then turn the D1 pitch knob to set that step's note. Bass line notes are saved with patterns to EEPROM.
+Long-press (2s) the track-select button on D1 to toggle bass line mode. Each step gets its own chromatic pitch (A1–A4). Hold a step button for 300ms to enter note-select, then turn the D1 pitch knob to set that step's note. Bass line notes are saved with patterns to EEPROM.
 
 ## Hardware
 
@@ -31,7 +31,7 @@ Long-press (3s) the track-select button on D1 to toggle bass line mode. Each ste
 
 ## External Clock Sync
 
-External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 24, 48, 96) — default 2 PPQN (Korg Volca standard). Long-press the slot button (3s) to enter PPQN selection mode, turn the BPM knob to select, release to confirm.
+External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 24, 48, 96) — default 2 PPQN (Korg Volca standard). Long-press the slot button (2s) to enter PPQN selection mode, turn the BPM knob to select, release to confirm.
 
 **Transport states:** STOPPED, RUN_INT (internal timer), RUN_EXT (external pulses).
 

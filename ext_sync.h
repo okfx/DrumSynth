@@ -6,8 +6,8 @@
 //  Pulse-driven external clock for drum machine step sequencer.
 //  ISR queues steps via pendingStepCount; main loop fires audio via
 //  playSequence() → playSequenceCore() (same path as internal clock).
-//  For ppqn < 4, ISR queues step A on the pulse; main loop fires
-//  deferred steps B/C/D at evenly-spaced timestamps (checkExtSubdivision).
+//  For ppqn < 4, ISR queues step A on the pulse; a hardware one-shot
+//  timer (subdivTimer) queues deferred steps B/C/D at precise intervals.
 //  Two-part glitch filter (300µs floor + 40% relative EMA).
 //  Lock-in requires 3 accepted pulses (2 consecutive similar intervals).
 //
@@ -39,18 +39,18 @@ extern uint8_t currentStep;
 // ============================================================================
 //  CONCURRENCY CONTRACT
 //
-//  ISR writes (externalClockISR / stepISR):
+//  ISR writes (externalClockISR / stepISR / subdivTimerCallback):
 //    lastPulseMicros           — uint32_t, read in main loop with noInterrupts()
-//    lastPulseInterval         — uint32_t, ISR writes, ISR reads (subdivision + lock-in), reset clears
-//    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM display)
+//    lastPulseInterval         — uint32_t, ISR writes, ISR reads (lock-in), reset clears
+//    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM + subdivision)
 //    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
 //    extPulseCount             — uint8_t, atomic on ARM
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport()
 //    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears
-//    pendingStepCount          — uint8_t, atomic on ARM, written by both stepISR and externalClockISR
-//    extSubdivRemaining        — uint8_t, atomic on ARM, ISR sets, main loop decrements
-//    extSubdivNextUs           — uint32_t, ISR sets, main loop reads with noInterrupts()
-//    extSubdivIntervalUs       — uint32_t, ISR sets, main loop reads with noInterrupts()
+//    pendingStepCount          — uint8_t, atomic on ARM, written by stepISR, externalClockISR, and subdivTimerCallback
+//    subdivIntervalUs          — uint32_t, ISR sets, timer callback reads (chaining)
+//    subdivStepsRemaining      — uint8_t, atomic on ARM, ISR sets, timer callback decrements, main loop resets
+//    subdivTimerDueUs          — uint32_t, ISR sets, timer callback updates, main loop reads (SPI push guard)
 //
 //  Main loop writes (read by ISR):
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
@@ -61,18 +61,20 @@ extern uint8_t currentStep;
 //    currentStep, drum1/2/3Sequence[], triggerD1/D2/D3, updateLEDs()
 //    — all accessed only from main loop via playSequence() → playSequenceCore()
 //
-//  Rule: All multi-byte (>1 byte) shared variables must be read/written
-//  inside noInterrupts()/interrupts() blocks.
+//  Rule: On ARM Cortex-M7, naturally-aligned 32-bit loads/stores are
+//  single-instruction atomic (LDR/STR).  We still use noInterrupts()
+//  when reading multiple related variables that must be consistent with
+//  each other (e.g. snapshotting lastPulseMicros + extIntervalEMA together).
 // ============================================================================
 
 // ============================================================================
 //  Constants
 // ============================================================================
 
-static constexpr uint32_t EXT_GLITCH_US = 300;       // Hard floor for glitch rejection (µs)
-static constexpr uint32_t EXT_TIMEOUT_US = 2000000;  // No pulse for 2s → fall back to internal
-static constexpr uint8_t  STEPS_PER_BEAT = 4;        // 16th-note sequencer: 4 steps per quarter note
-static constexpr uint32_t STEP_LATE_THRESHOLD_US = 10000;  // 10ms — skip step instead of playing late
+static constexpr uint32_t EXT_GLITCH_US = 300;            // Hard floor for glitch rejection (µs)
+static constexpr uint32_t EXT_TIMEOUT_US = 2000000;       // No pulse for 2s → fall back to internal
+static constexpr uint8_t  STEPS_PER_BEAT = 4;             // 16th-note sequencer: 4 steps per quarter note
+static constexpr uint32_t SUBDIV_MIN_DELAY_US = 50;       // Floor for one-shot timer to avoid immediate refire
 
 // ============================================================================
 //  State variables — external clock
@@ -89,19 +91,19 @@ volatile uint8_t  extPulseCount = 0;       // Accepted pulse count (3 needed for
 volatile uint8_t  extStepAcc = 0;          // Accumulator for fractional step tracking (ppqn >= 4)
 volatile bool     wantSwitchToExt = false; // ISR→main-loop handoff: ISR sets, main loop clears
 
-// Subdivision scheduling (ppqn < 4): ISR queues step A immediately and sets
-// these for main loop to fire deferred steps B/C/D at the right timestamps.
-// ISR writes all three on each pulse; main loop reads and decrements remaining.
-volatile uint8_t  extSubdivRemaining = 0;  // Deferred steps still to fire (0 = idle)
-volatile uint32_t extSubdivNextUs = 0;     // Timestamp when next deferred step is due
-volatile uint32_t extSubdivIntervalUs = 0; // Time between subdivided steps (µs)
+// Subdivision scheduling (ppqn < 4): ISR queues step A on the pulse, then arms
+// a hardware one-shot timer to queue steps B (and C/D for ppqn=1) at precise
+// intervals. Timer callback chains to the next step if more remain.
+IntervalTimer     subdivTimer;              // One-shot hardware timer for subdivision steps
+volatile uint8_t  subdivStepsRemaining = 0; // Countdown: deferred steps left to fire (0 = idle)
+volatile uint32_t subdivIntervalUs = 0;     // Time between subdivision steps (µs)
+volatile uint32_t subdivTimerDueUs = 0;     // Absolute timestamp when next one-shot fires (0 = not armed)
 
 // ============================================================================
 //  State variables — shared (used by both internal and external clock paths)
 // ============================================================================
 
-volatile uint8_t  pendingStepCount = 0;    // Step queue: both stepISR and externalClockISR write, main loop consumes
-volatile uint32_t stepQueuedAtUs = 0;     // Timestamp of most recent pendingStepCount increment (ISR-written)
+volatile uint8_t  pendingStepCount = 0;    // Step queue: stepISR, externalClockISR, and subdivTimerCallback write; main loop consumes
 
 // BPM display (main loop only, not volatile)
 float extBpmDisplay = 0.0f;
@@ -112,11 +114,43 @@ float extBpmDisplay = 0.0f;
 
 // Internal clock step generation — only active when in RUN_INT mode
 void stepISR() {
-  if (transportState == RUN_INT && sequencePlaying) {
+  if (transportState == RUN_INT && sequencePlaying && !wantSwitchToExt) {
     if (pendingStepCount < 255) {
       pendingStepCount++;
-      stepQueuedAtUs = micros();
     }
+  }
+}
+
+// One-shot subdivision timer callback — queues the next deferred step and
+// chains to the following one if more remain. Uses absolute timestamps to
+// avoid drift from callback processing time.
+void subdivTimerCallback() {
+  // Staleness guard: if a new pulse reconfigured the timer after this
+  // callback was NVIC-pending, subdivTimerDueUs now points far into the
+  // future.  A valid callback fires at or after its due time (early <= 0).
+  // A stale one fires microseconds after the ISR, with early ≈ subInterval.
+  // 1ms threshold gives huge margin — musical subdivisions are always > 10ms.
+  int32_t early = (int32_t)(subdivTimerDueUs - micros());
+  if (early > 1000) return;  // stale — don't call end(), new timer is running
+
+  subdivTimer.end();  // one-shot: stop (this is the valid callback)
+
+  if (pendingStepCount < 255) {
+    pendingStepCount++;
+  }
+
+  subdivStepsRemaining--;
+
+  // Chain: arm next one-shot if more deferred steps remain
+  if (subdivStepsRemaining > 0) {
+    uint32_t nextDue = subdivTimerDueUs + subdivIntervalUs;
+    uint32_t now = micros();
+    int32_t remaining = (int32_t)(nextDue - now);
+    if (remaining < (int32_t)SUBDIV_MIN_DELAY_US) remaining = SUBDIV_MIN_DELAY_US;
+    subdivTimerDueUs = nextDue;
+    subdivTimer.begin(subdivTimerCallback, (uint32_t)remaining);
+  } else {
+    subdivTimerDueUs = 0;
   }
 }
 
@@ -189,38 +223,49 @@ void externalClockISR() {
   bool canStep = (transportState == RUN_EXT || wantSwitchToExt);
   if (canStep && sequencePlaying) {
 
-    if (ppqn >= STEPS_PER_BEAT) {
+    // Snapshot ppqn once so the branch and arithmetic see the same value.
+    // ppqn is volatile (main loop writes it in PPQN mode).
+    uint8_t p = ppqn;
+
+    if (p >= STEPS_PER_BEAT) {
       // --- STANDARD PATH (ppqn >= 4): accumulator, at most 1 step per pulse ---
       uint8_t acc = extStepAcc + STEPS_PER_BEAT;
       uint8_t steps = 0;
-      while (acc >= ppqn) {
-        acc -= ppqn;
+      while (acc >= p) {
+        acc -= p;
         steps++;
       }
       extStepAcc = acc;
       if (steps > 0 && pendingStepCount <= (255 - steps)) {
         pendingStepCount += steps;
-        stepQueuedAtUs = nowUs;
       }
 
     } else {
       // --- SUBDIVISION PATH (ppqn 1 or 2): queue step A now, defer the rest ---
-      // Step A fires immediately via pendingStepCount. Remaining steps fire
-      // at evenly-spaced timestamps checked by the main loop (checkExtSubdivision).
-      //   ppqn=2 → 2 steps/pulse → 1 deferred (step B at pulse + interval/2)
+      // Step A fires immediately via pendingStepCount. Remaining steps are
+      // queued by a hardware one-shot timer at precise intervals.
+      //   ppqn=2 → 2 steps/pulse → 1 deferred (step B)
       //   ppqn=1 → 4 steps/pulse → 3 deferred (steps B, C, D)
+
+      // Cancel any in-flight subdivision chain from the previous pulse.
+      // Prevents stale deferred steps from firing after a tempo change or
+      // jitter event. The staleness guard in subdivTimerCallback handles
+      // the rare case where the old callback is already NVIC-pending.
+      subdivTimer.end();
+
       if (pendingStepCount < 255) {
         pendingStepCount++;  // step A
-        stepQueuedAtUs = nowUs;
       }
 
-      uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
+      uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
       uint8_t deferred = stepsPerPulse - 1;
-      if (deferred > 0 && lastPulseInterval > 0) {
-        uint32_t subInterval = lastPulseInterval / stepsPerPulse;
-        extSubdivIntervalUs = subInterval;
-        extSubdivNextUs = nowUs + subInterval;
-        extSubdivRemaining = deferred;
+      uint32_t ema = extIntervalEMA;
+      if (deferred > 0 && ema > 0) {
+        uint32_t subInterval = ema / stepsPerPulse;
+        subdivIntervalUs = subInterval;
+        subdivStepsRemaining = deferred;
+        subdivTimerDueUs = nowUs + subInterval;
+        subdivTimer.begin(subdivTimerCallback, subInterval);
       }
     }
   }
@@ -243,6 +288,7 @@ void rearmStepTimer() {
 // Clear all external clock state — pulse tracking, subdivision, and display.
 // Called from checkExtClockTimeout() after switching transport away from RUN_EXT.
 static inline void resetExternalClockState() {
+  subdivTimer.end();
   noInterrupts();
   extPulseCount = 0;
   lastPulseMicros = 0;
@@ -250,8 +296,8 @@ static inline void resetExternalClockState() {
   extIntervalEMA = 0;
   prevAcceptedInterval = 0;
   pendingStepCount = 0;
-  stepQueuedAtUs = 0;
-  extSubdivRemaining = 0;
+  subdivStepsRemaining = 0;
+  subdivTimerDueUs = 0;
   wantSwitchToExt = false;
   interrupts();
   extBpmDisplay = 0.0f;
@@ -299,58 +345,6 @@ void checkExtClockTimeout() {
       resetExternalClockState();
     }
   }
-}
-
-// Fire deferred subdivision steps at the right timestamps (ppqn < 4 only).
-// Called from main loop after playSequence(). If multiple steps are overdue
-// (main loop was slow), skip ahead to the latest one — better to drop a step
-// than play it off-beat.
-void checkExtSubdivision() {
-  // Snapshot all subdivision state atomically — the early-return check must
-  // be inside the same noInterrupts block as the reads.  If the ISR fires
-  // between an unguarded remaining==0 check and the snapshot, we'd proceed
-  // with a stale "not zero" decision but read the NEW pulse's values.
-  uint32_t nextDue, subInterval;
-  uint8_t remaining;
-  noInterrupts();
-  remaining = extSubdivRemaining;
-  nextDue = extSubdivNextUs;
-  subInterval = extSubdivIntervalUs;
-  interrupts();
-
-  if (remaining == 0) return;
-
-  // Not yet time for the next deferred step
-  if ((int32_t)(micros() - nextDue) < 0) return;
-
-  // Re-read micros() for accurate overdue counting (first call was just an early-exit check)
-  uint32_t now = micros();
-  uint8_t overdue = 0;
-  uint32_t checkTime = nextDue;
-  while (overdue < remaining && (int32_t)(now - checkTime) >= 0) {
-    overdue++;
-    checkTime += subInterval;
-  }
-
-  // Lateness guard: if the earliest overdue step is more than 10ms late,
-  // skip all overdue steps silently. A missing step is less noticeable
-  // than an off-beat one.
-  uint32_t lateness = now - nextDue;
-  if (lateness > STEP_LATE_THRESHOLD_US) {
-    currentStep = (currentStep + overdue) % numSteps;
-  } else {
-    // Skip past any extra overdue steps (advance currentStep silently).
-    if (overdue > 1) {
-      currentStep = (currentStep + overdue - 1) % numSteps;
-    }
-    // Fire only the latest overdue step
-    playSequenceCore();
-  }
-
-  noInterrupts();
-  extSubdivRemaining -= overdue;
-  extSubdivNextUs = nextDue + (uint32_t)overdue * subInterval;
-  interrupts();
 }
 
 // Check if external clock is running steadily — call from main loop only.

@@ -110,8 +110,8 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   uint8_t expected = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
   if (slot.crc != expected) return false;
 
-  // Load pattern data with interrupts disabled so external clock ISR
-  // can't read a half-copied pattern (~1us on Cortex-M7).
+  // Load pattern data with interrupts disabled so a step trigger
+  // mid-copy can't read a half-loaded pattern (~1us on Cortex-M7).
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
     drum1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
@@ -152,14 +152,14 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   if (addr + sizeof(EepromSlot) > EEPROM.length()) return;
 
   EepromSlot slot = {};
-  if (eepromSeq == 0xFFFF) eepromSeq = 1;  // Wrap to 1, skip 0 (fresh EEPROM sentinel)
-  else eepromSeq++;
+  eepromSeq++;
+  if (eepromSeq == 0 || eepromSeq == 0xFFFF) eepromSeq = 1;  // Skip 0 and 0xFFFF (erased-EEPROM sentinels)
 
   slot.magic = EEPROM_MAGIC;
   slot.seq = eepromSeq;
 
-  // Copy arrays with interrupts disabled so external clock ISR
-  // can't read a half-copied pattern (~1µs on Cortex-M7).
+  // Copy arrays with interrupts disabled so a step trigger
+  // mid-copy can't read a half-saved pattern (~1µs on Cortex-M7).
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
     slot.patterns.drum1[step] = drum1Sequence[step];
