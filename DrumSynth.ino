@@ -16,7 +16,30 @@
 #include "bitmaps.h"
 #include "hw_setup.h"
 
-#define FIRMWARE_VERSION "03.02.26"
+// FIRMWARE_VERSION auto-generated from compile date (__DATE__).
+// Format: "MM.DD.YY" (e.g., "03.04.26" for March 4, 2026).
+// Uses a constexpr lookup to convert the __DATE__ month abbreviation to a 2-digit number.
+// __DATE__ format: "Mar  4 2026" (month abbreviation, day, 4-digit year)
+static constexpr int fwMonth =
+    (__DATE__[0] == 'J' && __DATE__[1] == 'a') ? 1  :
+    (__DATE__[0] == 'F')                        ? 2  :
+    (__DATE__[0] == 'M' && __DATE__[2] == 'r') ? 3  :
+    (__DATE__[0] == 'A' && __DATE__[1] == 'p') ? 4  :
+    (__DATE__[0] == 'M' && __DATE__[2] == 'y') ? 5  :
+    (__DATE__[0] == 'J' && __DATE__[2] == 'n') ? 6  :
+    (__DATE__[0] == 'J' && __DATE__[2] == 'l') ? 7  :
+    (__DATE__[0] == 'A' && __DATE__[1] == 'u') ? 8  :
+    (__DATE__[0] == 'S')                        ? 9  :
+    (__DATE__[0] == 'O')                        ? 10 :
+    (__DATE__[0] == 'N')                        ? 11 :
+    (__DATE__[0] == 'D')                        ? 12 : 0;
+static constexpr int fwDay =
+    (__DATE__[4] == ' ') ? (__DATE__[5] - '0')
+                         : (__DATE__[4] - '0') * 10 + (__DATE__[5] - '0');
+static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
+
+#define FIRMWARE_VERSION_FMT "%02d.%02d.%02d"
+#define FIRMWARE_VERSION_ARGS fwMonth, fwDay, fwYear
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -512,7 +535,9 @@ void setup() {
     display.setCursor(40, 20);
     display.print("VERSION");
     display.setCursor(43, 36);
-    display.print("v" FIRMWARE_VERSION);
+    char versionBuf[12];
+    snprintf(versionBuf, sizeof(versionBuf), "v" FIRMWARE_VERSION_FMT, FIRMWARE_VERSION_ARGS);
+    display.print(versionBuf);
     display.display();
     delay(800);
 
@@ -917,22 +942,34 @@ void updateOtherButtons() {
           if (btn7EnteredPpqn) {
             // Hold already entered PPQN mode — ignore release (don't cycle slot)
           } else if (ppqnModeActive) {
-            // In PPQN mode — confirm and save
-            ppqn = ppqnModeSelection;
-            savePpqnToEEPROM(ppqn);
-            // Playback is already stopped (forced on PPQN mode entry).
-            ppqnModeActive = false;
-            snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
-            snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
-            parameterOverlayStartTick = nowTick;
-            activeRail = RAIL_NONE;
+            // Short press in PPQN mode — cycle to next value
+            uint8_t idx = 0;
+            for (uint8_t j = 0; j < PPQN_OPTION_COUNT; j++) {
+              if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
+            }
+            ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
+            ppqnModeLastActivityTick = nowTick;  // Reset timeout
           } else {
-            // Short press — normal cycle memory slot
+            // Short press — cycle memory slot and auto-load
             activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
             activeRail = RAIL_NONE;
-            snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
-            displayParameter2[0] = 0;
-            parameterOverlayStartTick = nowTick;
+            if (!loadStateFromEEPROM(activeSaveSlot)) {
+              // Empty slot — clear to initialized pattern
+              noInterrupts();
+              for (int step = 0; step < numSteps; step++) {
+                drum1Sequence[step] = 0;
+                drum2Sequence[step] = 0;
+                drum3Sequence[step] = 0;
+                bassLineNote[step] = 36;  // C2 default
+              }
+              interrupts();
+              updateLEDs();
+              patternDirty = false;
+              snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
+              snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+              parameterOverlayStartTick = nowTick;
+            }
+            // loadStateFromEEPROM() sets its own overlay ("PATTERN LOADED") on success
           }
           btn7EnteredPpqn = false;
         }
@@ -1077,22 +1114,40 @@ void updateOtherButtons() {
       }
     }
 
-    // Button 7 continuous hold check — enters PPQN mode after 2s while held.
+    // Button 7 continuous hold check — enters/exits PPQN mode after 2s while held.
     // Runs on every scan iteration (not just state change). Uses function-scope
     // btn7PressTick/btn7EnteredPpqn shared with the state-change block above.
-    if (i == 7 && btnState[7] && !ppqnModeActive && !btn7EnteredPpqn) {
+    if (i == 7 && btnState[7] && !btn7EnteredPpqn) {
       if ((uint32_t)(nowTick - btn7PressTick) >= PPQN_LONG_PRESS_MS) {
-        // Stop playback before entering PPQN mode — changing PPQN mid-playback
-        // would leave the accumulator and subdivision state in an ambiguous state.
-        if (sequencePlaying) {
-          sequencePlaying = false;
-          setTransport(STOPPED);
-          applyMasterGainFromState();
+        if (ppqnModeActive) {
+          // Long-press while in PPQN mode — save and exit
+          ppqn = ppqnModeSelection;
+          savePpqnToEEPROM(ppqn);
+          ppqnModeActive = false;
+          switch (ppqn) {
+            case 2:  snprintf(displayParameter1, sizeof(displayParameter1), "PPQN 2 (VOLCA)"); break;
+            case 4:  snprintf(displayParameter1, sizeof(displayParameter1), "PPQN 4 (VOLCA ALT)"); break;
+            case 24: snprintf(displayParameter1, sizeof(displayParameter1), "PPQN 24 (ROLAND)"); break;
+            default: snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn); break;
+          }
+          snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
+          parameterOverlayStartTick = nowTick;
+          activeRail = RAIL_NONE;
+        } else {
+          // Long-press while not in PPQN mode — enter PPQN mode
+          // Stop playback first — changing PPQN mid-playback would leave the
+          // accumulator and subdivision state in an ambiguous state.
+          if (sequencePlaying) {
+            sequencePlaying = false;
+            setTransport(STOPPED);
+            resetExternalClockState();
+            applyMasterGainFromState();
+          }
+          ppqnModeActive = true;
+          ppqnModeLastActivityTick = nowTick;
+          ppqnModeSelection = ppqn;
         }
-        ppqnModeActive = true;
-        ppqnModeLastActivityTick = nowTick;
-        ppqnModeSelection = ppqn;
-        btn7EnteredPpqn = true;  // Prevent release from cycling slot
+        btn7EnteredPpqn = true;  // Prevent release from cycling slot/PPQN
       }
     }
 
@@ -1664,22 +1719,9 @@ void updateParameterDisplay(byte idx, int knobValue) {
         break;
       }
 
-    case 27:  // Master Tempo (BPM) — inactive during external clock, PPQN selector in mode
+    case 27:  // Master Tempo (BPM) — inactive during external clock or PPQN mode
       {
-        if (ppqnModeActive) {
-          // Map knob to discrete PPQN bins
-          int bin = map(knobValue, 0, 1023, 0, PPQN_OPTION_COUNT - 1);
-          bin = constrain(bin, 0, PPQN_OPTION_COUNT - 1);
-          ppqnModeSelection = PPQN_OPTIONS[bin];
-          uint32_t t;
-          noInterrupts();
-          t = sysTickMs;
-          interrupts();
-          ppqnModeLastActivityTick = t;
-          snprintf(displayParameter1, sizeof(displayParameter1), "PPQN");
-          snprintf(displayParameter2, sizeof(displayParameter2), "%d", ppqnModeSelection);
-          break;
-        }
+        if (ppqnModeActive) break;  // PPQN mode uses button cycling, not knob
 
         if (transportState == RUN_EXT) {
           snprintf(displayParameter1, sizeof(displayParameter1), "EXT MODE");
@@ -2165,9 +2207,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         const float MIX_SCALE = 0.9f;
 
         // Voice level trims (matched so each voice solos at ~0.5 peak)
-        const float TRIM_606  = 2.5f;
+        const float TRIM_606  = 3.0f;
         const float TRIM_FM   = 2.5f;
-        const float TRIM_PERC = 0.45f;
+        const float TRIM_PERC = 0.35f;
 
         float gain606  = 0.0f;
         float gainFM   = 0.0f;
@@ -2501,18 +2543,19 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           returnGain = level;
           fbGain = 0.0f;
         } else if (norm <= 0.97f) {
-          // Upper middle (50%–97%): level locked at peak, feedback ramps 0→0.4.
+          // Upper middle (50%–97%): level locked at peak, feedback ramps 0→0.5.
           // Squared curve for finer control at low feedback values.
           ampGain = PEAK_LEVEL;
           returnGain = PEAK_LEVEL;
           float fbBlend = (norm - 0.50f) / (0.97f - 0.50f);  // 0→1 over 50%–97%
-          fbGain = fbBlend * fbBlend * 0.4f;
+          fbGain = fbBlend * fbBlend * 0.5f;
         } else {
-          // Top 3% (97%–100%): self-oscillation zone. Feedback ramps 0.4→1.0.
+          // Top 3% (97%–100%): gentle oscillation zone. Feedback ramps 0.5→0.65.
+          // Just past the oscillation threshold — sustained but not blowout.
           ampGain = PEAK_LEVEL;
           returnGain = PEAK_LEVEL;
           float oscBlend = (norm - 0.97f) / 0.03f;  // 0→1 over 97%–100%
-          fbGain = 0.4f + oscBlend * 0.6f;   // 0.4→1.0
+          fbGain = 0.5f + oscBlend * 0.15f;   // 0.5→0.65
         }
 
         AudioNoInterrupts();
@@ -2684,16 +2727,25 @@ void updateDisplay() {
     display.setTextWrap(false);
 
     display.setTextSize(1);
-    display.setCursor(20, 0);
-    display.print("CLOCK MODE");
+    display.setCursor(16, 0);
+    display.print("PPQN SELECT");
 
     display.setCursor(4, 16);
-    display.print("TURN BPM TO CHANGE");
+    display.print("TAP:CYCLE HOLD:SAVE");
 
     display.setTextSize(2);
-    display.setCursor(16, 38);
+    display.setCursor(16, 34);
     display.print("PPQN:");
     display.print(ppqnModeSelection);
+
+    // Device label below the PPQN value
+    display.setTextSize(1);
+    display.setCursor(16, 54);
+    switch (ppqnModeSelection) {
+      case 2:  display.print("VOLCA"); break;
+      case 4:  display.print("VOLCA ALT"); break;
+      case 24: display.print("ROLAND"); break;
+    }
 
     // SPI push guard — never start a blocking display transfer when audio
     // timing work is pending or imminent. Musical timing always wins.
