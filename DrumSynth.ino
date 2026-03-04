@@ -142,7 +142,7 @@ int masterLPFBarX = LPF_BAR_MAX;
 
 // drum decays
 float d1DecayBase = 75.0f;
-float d1Decay = 75.0f;  // Effective D1 decay (base + choke). Written by applyChokeToDecays(), read by updateD1EnvelopeCache().
+float d1Decay = 75.0f;  // Effective D1 decay (base + choke). Written by applyChokeToDecays(), read by updateD1HoldCache().
 float d2DecayBase = 75.0f;
 float d3DecayBase = 25.0f;
 
@@ -157,7 +157,7 @@ float d3CachedDecayMs = 25.0f;
 
 // D1 cached envelope params (updated on knob change / choke change)
 float d1CachedAttackMs = 0.5f;
-float d1CachedHoldMs = 56.25f;   // defaults; see updateD1EnvelopeCache()
+float d1CachedHoldMs = 56.25f;   // defaults; see updateD1HoldCache()
 
 // parameter overlay text — Main-loop only, no ISR access
 char displayParameter1[24] = "";
@@ -232,25 +232,25 @@ float d2DelaySend = 0.0f;
 float d3DelaySend = 0.0f;
 
 // accents
-enum AltMode : uint8_t {
-  ALT_OFF = 0,
-  ALT_HALF,
-  ALT_QUARTER,
-  ALT_EIGHTH,
-  ALT_EIGHTHUP,
-  ALT_VARI1,
-  ALT_VARI2,
-  ALT_VARI3,
-  ALT_VARI4,
-  ALT_ALT5,
-  ALT_ALT6,
-  ALT_ALT7,
-  ALT_ALT8,
-  ALT_ALT9
+enum AccentMode : uint8_t {
+  ACCENT_OFF = 0,
+  ACCENT_HALF,
+  ACCENT_QUARTER,
+  ACCENT_EIGHTH,
+  ACCENT_EIGHTHUP,
+  ACCENT_VARI1,
+  ACCENT_VARI2,
+  ACCENT_VARI3,
+  ACCENT_VARI4,
+  ACCENT_PAT5,
+  ACCENT_PAT6,
+  ACCENT_PAT7,
+  ACCENT_PAT8,
+  ACCENT_PAT9
 };
 
-uint8_t d3AltMode = ALT_OFF;
-uint16_t d3AccentMask = 0;  // Cached: accentMaskFromMode(d3AltMode), updated on accent knob change
+uint8_t d3AccentMode = ACCENT_OFF;
+uint16_t d3AccentMask = 0;  // Cached: accentMaskFromMode(d3AccentMode), updated on accent knob change
 
 // Accented hi-hat decay multiplier (2.5x longer decay on accent steps)
 static constexpr float D3_ACCENT_FACTOR = 2.5f;
@@ -260,11 +260,11 @@ static constexpr uint16_t PAT_VARI1 = 0b1000100000101000;
 static constexpr uint16_t PAT_VARI2 = 0b1000100010001000;  // NOTE: intentionally same as QUARTER
 static constexpr uint16_t PAT_VARI3 = 0b1010010010100101;
 static constexpr uint16_t PAT_VARI4 = 0b0111011101110111;
-static constexpr uint16_t PAT_ALT5 = 0b0011001100110011;
-static constexpr uint16_t PAT_ALT6 = 0b0010010010010010;
-static constexpr uint16_t PAT_ALT7 = 0b1001001001001001;
-static constexpr uint16_t PAT_ALT8 = 0b0000111100001111;
-static constexpr uint16_t PAT_ALT9 = 0b1111000011110000;
+static constexpr uint16_t PAT_ACCENT5 = 0b0011001100110011;
+static constexpr uint16_t PAT_ACCENT6 = 0b0010010010010010;
+static constexpr uint16_t PAT_ACCENT7 = 0b1001001001001001;
+static constexpr uint16_t PAT_ACCENT8 = 0b0000111100001111;
+static constexpr uint16_t PAT_ACCENT9 = 0b1111000011110000;
 
 Track activeTrack = TRACK_D1;  // Main-loop only — no ISR access
 
@@ -329,7 +329,7 @@ static inline int chokeOffsetFromKnob(int v) {
 static inline float d3EffectiveBaseDecay() {
   float base = d3DecayBase + chokeOffsetMs;
   if (base < 7.0f) base = 7.0f;
-  if (d3AltMode != ALT_OFF) base += 7.0f;
+  if (d3AccentMode != ACCENT_OFF) base += 7.0f;
   if (base > 250.0f) base = 250.0f;
   return base;
 }
@@ -378,19 +378,19 @@ void drawOutlinedText(int x, int y, const char* text);
 // Bit 15 = step 0, bit 0 = step 15.  Used by isAccent() and LED preview.
 static inline uint16_t accentMaskFromMode(uint8_t mode) {
   switch (mode) {
-    case ALT_HALF: return 0b1000000010000000;     // steps 0 and 8
-    case ALT_QUARTER: return 0b1000100010001000;  // steps 0,4,8,12
-    case ALT_EIGHTH: return 0b1010101010101010;    // even steps (eighth-note pattern)
-    case ALT_EIGHTHUP: return 0b0101010101010101;  // odd steps (eighth-note upbeat)
-    case ALT_VARI1: return PAT_VARI1;
-    case ALT_VARI2: return PAT_VARI2;
-    case ALT_VARI3: return PAT_VARI3;
-    case ALT_VARI4: return PAT_VARI4;
-    case ALT_ALT5: return PAT_ALT5;
-    case ALT_ALT6: return PAT_ALT6;
-    case ALT_ALT7: return PAT_ALT7;
-    case ALT_ALT8: return PAT_ALT8;
-    case ALT_ALT9: return PAT_ALT9;
+    case ACCENT_HALF: return 0b1000000010000000;     // steps 0 and 8
+    case ACCENT_QUARTER: return 0b1000100010001000;  // steps 0,4,8,12
+    case ACCENT_EIGHTH: return 0b1010101010101010;    // even steps (eighth-note pattern)
+    case ACCENT_EIGHTHUP: return 0b0101010101010101;  // odd steps (eighth-note upbeat)
+    case ACCENT_VARI1: return PAT_VARI1;
+    case ACCENT_VARI2: return PAT_VARI2;
+    case ACCENT_VARI3: return PAT_VARI3;
+    case ACCENT_VARI4: return PAT_VARI4;
+    case ACCENT_PAT5: return PAT_ACCENT5;
+    case ACCENT_PAT6: return PAT_ACCENT6;
+    case ACCENT_PAT7: return PAT_ACCENT7;
+    case ACCENT_PAT8: return PAT_ACCENT8;
+    case ACCENT_PAT9: return PAT_ACCENT9;
     default: return 0;
   }
 }
@@ -428,9 +428,11 @@ inline void updateDrumDelayGains() {
     s3 *= scaleFactor;
   }
 
+  AudioNoInterrupts();
   delayMixer.gain(0, s1);
   delayMixer.gain(1, s2);
   delayMixer.gain(2, s3);
+  AudioInterrupts();
 }
 
 inline void applyMasterGainFromState() {
@@ -937,6 +939,10 @@ void updateOtherButtons() {
           } else {
             // Short press — normal cycle memory slot
             activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
+            activeRail = RAIL_NONE;
+            snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
+            displayParameter2[0] = 0;
+            parameterOverlayStartTick = nowTick;
           }
           btn7EnteredPpqn = false;
         }
@@ -1353,24 +1359,24 @@ static inline float bpmFromKnob(int knobValue) {
 static inline uint8_t accentModeFromKnob(int knobValue) {
   const int ACCENT_DEADBAND = 24;
   if (knobValue <= ACCENT_DEADBAND) {
-    return ALT_OFF;
+    return ACCENT_OFF;
   }
   int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 13);
   switch (zone) {
-    case 1: return ALT_HALF;
-    case 2: return ALT_QUARTER;
-    case 3: return ALT_EIGHTH;
-    case 4: return ALT_EIGHTHUP;
-    case 5: return ALT_VARI1;
-    case 6: return ALT_VARI2;
-    case 7: return ALT_VARI3;
-    case 8: return ALT_VARI4;
-    case 9: return ALT_ALT5;
-    case 10: return ALT_ALT6;
-    case 11: return ALT_ALT7;
-    case 12: return ALT_ALT8;
-    case 13: return ALT_ALT9;
-    default: return ALT_ALT9;
+    case 1: return ACCENT_HALF;
+    case 2: return ACCENT_QUARTER;
+    case 3: return ACCENT_EIGHTH;
+    case 4: return ACCENT_EIGHTHUP;
+    case 5: return ACCENT_VARI1;
+    case 6: return ACCENT_VARI2;
+    case 7: return ACCENT_VARI3;
+    case 8: return ACCENT_VARI4;
+    case 9: return ACCENT_PAT5;
+    case 10: return ACCENT_PAT6;
+    case 11: return ACCENT_PAT7;
+    case 12: return ACCENT_PAT8;
+    case 13: return ACCENT_PAT9;
+    default: return ACCENT_PAT9;
   }
 }
 
@@ -1768,15 +1774,19 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 0:  // D1 Drive/Distortion
       {
         if (knobValue < 10) {
+          AudioNoInterrupts();
           d1DCwf.amplitude(0.0f);
           d1Mixer.gain(3, 0.0f);   // wavefolder return off
+          AudioInterrupts();
           break;
         }
         float norm = normKnob(knobValue);
         float wavefolderAmp = 0.1f + norm * 1.023f;
 
+        AudioNoInterrupts();
         d1DCwf.amplitude(wavefolderAmp);
         d1Mixer.gain(3, 0.25f);  // wavefolder return on
+        AudioInterrupts();
         break;
       }
 
@@ -2190,9 +2200,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         AudioNoInterrupts();
-        d3WfMixer.gain(0, gain606  * MIX_SCALE * TRIM_606);
-        d3WfMixer.gain(1, gainFM   * MIX_SCALE * TRIM_FM);
-        d3WfMixer.gain(2, gainPerc * MIX_SCALE * TRIM_PERC);
+        d3VoiceMixer.gain(0, gain606  * MIX_SCALE * TRIM_606);
+        d3VoiceMixer.gain(1, gainFM   * MIX_SCALE * TRIM_FM);
+        d3VoiceMixer.gain(2, gainPerc * MIX_SCALE * TRIM_PERC);
         AudioInterrupts();
         break;
       }
@@ -2273,12 +2283,12 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 22:  // D3 Accent Pattern
       {
-        uint8_t prevMode = d3AltMode;
-        d3AltMode = accentModeFromKnob(knobValue);
-        d3AccentMask = accentMaskFromMode(d3AltMode);
+        uint8_t prevMode = d3AccentMode;
+        d3AccentMode = accentModeFromKnob(knobValue);
+        d3AccentMask = accentMaskFromMode(d3AccentMode);
 
         // Only recompute decay + preview when mode actually changes
-        if (d3AltMode != prevMode) {
+        if (d3AccentMode != prevMode) {
           d3CachedDecayMs = d3EffectiveBaseDecay();
           AudioNoInterrupts();
           d3AmpEnv.decay(d3CachedDecayMs);
@@ -2483,35 +2493,42 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float norm = normKnob(knobValue);
         const float PEAK_LEVEL = 0.79f;
 
+        // Compute all gains before applying as one atomic update
+        float ampGain, returnGain, fbGain;
+
         // Dead band below 2% — delay fully OFF
         if (norm <= 0.02f) {
-          delayAmp.gain(0.0f);
-          masterMixer.gain(2, 0.0f);  // delay return
-          delayMixer.gain(3, 0.0f);   // feedback off
+          ampGain = 0.0f;
+          returnGain = 0.0f;
+          fbGain = 0.0f;
         } else if (norm <= 0.50f) {
           // Bottom half (2%–50%): volume ramp from 0 to peak, no feedback.
           // sqrt curve for smoother audible control in the quiet zone.
           float blend = (norm - 0.02f) / (0.50f - 0.02f);  // 0→1 over 2%–50%
           float level = sqrtf(blend) * PEAK_LEVEL;
-          delayAmp.gain(level);
-          masterMixer.gain(2, level);
-          delayMixer.gain(3, 0.0f);   // no feedback in bottom half
+          ampGain = level;
+          returnGain = level;
+          fbGain = 0.0f;
         } else if (norm <= 0.97f) {
           // Upper middle (50%–97%): level locked at peak, feedback ramps 0→0.4.
           // Squared curve for finer control at low feedback values.
-          delayAmp.gain(PEAK_LEVEL);
-          masterMixer.gain(2, PEAK_LEVEL);
+          ampGain = PEAK_LEVEL;
+          returnGain = PEAK_LEVEL;
           float fbBlend = (norm - 0.50f) / (0.97f - 0.50f);  // 0→1 over 50%–97%
-          float feedback = fbBlend * fbBlend * 0.4f;
-          delayMixer.gain(3, feedback);
+          fbGain = fbBlend * fbBlend * 0.4f;
         } else {
           // Top 3% (97%–100%): self-oscillation zone. Feedback ramps 0.4→1.0.
-          delayAmp.gain(PEAK_LEVEL);
-          masterMixer.gain(2, PEAK_LEVEL);
+          ampGain = PEAK_LEVEL;
+          returnGain = PEAK_LEVEL;
           float oscBlend = (norm - 0.97f) / 0.03f;  // 0→1 over 97%–100%
-          float feedback = 0.4f + oscBlend * 0.6f;   // 0.4→1.0
-          delayMixer.gain(3, feedback);
+          fbGain = 0.4f + oscBlend * 0.6f;   // 0.4→1.0
         }
+
+        AudioNoInterrupts();
+        delayAmp.gain(ampGain);
+        masterMixer.gain(2, returnGain);
+        delayMixer.gain(3, fbGain);
+        AudioInterrupts();
         break;
       }
 
@@ -2822,7 +2839,7 @@ void updateDisplay() {
   display.setCursor(90, 0);
   display.print("MEM");
   display.setCursor(92, 10);
-  display.print(slotSnap);
+  display.print(slotSnap + 1);
 
   // Play/Stop icon
   if (playingSnap) {

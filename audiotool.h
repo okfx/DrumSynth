@@ -66,7 +66,7 @@ AudioAmplifier           drum1Amp;       //xy=1220,60
 AudioMixer4              d1Mixer;        //xy=1220,130
 AudioSynthWaveformSine   d2WfSine;       //xy=1220,380
 AudioAmplifier           clapAmp;        //xy=1220,530
-AudioMixer4              d3WfMixer;      //xy=1220,880
+AudioMixer4              d3VoiceMixer;      //xy=1220,880
 AudioSynthWaveform       d3WfSine;       //xy=1220,950
 AudioFilterStateVariable d1Filter;       //xy=1380,130
 AudioMixer4              snareClapMixer; //xy=1380,310
@@ -143,27 +143,27 @@ AudioConnection          patchCord41(clapDelay2, 0, clapMixer2, 0);
 AudioConnection          patchCord42(clapDelay2, 1, clapMixer2, 1);
 AudioConnection          patchCord43(clapDelay2, 2, clapMixer2, 2);
 AudioConnection          patchCord44(clapDelay2, 3, clapMixer2, 3);
-AudioConnection          patchCord45(drum3, 0, d3WfMixer, 2);
+AudioConnection          patchCord45(drum3, 0, d3VoiceMixer, 2);
 AudioConnection          patchCord46(d1AmpEnv, 0, d1LowPass, 0);
 AudioConnection          patchCord47(d1AmpEnv, 0, wfMixer, 2);
 AudioConnection          patchCord48(d3Filter, 2, d3AmpEnv, 0);
 AudioConnection          patchCord49(d2AmpEnv, 0, d2Mixer, 0);
 AudioConnection          patchCord50(d2AmpEnv, 0, wfMixer, 3);
-AudioConnection          patchCord51(d3AmpEnv, 0, d3WfMixer, 1);
+AudioConnection          patchCord51(d3AmpEnv, 0, d3VoiceMixer, 1);
 AudioConnection          patchCord52(d2Attack, 0, d2AttackFilter, 0);
 AudioConnection          patchCord53(clapMixer1, 0, clapMixerMaster, 0);
 AudioConnection          patchCord54(clapMixer2, 0, clapMixerMaster, 1);
 AudioConnection          patchCord55(d1LowPass, 0, d1Wavefolder, 0);
 AudioConnection          patchCord56(d1LowPass, 0, d1Mixer, 0);
-AudioConnection          patchCord57(d3606AmpEnv, 0, d3WfMixer, 0);
+AudioConnection          patchCord57(d3606AmpEnv, 0, d3VoiceMixer, 0);
 AudioConnection          patchCord58(d2NoiseFilter, 2, d2Mixer, 2);
 AudioConnection          patchCord59(drum2, 0, d2Mixer, 1);
 AudioConnection          patchCord60(d2AttackFilter, 1, d2Mixer, 3);
 AudioConnection          patchCord61(clapMixerMaster, 0, clapMasterFilter, 0);
 AudioConnection          patchCord62(drum1, drum1Amp);
 AudioConnection          patchCord63(d1DCwf, 0, d1Wavefolder, 1);
-AudioConnection          patchCord64(d3WfMixer, 0, d3Wavefolder, 0);
-AudioConnection          patchCord65(d3WfMixer, 0, d3Mixer, 0);
+AudioConnection          patchCord64(d3VoiceMixer, 0, d3Wavefolder, 0);
+AudioConnection          patchCord65(d3VoiceMixer, 0, d3Mixer, 0);
 AudioConnection          patchCord66(d3WfSine, 0, d3Wavefolder, 1);
 AudioConnection          patchCord67(d2Mixer, 0, d2Filter, 0);
 AudioConnection          patchCord68(clapAmp, clapMasterEnv);

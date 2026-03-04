@@ -112,7 +112,12 @@ float extBpmDisplay = 0.0f;
 //  ISR Functions
 // ============================================================================
 
-// Internal clock step generation — only active when in RUN_INT mode
+// Internal clock step generation — only active when in RUN_INT mode.
+// NOTE: pendingStepCount++ is a non-atomic read-modify-write (LDRB/ADD/STRB).
+// This is safe because stepISR, subdivTimerCallback, and externalClockISR all
+// run at the same default NVIC priority (128) on Teensy 4.0, so they cannot
+// preempt each other. If ISR priorities are ever differentiated, protect
+// pendingStepCount with __LDREXB/__STREXB or a shared noInterrupts() guard.
 void stepISR() {
   if (transportState == RUN_INT && sequencePlaying && !wantSwitchToExt) {
     if (pendingStepCount < 255) {
