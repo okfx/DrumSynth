@@ -351,12 +351,12 @@ inline void audioInit() {
   d3WfSine.begin(0.0f, 400.0f, WAVEFORM_SINE);  // fold-depth modulator — off at boot, knob 19 sets amplitude + freq
 
   // D3 wavefolder mixer (606 + FM + PERC)
-  d3WfMixer.gain(0, 0.25f);
-  d3WfMixer.gain(1, 0.25f);
-  d3WfMixer.gain(2, 0.25f);
+  d3WfMixer.gain(0, 0.35f);  // 606 voice — raised for parity with FM
+  d3WfMixer.gain(1, 0.25f);  // FM voice
+  d3WfMixer.gain(2, 0.15f);  // PERC voice — lowered to balance against 606/FM
 
   // D3 final mixer (dry + wavefolder)
-  d3Mixer.gain(0, 0.45f);  // d3WfMixer (dry)
+  d3Mixer.gain(0, 0.70f);  // d3WfMixer (dry) — parity with D1 (0.7) and D2 (0.7)
   d3Mixer.gain(1, 0.0f);   // d3Wavefolder (wet) — off at boot, knob 19 enables
   // inputs 2–3: unconnected
 

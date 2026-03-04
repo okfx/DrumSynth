@@ -1040,8 +1040,26 @@ void updateOtherButtons() {
             break;
 
           case 8:
-            loadStateFromEEPROM(activeSaveSlot);
-            // updateLEDs() already called inside loadStateFromEEPROM()
+            if (!loadStateFromEEPROM(activeSaveSlot)) {
+              // Empty slot — clear to initialized pattern (no steps programmed)
+              noInterrupts();
+              for (int step = 0; step < numSteps; step++) {
+                drum1Sequence[step] = 0;
+                drum2Sequence[step] = 0;
+                drum3Sequence[step] = 0;
+                bassLineNote[step] = 36;  // C2 default
+              }
+              interrupts();
+              updateLEDs();
+              patternDirty = false;
+              activeRail = RAIL_NONE;
+              snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
+              snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+              noInterrupts();
+              parameterOverlayStartTick = sysTickMs;
+              interrupts();
+            }
+            // updateLEDs() called inside loadStateFromEEPROM() on success
             break;
 
           case 9:
@@ -2476,13 +2494,20 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           delayAmp.gain(level);
           masterMixer.gain(2, level);
           delayMixer.gain(3, 0.0f);   // no feedback in bottom half
-        } else {
-          // Top half (50%–100%): level locked at peak, feedback ramps 0→0.4.
+        } else if (norm <= 0.97f) {
+          // Upper middle (50%–97%): level locked at peak, feedback ramps 0→0.4.
           // Squared curve for finer control at low feedback values.
           delayAmp.gain(PEAK_LEVEL);
           masterMixer.gain(2, PEAK_LEVEL);
-          float fbBlend = (norm - 0.50f) / 0.50f;  // 0→1 over 50%–100%
+          float fbBlend = (norm - 0.50f) / (0.97f - 0.50f);  // 0→1 over 50%–97%
           float feedback = fbBlend * fbBlend * 0.4f;
+          delayMixer.gain(3, feedback);
+        } else {
+          // Top 3% (97%–100%): self-oscillation zone. Feedback ramps 0.4→1.0.
+          delayAmp.gain(PEAK_LEVEL);
+          masterMixer.gain(2, PEAK_LEVEL);
+          float oscBlend = (norm - 0.97f) / 0.03f;  // 0→1 over 97%–100%
+          float feedback = 0.4f + oscBlend * 0.6f;   // 0.4→1.0
           delayMixer.gain(3, feedback);
         }
         break;
