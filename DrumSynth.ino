@@ -85,7 +85,7 @@ uint8_t bassLineNote[numSteps] = {
 };
 
 // Display constants
-static constexpr int LPF_BAR_MAX = 78;       // LPF bar shows "OFF" at/above this value
+// (LPF_BAR_MAX removed — LPF bar no longer shown in top bar)
 
 // sequences
 byte drum1Sequence[numSteps] = {
@@ -163,7 +163,7 @@ uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (m
 #include "oscilloscope.h"
 
 // master UI values
-int masterLPFBarX = LPF_BAR_MAX;
+// (masterLPFBarX removed — LPF bar no longer shown in top bar)
 
 // drum decays
 float d1DecayBase = 75.0f;
@@ -173,6 +173,7 @@ float d3DecayBase = 25.0f;
 
 // global choke offset in ms
 int chokeOffsetMs = 0;
+int chokeDisplayPercent = 0;  // -100 to +100, for top bar and overlay display
 
 // D2 clap effective decay
 float clapEffDecayMs = 120.0f;  // Cached: clap decay (from D2 decay) + chokeOffsetMs, floored at 10
@@ -1754,11 +1755,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 29:  // Master Choke Offset
       {
-        float norm = normKnob(knobValue);
-        int percent = (int)((norm - 0.5f) * 200.0f);  // -100 to +100
-
-        snprintf(displayParameter1, sizeof(displayParameter1), "DECAY OFFSET");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", percent);
+        snprintf(displayParameter1, sizeof(displayParameter1), "CHOKE");
+        snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", chokeDisplayPercent);
         break;
       }
 
@@ -2412,7 +2410,6 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 26:  // Master Lowpass Filter
       {
         int freqHz = map(knobValue, 0, 1023, 1000, 7500);
-        masterLPFBarX = map(knobValue, 0, 1023, 70, 78);
         masterLowPass.frequency(freqHz);
         break;
       }
@@ -2448,6 +2445,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 29:  // Master Choke Offset
       {
         chokeOffsetMs = chokeOffsetFromKnob(knobValue);
+        chokeDisplayPercent = (int)((normKnob(knobValue) - 0.5f) * 200.0f);
         applyChokeToDecays();
         break;
       }
@@ -2542,21 +2540,22 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           ampGain = 0.0f;
           returnGain = 0.0f;
           fbGain = 0.0f;
-        } else if (norm <= 0.50f) {
-          // Bottom half (2%–50%): volume ramp from 0 to peak, no feedback.
+        } else if (norm <= 0.25f) {
+          // Early zone (2%–25%, ~7–9 o'clock): volume ramp only, no feedback.
           // sqrt curve for smoother audible control in the quiet zone.
-          float blend = (norm - 0.02f) / (0.50f - 0.02f);  // 0→1 over 2%–50%
+          float blend = (norm - 0.02f) / (0.25f - 0.02f);  // 0→1 over 2%–25%
           float level = sqrtf(blend) * PEAK_LEVEL;
           ampGain = level;
           returnGain = level;
           fbGain = 0.0f;
         } else if (norm <= 0.97f) {
-          // Upper middle (50%–97%): level locked at peak, feedback ramps 0→0.5.
-          // Squared curve for finer control at low feedback values.
+          // Main zone (25%–97%, ~9 o'clock–5 o'clock): level locked at peak,
+          // feedback ramps 0→0.5. Linear curve so echoes are audible by noon
+          // and clearly building through 3 o'clock.
           ampGain = PEAK_LEVEL;
           returnGain = PEAK_LEVEL;
-          float fbBlend = (norm - 0.50f) / (0.97f - 0.50f);  // 0→1 over 50%–97%
-          fbGain = fbBlend * fbBlend * 0.5f;
+          float fbBlend = (norm - 0.25f) / (0.97f - 0.25f);  // 0→1 over 25%–97%
+          fbGain = fbBlend * 0.5f;
         } else {
           // Top 3% (97%–100%): gentle oscillation zone. Feedback ramps 0.5→0.65.
           // Just past the oscillation threshold — sustained but not blowout.
@@ -2809,7 +2808,7 @@ void updateDisplay() {
   // Snapshot all state we will render so a single frame is coherent
   float bpmSnap;
   uint8_t trackSnap;
-  int lpfSnap;
+  int chokeSnap;
   uint8_t slotSnap;
   bool playingSnap;
   uint32_t overlayStartSnap;
@@ -2825,7 +2824,7 @@ void updateDisplay() {
   // Main-loop only — no ISR access, safe without guards
   bpmSnap = bpm;
   trackSnap = activeTrack;
-  lpfSnap = masterLPFBarX;
+  chokeSnap = chokeDisplayPercent;
   slotSnap = activeSaveSlot;
   overlayStartSnap = parameterOverlayStartTick;
   railSnap = activeRail;
@@ -2889,22 +2888,22 @@ void updateDisplay() {
     display.print("D3");
   }
 
-  // LPF
+  // Choke (global decay offset)
   display.setCursor(62, 0);
-  display.print("LPF");
-  if (lpfSnap >= LPF_BAR_MAX) {
-    display.setCursor(62, 10);
-    display.print("OFF");
+  display.print("CHOKE");
+  display.setCursor(62, 10);
+  if (chokeSnap == 0) {
+    display.print("0%");
   } else {
-    int barEnd = lpfSnap;
-    display.drawLine(62, 10, barEnd, 10, 1);
-    display.drawLine(barEnd + 4, 16, barEnd + 1, 11, 1);
+    char chokeBuf[6];
+    snprintf(chokeBuf, sizeof(chokeBuf), "%+d%%", chokeSnap);
+    display.print(chokeBuf);
   }
 
   // Memory slot
-  display.setCursor(90, 0);
+  display.setCursor(94, 0);
   display.print("MEM");
-  display.setCursor(92, 10);
+  display.setCursor(96, 10);
   display.print(slotSnap + 1);
 
   // Play/Stop icon
