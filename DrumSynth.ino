@@ -146,6 +146,16 @@ volatile uint16_t armPulseCountdown = 0;  // Pulses remaining before step 0 fire
 static constexpr uint8_t PPQN_DEFAULT = 2;  // shared with eeprom.h fallback
 volatile uint8_t ppqn = PPQN_DEFAULT;
 
+// Minimum interval between retriggering the same voice (µs).
+// Avoids noteOff() killing a just-triggered envelope when two steps fire
+// in rapid succession (e.g. skip-ahead fires step N then subdivision fires N+1).
+static constexpr uint32_t MIN_RETRIGGER_US = 2000;
+
+// Per-voice retrigger timestamps — main loop only (via playSequenceCore)
+uint32_t lastD1TriggerUs = 0;
+uint32_t lastD2TriggerUs = 0;
+uint32_t lastD3TriggerUs = 0;
+
 // ---------------------------------------------------------------------------
 // Mid-file includes: These headers define functions/ISRs that reference globals
 // declared above. Arduino IDE compiles .ino as a single translation unit, so
@@ -428,7 +438,9 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
   }
 }
 
-// timers and interrupts
+// ============================================================================
+//  Timers and Interrupts
+// ============================================================================
 
 void sysTickISR() {
   uint32_t now = sysTickMs + 1;
@@ -440,7 +452,9 @@ void sysTickISR() {
   }
 }
 
-// audio helpers
+// ============================================================================
+//  Audio Helpers
+// ============================================================================
 
 inline void updateDrumDelayGains() {
   // Decouple delay sends from the drum output levels.
@@ -502,7 +516,7 @@ void applyChokeToDecays() {
   AudioNoInterrupts();
   d2AmpEnv.hold(base2 * 0.5f);
   d2AmpEnv.decay(base2);
-  drum2.length(base2 * 0.25f);
+  d2Body.length(base2 * 0.25f);
   AudioInterrupts();
 
   // D2 clap family — derive clap decay from D2 decay (50–1000ms → 120–275ms)
@@ -808,7 +822,9 @@ void setTransport(TransportState s) {
   }
 }
 
-// sequencing and triggers
+// ============================================================================
+//  Sequencing and Triggers
+// ============================================================================
 
 void playSequence() {
   // Snapshot pendingStepCount and currentStep atomically.
@@ -861,15 +877,6 @@ void playSequenceCore(uint8_t step) {
   if (drum3Sequence[step]) triggerD3(step);
 }
 
-static constexpr uint32_t MIN_RETRIGGER_US = 2000;  // 2ms — skip noteOff if retriggered faster
-
-// Per-voice retrigger timestamps — main loop only (via playSequenceCore).
-// Avoid noteOff() killing a just-triggered envelope when two steps fire
-// in rapid succession (e.g. skip-ahead fires step N then subdivision fires N+1).
-uint32_t lastD1TriggerUs = 0;
-uint32_t lastD2TriggerUs = 0;
-uint32_t lastD3TriggerUs = 0;
-
 void triggerD1() {
   // Retrigger guard — uint32_t reads/writes are atomic on ARM Cortex-M7.
   // Called from main loop context via playSequenceCore().
@@ -912,7 +919,7 @@ void triggerD2() {
   clapAmpEnv1.noteOn();
   clapAmpEnv2.noteOn();
   clapMasterEnv.noteOn();
-  drum2.noteOn();
+  d2Body.noteOn();
   d2ClickTransient.noteOn();
   d2NoiseEnv.noteOn();
 }
@@ -947,8 +954,19 @@ void triggerD3(uint8_t step) {
   d3Perc.noteOn();
 }
 
-// buttons and LEDs
+// ============================================================================
+//  Buttons and LEDs
+// ============================================================================
 
+// Button index → function mapping:
+//   0 = D1 SEQ SELECT   (short press: selectTrack, long hold: toggle bass line mode)
+//   1 = D2 SEQ SELECT
+//   2 = D3 SEQ SELECT
+//   3–5 = unassigned (hardware-present)
+//   6 = PLAY / STOP
+//   7 = MEMORY SLOT     (short press: cycle slot, long hold: enter/save PPQN mode)
+//   8 = LOAD PATTERN
+//   9 = SAVE PATTERN
 void updateOtherButtons() {
   static uint32_t lastDebounceTick[otherButtonsCount] = { 0 };
   static bool btnState[otherButtonsCount] = { false };
@@ -2097,7 +2115,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         AudioNoInterrupts();
         d2WfAmp.gain(driveGain);
         d2WfSineOsc.frequency(freqHz);
-        d2WfLowpass.frequency(lpfFreqHz);
+        d2WfLowPass.frequency(lpfFreqHz);
         d2MasterMixer.gain(0, gainDry);  // dry
         d2MasterMixer.gain(2, gainWet);  // wavefolder return
         AudioInterrupts();
@@ -2638,7 +2656,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
   }
 }
 
-// initialization from hardware
+// ============================================================================
+//  Initialization from Hardware
+// ============================================================================
 
 void initKnobsFromHardware() {
   // Read all knobs, settle filters, apply to engine, and store boot values.
@@ -2694,7 +2714,9 @@ void updateKnobs() {
   knobScanGroup = (knobScanGroup + 1) & 3;  // 0,1,2,3 → cycle through 4 groups
 }
 
-// UI helpers
+// ============================================================================
+//  UI Helpers
+// ============================================================================
 
 // Draw white text with a 2-pixel black outline for readability over the scope waveform.
 // Stamps black text at 8 offsets (4 cardinal + 4 diagonal, 2px each) then white on top.
@@ -2824,7 +2846,10 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
   return true;
 }
 
-// OLED drawing
+// ============================================================================
+//  OLED Drawing
+// ============================================================================
+
 void updateDisplay() {
   // Snapshot time first
   uint32_t nowMs;

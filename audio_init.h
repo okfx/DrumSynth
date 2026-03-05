@@ -104,8 +104,8 @@ inline void audioInit() {
   d1VoiceMixer.gain(3, 0.25f);  // d1Wavefolder (wet)
 
   // D1 filters
-  d1LowPass.frequency(3000.0f);
-  d1LowPass.resonance(2.0f);
+  d1LowPass.frequency(2200.0f);
+  d1LowPass.resonance(1.5f);
 
   d1HighPass.frequency(85.0f);
   d1HighPass.resonance(2.0f);
@@ -149,10 +149,10 @@ inline void audioInit() {
   d2NoiseFilter.frequency(5000.0f);
   d2NoiseFilter.resonance(2.0f);
 
-  // D2 drum transient (snare body click)
-  drum2.frequency(200.0f);
-  drum2.length(15.0f);
-  drum2.pitchMod(0.5f);
+  // D2 body transient
+  d2Body.frequency(200.0f);
+  d2Body.length(15.0f);
+  d2Body.pitchMod(0.5f);
 
   // D2 voice mixer (oscillator + drum transient + noise + attack)
   d2VoiceMixer.gain(0, 0.33f);
@@ -170,8 +170,8 @@ inline void audioInit() {
 
   d2WfAmp.gain(1.0f);
 
-  d2WfLowpass.frequency(3500.0f);
-  d2WfLowpass.resonance(2.0f);
+  d2WfLowPass.frequency(3500.0f);
+  d2WfLowPass.resonance(2.0f);
 
   // D2 reverb
   d2Reverb.damping(1.0f);
@@ -264,7 +264,7 @@ inline void audioInit() {
 
   // --- D3 "606" voice: 6-oscillator square bank ---
 
-  float d3606baseFreq = 350.0f;
+  const float d3606baseFreq = 350.0f;
 
   d3606Osc1.begin(0.5f, d3606baseFreq * 1.00f, WAVEFORM_SQUARE);  // 350.0
   d3606Osc2.begin(0.5f, d3606baseFreq * 1.08f, WAVEFORM_SQUARE);  // 378.0
@@ -278,8 +278,8 @@ inline void audioInit() {
   d3606OscMixer1.gain(2, 0.25f);
   d3606OscMixer1.gain(3, 0.25f);
 
-  d3606OscMixer2.gain(0, 0.25f);  // W5
-  d3606OscMixer2.gain(1, 0.25f);  // W6
+  d3606OscMixer2.gain(0, 0.25f);  // Osc5
+  d3606OscMixer2.gain(1, 0.25f);  // Osc6
   d3606OscMixer2.gain(2, 0.0f);   // unconnected
   d3606OscMixer2.gain(3, 0.0f);   // unconnected
 
@@ -412,8 +412,8 @@ inline void audioInit() {
   delaySendMixer.gain(3, 0.0f);  // feedback tap
 
   // Master filters
-  masterHiPass.resonance(1.5f);
-  masterHiPass.frequency(60.0f);
+  masterHighPass.resonance(1.5f);
+  masterHighPass.frequency(60.0f);
 
   masterLowPass.resonance(0.25f);
   masterLowPass.frequency(7500.0f);
@@ -421,7 +421,9 @@ inline void audioInit() {
   masterBandPass.frequency(1000.0f);  // 1kHz bandpass — intentional coloring of master output
   masterBandPass.resonance(1.0f);
 
-  finalFilter.setHighShelf(0, 3500.0f, 0.5f, 5.0f);  // +5dB air/presence above 3.5kHz
+  // Smiley-face master EQ — boosted lows + highs = relative mid scoop
+  finalFilter.setLowShelf(0, 150.0f, 0.7f, 3.0f);    // +3dB warmth below 150Hz
+  finalFilter.setHighShelf(1, 5000.0f, 0.7f, 2.5f);   // +2.5dB air above 5kHz (gentler than old +5dB to reduce hiss)
 }
 
 #endif

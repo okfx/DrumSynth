@@ -31,7 +31,7 @@ AudioSynthWaveform       d3606Osc6;        //xy=300,1030
 AudioSynthWaveformModulated d1OscSine;             //xy=500,90
 AudioSynthWaveformModulated d1OscSaw;            //xy=500,140
 AudioSynthWaveformModulated d1OscSquare;            //xy=500,190
-AudioSynthSimpleDrum     drum2;          //xy=500,350
+AudioSynthSimpleDrum     d2Body;         //xy=500,350
 AudioFilterStateVariable d2NoiseFilter;  //xy=500,400
 AudioFilterStateVariable d2ClickFilter; //xy=500,460
 AudioFilterStateVariable clapFilter1;    //xy=500,630
@@ -79,7 +79,7 @@ AudioEffectWaveFolder    d2Wavefolder;   //xy=1900,480
 AudioMixer4              d3MasterMixer;        //xy=1900,1130
 AudioAmplifier           d1Amp;          //xy=2100,160
 AudioMixer4              d2MasterMixer;  //xy=2100,380
-AudioFilterStateVariable d2WfLowpass;    //xy=2100,480
+AudioFilterStateVariable d2WfLowPass;    //xy=2100,480
 AudioFilterLadder        d3MasterFilter; //xy=2100,1130
 AudioSynthWaveform       masterWfOscSine;         //xy=2100,1360
 AudioSynthWaveform       masterWfOscSaw;          //xy=2100,1410
@@ -89,7 +89,7 @@ AudioEffectWaveFolder    masterWavefolder;       //xy=2500,1340
 AudioMixer4              masterMixer;    //xy=2700,1340
 AudioMixer4              delaySendMixer;     //xy=2700,1480
 AudioRecordQueue         scopeQueue;     //xy=2900,1280
-AudioFilterStateVariable masterHiPass;   //xy=2900,1340
+AudioFilterStateVariable masterHighPass;   //xy=2900,1340
 AudioAmplifier           delayAmp;       //xy=2900,1430
 AudioEffectDelay         masterDelay;    //xy=2900,1540
 AudioFilterLadder        masterLowPass;  //xy=3100,1340
@@ -157,7 +157,7 @@ AudioConnection          patchCord55(d1LowPass, 0, d1Wavefolder, 0);
 AudioConnection          patchCord56(d1LowPass, 0, d1VoiceMixer, 0);
 AudioConnection          patchCord57(d3606AmpEnv, 0, d3VoiceMixer, 0);
 AudioConnection          patchCord58(d2NoiseFilter, 2, d2VoiceMixer, 2);
-AudioConnection          patchCord59(drum2, 0, d2VoiceMixer, 1);
+AudioConnection          patchCord59(d2Body, 0, d2VoiceMixer, 1);
 AudioConnection          patchCord60(d2ClickFilter, 1, d2VoiceMixer, 3);
 AudioConnection          patchCord61(clapBusMixer, 0, clapMasterFilter, 0);
 AudioConnection          patchCord62(d1Snap, d1SnapAmp);
@@ -181,11 +181,11 @@ AudioConnection          patchCord79(snareClapMixer, 0, d2MasterMixer, 0);
 AudioConnection          patchCord80(snareClapMixer, d2Reverb);
 AudioConnection          patchCord81(snareClapMixer, 0, d2Wavefolder, 0);
 AudioConnection          patchCord82(snareClapMixer, 0, delaySendMixer, 1);
-AudioConnection          patchCord83(d2Wavefolder, 0, d2WfLowpass, 0);
+AudioConnection          patchCord83(d2Wavefolder, 0, d2WfLowPass, 0);
 AudioConnection          patchCord84(d3MasterMixer, 0, d3MasterFilter, 0);
 AudioConnection          patchCord85(d2MasterMixer, 0, drumMixer, 1);
 AudioConnection          patchCord86(d1HighPass, 2, d1EQ, 0);
-AudioConnection          patchCord87(d2WfLowpass, 0, d2MasterMixer, 2);
+AudioConnection          patchCord87(d2WfLowPass, 0, d2MasterMixer, 2);
 AudioConnection          patchCord88(d1EQ, d1Amp);
 AudioConnection          patchCord89(masterWfOscSine, 0, masterWfInputMixer, 0);
 AudioConnection          patchCord90(masterWfOscSaw, 0, masterWfInputMixer, 1);
@@ -197,14 +197,14 @@ AudioConnection          patchCord95(masterWfInputMixer, 0, masterWavefolder, 1)
 AudioConnection          patchCord96(d1Amp, 0, drumMixer, 0);
 AudioConnection          patchCord97(d1Amp, 0, delaySendMixer, 0);
 AudioConnection          patchCord98(masterWavefolder, 0, masterMixer, 1);
-AudioConnection          patchCord99(masterMixer, 0, masterHiPass, 0);
+AudioConnection          patchCord99(masterMixer, 0, masterHighPass, 0);
 AudioConnection          patchCord100(masterMixer, scopeQueue);
 AudioConnection          patchCord101(delayAmp, 0, masterMixer, 2);
 AudioConnection          patchCord102(masterDelay, 0, delayFilter, 0);
 AudioConnection          patchCord103(delayFilter, 0, delaySendMixer, 3);
 AudioConnection          patchCord104(delaySendMixer, masterDelay);
 AudioConnection          patchCord105(delayFilter, 0, delayAmp, 0);
-AudioConnection          patchCord106(masterHiPass, 2, masterLowPass, 0);
+AudioConnection          patchCord106(masterHighPass, 2, masterLowPass, 0);
 AudioConnection          patchCord107(masterLowPass, 0, masterBandPass, 0);
 AudioConnection          patchCord108(masterBandPass, 1, masterAmp, 0);
 AudioConnection          patchCord109(masterAmp, finalFilter);
