@@ -110,8 +110,9 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   uint8_t expected = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
   if (slot.crc != expected) return false;
 
-  // Load pattern data with interrupts disabled so a step trigger
-  // mid-copy can't read a half-loaded pattern (~1us on Cortex-M7).
+  // Load pattern data with interrupts disabled as a safety measure.
+  // Sequences are currently main-loop only (see concurrency contract in
+  // ext_sync.h), so this guard is belt-and-suspenders — not strictly needed.
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
     drum1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
@@ -158,8 +159,9 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   slot.magic = EEPROM_MAGIC;
   slot.seq = eepromSeq;
 
-  // Copy arrays with interrupts disabled so the snapshot is consistent —
-  // a step trigger mid-copy could see a mix of old and new step values (~1µs on Cortex-M7).
+  // Copy arrays with interrupts disabled as a safety measure.
+  // Sequences are currently main-loop only (see concurrency contract in
+  // ext_sync.h), so this guard is belt-and-suspenders — not strictly needed.
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
     slot.patterns.drum1[step] = drum1Sequence[step];

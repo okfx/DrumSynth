@@ -35,7 +35,6 @@ extern IntervalTimer stepTimer;
 // Transport control (defined in main .ino)
 extern void setTransport(TransportState s);
 extern void applyMasterGainFromState();
-extern void playSequenceCore(uint8_t step);
 extern volatile uint8_t currentStep;
 
 // ============================================================================
@@ -44,7 +43,7 @@ extern volatile uint8_t currentStep;
 //  ISR writes (externalClockISR / stepISR / subdivTimerCallback):
 //    lastPulseMicros           — uint32_t, read in main loop with noInterrupts()
 //    lastPulseInterval         — uint32_t, ISR writes, ISR reads (lock-in), reset clears
-//    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM + subdivision)
+//    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM display + subdivision fallback)
 //    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
 //    extPulseCount             — uint8_t, atomic on ARM
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport() and PLAY handler
@@ -180,6 +179,7 @@ void subdivTimerCallback() {
 void externalClockISR() {
   uint32_t nowUs = micros();
   uint32_t prevUs = lastPulseMicros;
+  uint32_t prevInterval = lastPulseInterval;  // Capture before overwrite — subdivision smoothing
 
   // Two-part glitch filter:
   //   1. Hard floor: reject < 300µs (contact bounce / electrical noise)
@@ -216,13 +216,13 @@ void externalClockISR() {
   if (extPulseCount < 255) extPulseCount++;
 
   // Lock-in: switch to RUN_EXT after 2 consecutive similar intervals (3 pulses).
-  // Pulse 1 has no interval. Pulse 2 seeds prevAcceptedInterval but prev==0
-  // so the similarity test can't pass. Pulse 3 is the earliest possible lock-in.
+  // Pulse 1 has no interval. Pulse 2 seeds prevAcceptedInterval. Pulse 3 is the
+  // earliest possible lock-in (first time both prev and curr intervals are valid).
   // Prevents a noise spike + real pulse from false lock-in.
   // Guard: only lock in while playing — prevents auto-switch to RUN_EXT after
   // the user presses STOP. Pulse timing state is preserved across STOP so
-  // isExtClockRunning() returns true immediately on the next PLAY press.
-  if (extPulseCount >= 2 && transportState != RUN_EXT && sequencePlaying) {
+  // the PLAY handler detects ext clock immediately on the next press.
+  if (extPulseCount >= 3 && transportState != RUN_EXT && sequencePlaying) {
     uint32_t prev = prevAcceptedInterval;
     uint32_t curr = lastPulseInterval;
     if (prev > 0 && curr > 0) {
@@ -253,12 +253,17 @@ void externalClockISR() {
     currentStep = 0;
     if (pendingStepCount < 255) pendingStepCount++;
 
-    // Arm subdivision for deferred steps (step B for ppqn=2, B/C/D for ppqn=1)
+    // Arm subdivision for deferred steps (step B for ppqn=2, B/C/D for ppqn=1).
+    // Smoothing logic must match the normal subdivision path below — see
+    // "Subdivision smoothing" comment in the SUBDIVISION PATH section.
     uint8_t p = ppqn;
     if (p < STEPS_PER_BEAT) {
       uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
       uint8_t deferred = stepsPerPulse - 1;
       uint32_t pulseInterval = lastPulseInterval;
+      if (prevInterval > 0 && pulseInterval > 0) {
+        pulseInterval = (pulseInterval + prevInterval) / 2;
+      }
       if (pulseInterval == 0) pulseInterval = extIntervalEMA;
       if (deferred > 0 && pulseInterval > 0) {
         uint32_t subInterval = pulseInterval / stepsPerPulse;
@@ -321,11 +326,18 @@ void externalClockISR() {
 
       uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
       uint8_t deferred = stepsPerPulse - 1;
-      // Use the actual pulse interval for subdivision, not EMA.
-      // Each pulse re-anchors step B to the midpoint of the real window.
-      // EMA lags reality; actual interval gives immediate phase correction.
-      // Fall back to EMA only on the first pulse (no interval yet).
+      // Subdivision smoothing: average current and previous pulse intervals.
+      // Using only lastPulseInterval makes step B jitter-sensitive — any
+      // measurement error shifts the midpoint.  Averaging two intervals
+      // halves the jitter while still tracking tempo changes quickly.
+      // Falls back to raw interval on pulse 2 (no prev yet),
+      // and to EMA on pulse 1 (no interval at all).
+      // NOTE: This smoothing logic is duplicated in the armed count-in path
+      // above — keep both in sync if the algorithm changes.
       uint32_t pulseInterval = lastPulseInterval;
+      if (prevInterval > 0 && pulseInterval > 0) {
+        pulseInterval = (pulseInterval + prevInterval) / 2;
+      }
       if (pulseInterval == 0) pulseInterval = extIntervalEMA;
       if (deferred > 0 && pulseInterval > 0) {
         uint32_t subInterval = pulseInterval / stepsPerPulse;
@@ -355,7 +367,7 @@ void rearmStepTimer() {
 // Clear all external clock state — pulse tracking, subdivision, and display.
 // Called from checkExtClockTimeout() (clock lost) and PPQN mode entry.
 // NOT called from STOP — STOP does a partial reset preserving pulse timing
-// so isExtClockRunning() returns true immediately on the next PLAY press.
+// so the PLAY handler detects ext clock immediately on the next press.
 static inline void resetExternalClockState() {
   subdivTimer.end();
   noInterrupts();
@@ -416,21 +428,6 @@ void checkExtClockTimeout() {
       resetExternalClockState();
     }
   }
-}
-
-// Check if external clock is running steadily — call from main loop only.
-// Returns true if ISR has been tracking a valid clock within the timeout window.
-// Used by the PLAY button to skip RUN_INT and go straight to RUN_EXT,
-// so the first step fires on the next real pulse with no internal-clock gap.
-bool isExtClockRunning() {
-  noInterrupts();
-  uint8_t  count = extPulseCount;
-  uint32_t ema   = extIntervalEMA;
-  uint32_t lastP = lastPulseMicros;
-  interrupts();
-
-  if (count < 2 || ema == 0 || lastP == 0) return false;
-  return (micros() - lastP) < EXT_TIMEOUT_US;
 }
 
 // Derive EXT BPM from the fast EMA (alpha=0.5) — same interval the engine

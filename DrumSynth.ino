@@ -801,6 +801,9 @@ void playSequence() {
   // During ext sync with 2 accumulated steps (common at ppqn=2 if the main
   // loop was briefly blocked), fire both to preserve rhythmic density.
   // ISR already advanced currentStep twice, so targetStep is the second step.
+  // firstStep = targetStep-1 works for both paths that produce toDo==2:
+  //   - Subdivision: step A (+1) then step B (+1) → targetStep = old+2, first = old+1
+  //   - Accumulator (ppqn≥4, steps=2): +2 in one call → targetStep = old+2, first = old+1
   // For 3+ steps or internal clock, skip ahead — a missing step is less
   // noticeable than an off-beat one.
   if (toDo == 2 && transportState == RUN_EXT) {
@@ -1014,7 +1017,7 @@ void updateOtherButtons() {
           case 6:
             if (!sequencePlaying) {
               // Check for recent external sync pulses — even 1 is enough for drop-in.
-              // isExtClockRunning() requires 2+ pulses (for lock-in auto-detect),
+              // Lock-in auto-detect requires 3 pulses (two similar intervals),
               // which is too strict for explicit drop-in. Here we only need to know
               // "has the Volca been sending clock recently?"
               bool hasRecentPulse = false;
@@ -1041,6 +1044,20 @@ void updateOtherButtons() {
                 // step 0 fires on a pulse boundary aligned with the Volca's next step 0.
                 armed = true;
                 armPulseCountdown = (uint16_t)numSteps * ppqn / STEPS_PER_BEAT;
+
+                // Grace window: snap to nearest pulse.
+                // If the user pressed PLAY just after a pulse (within the first
+                // half of a pulse interval), credit that pulse to the count-in.
+                // This forgives slightly-late presses — the user "meant" to press
+                // on that pulse but was a hair late.  Without this, being 30ms
+                // late shifts the entire count-in by one pulse and breaks phase.
+                // Guard: keep at least 1 so the ISR fires step 0 on a real pulse.
+                uint32_t ema = extIntervalEMA;       // safe: interrupts already off
+                uint32_t elapsed = micros() - lastPulseMicros;
+                if (ema > 0 && elapsed < (ema / 2) && armPulseCountdown > 1) {
+                  armPulseCountdown--;
+                }
+
                 sequencePlaying = true;
                 setTransport(RUN_EXT);
               } else {
@@ -1052,8 +1069,8 @@ void updateOtherButtons() {
                 sequencePlaying = true;
                 setTransport(RUN_INT);
               }
-              interrupts();
               displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
+              interrupts();
             } else {
               // STOP — preserve pulse timing state (extPulseCount, lastPulseMicros,
               // extIntervalEMA, prevAcceptedInterval) so ext clock is detected
@@ -2719,6 +2736,50 @@ void renderVoiceRails() {
   }
 }
 
+// SPI push guard — returns true when it's safe to start a blocking OLED
+// transfer (~15-25ms). Returns false if audio timing work is pending or
+// imminent. Musical timing always wins over display updates.
+// Called from updateDisplay() for both the PPQN mode and normal display paths.
+inline bool isSafeToPushOled(uint32_t nowMs) {
+  // Steps waiting: consume them first, never block with pending audio work
+  if (pendingStepCount > 0) return false;
+
+  // Drop-in display block (suppress push for 500ms after PLAY press)
+  if (displayBlockedUntilMs > 0) {
+    if ((int32_t)(displayBlockedUntilMs - nowMs) > 0) {
+      return false;
+    } else {
+      displayBlockedUntilMs = 0;
+    }
+  }
+
+  // Protect steps B and A — read all ISR-shared timing variables atomically
+  if (transportState == RUN_EXT) {
+    uint32_t subdivDue;
+    uint32_t ema;
+    uint32_t lastP;
+    noInterrupts();
+    subdivDue = subdivTimerDueUs;
+    ema = extIntervalEMA;
+    lastP = lastPulseMicros;
+    interrupts();
+
+    // Step B: subdivision timer due within 25ms
+    if (subdivDue > 0) {
+      int32_t remaining = (int32_t)(subdivDue - micros());
+      if (remaining > 0 && remaining < 25000) return false;
+    }
+
+    // Step A: next pulse predicted within 25ms from EMA
+    if (ema > 0 && lastP > 0) {
+      int32_t remaining = (int32_t)((lastP + ema) - micros());
+      if (remaining > 0 && remaining < 25000) return false;
+    }
+  }
+
+  return true;
+}
+
 // OLED drawing
 void updateDisplay() {
   // Snapshot time first
@@ -2738,13 +2799,14 @@ void updateDisplay() {
     // pulsesPerCycle = numSteps * ppqn / STEPS_PER_BEAT
     // pulsesPerBeat = ppqn
     // pulsesCounted = pulsesPerCycle - armPulseCountdown
-    uint16_t pulsesPerCycle = (uint16_t)numSteps * ppqn / STEPS_PER_BEAT;
+    uint8_t p = ppqn;  // Snapshot volatile once for consistent arithmetic
+    uint16_t pulsesPerCycle = (uint16_t)numSteps * p / STEPS_PER_BEAT;
     uint16_t pulsesCounted = pulsesPerCycle - armPulseCountdown;
     uint8_t beatsPerCycle = numSteps / STEPS_PER_BEAT;  // 4
 
     uint8_t currentBeat = 0;
     if (pulsesCounted > 0) {
-      currentBeat = (pulsesCounted - 1) / ppqn + 1;  // 1-based beat number
+      currentBeat = (pulsesCounted - 1) / p + 1;  // 1-based beat number
     }
     // Countdown: show beatsRemaining = beatsPerCycle - currentBeat + 1
     // But before first pulse (currentBeat=0), show beatsPerCycle
@@ -2793,49 +2855,7 @@ void updateDisplay() {
       case 24: display.print("ROLAND"); break;
     }
 
-    // SPI push guard — never start a blocking display transfer when audio
-    // timing work is pending or imminent. Musical timing always wins.
-    // WARNING: This guard is duplicated — keep in sync with the copy in the
-    // normal display path below (search "SPI push guard" for the other copy).
-    bool safeToPush = true;
-
-    // Steps waiting: consume them first, never block with pending audio work
-    if (pendingStepCount > 0) safeToPush = false;
-
-    // Drop-in display block (suppress push for 500ms after PLAY press)
-    if (safeToPush && displayBlockedUntilMs > 0) {
-      if ((int32_t)(displayBlockedUntilMs - nowMs) > 0) {
-        safeToPush = false;
-      } else {
-        displayBlockedUntilMs = 0;
-      }
-    }
-
-    // Protect steps B and A — read all ISR-shared timing variables atomically
-    if (safeToPush && transportState == RUN_EXT) {
-      uint32_t subdivDue;
-      uint32_t ema;
-      uint32_t lastP;
-      noInterrupts();
-      subdivDue = subdivTimerDueUs;
-      ema = extIntervalEMA;
-      lastP = lastPulseMicros;
-      interrupts();
-
-      // Step B: subdivision timer due within 25ms
-      if (subdivDue > 0) {
-        int32_t remaining = (int32_t)(subdivDue - micros());
-        if (remaining > 0 && remaining < 25000) safeToPush = false;
-      }
-
-      // Step A: next pulse predicted within 25ms from EMA
-      if (safeToPush && ema > 0 && lastP > 0) {
-        int32_t remaining = (int32_t)((lastP + ema) - micros());
-        if (remaining > 0 && remaining < 25000) safeToPush = false;
-      }
-    }
-
-    if (safeToPush) {
+    if (isSafeToPushOled(nowMs)) {
       display.display();
       noInterrupts();
       lastFrameDrawTick = nowMs;
@@ -2983,49 +3003,7 @@ void updateDisplay() {
     playSequence();
   }
 
-  // SPI push guard — never start a blocking display transfer when audio
-  // timing work is pending or imminent. Musical timing always wins.
-  // WARNING: This guard is duplicated — keep in sync with the copy in the
-  // PPQN mode display path above (search "SPI push guard" for the other copy).
-  bool safeToPush = true;
-
-  // Steps waiting: consume them first, never block with pending audio work
-  if (pendingStepCount > 0) safeToPush = false;
-
-  // Drop-in display block (suppress push for 500ms after PLAY press)
-  if (safeToPush && displayBlockedUntilMs > 0) {
-    if ((int32_t)(displayBlockedUntilMs - nowMs) > 0) {
-      safeToPush = false;
-    } else {
-      displayBlockedUntilMs = 0;
-    }
-  }
-
-  // Protect steps B and A — read all ISR-shared timing variables atomically
-  if (safeToPush && transportState == RUN_EXT) {
-    uint32_t subdivDue;
-    uint32_t ema;
-    uint32_t lastP;
-    noInterrupts();
-    subdivDue = subdivTimerDueUs;
-    ema = extIntervalEMA;
-    lastP = lastPulseMicros;
-    interrupts();
-
-    // Step B: subdivision timer due within 25ms
-    if (subdivDue > 0) {
-      int32_t remaining = (int32_t)(subdivDue - micros());
-      if (remaining > 0 && remaining < 25000) safeToPush = false;
-    }
-
-    // Step A: next pulse predicted within 25ms from EMA
-    if (safeToPush && ema > 0 && lastP > 0) {
-      int32_t remaining = (int32_t)((lastP + ema) - micros());
-      if (remaining > 0 && remaining < 25000) safeToPush = false;
-    }
-  }
-
-  if (safeToPush) {
+  if (isSafeToPushOled(nowMs)) {
     display.display();
 
     // Update OLED watchdog timestamp only after a successful push.

@@ -31,17 +31,21 @@ Long-press (2s) the track-select button on D1 to toggle bass line mode. Each ste
 
 ## External Clock Sync
 
-External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 8, 24, 48, 96) — default 2 PPQN (Korg Volca standard). Long-press the slot button (2s) to enter PPQN selection mode, turn the BPM knob to select, release to confirm.
+External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 8, 24, 48, 96) — default 2 PPQN (Korg Volca standard). Long-press the slot button (2s) to enter PPQN selection mode, tap to cycle through values, long-press again to save. Labels shown for common values (2 = VOLCA, 4 = VOLCA ALT, 24 = ROLAND). 5-second timeout exits without saving.
 
 **Transport states:** STOPPED, RUN_INT (internal timer), RUN_EXT (external pulses).
 
-**Lock-in:** 3 accepted pulses (2 consecutive intervals within 25%) required to switch from RUN_INT to RUN_EXT. Two-part glitch filter rejects noise (300us hard floor + 40% of EMA relative threshold).
+**Lock-in:** 3 accepted pulses (2 consecutive intervals within 25%) required to auto-switch from RUN_INT to RUN_EXT. Two-part glitch filter rejects noise (300 µs hard floor + 40% of EMA relative threshold).
 
-**Step generation:** ISR queues steps via `pendingStepCount`; main loop fires audio via `playSequence()`. For low PPQN (1 or 2), the ISR queues step A on the pulse and schedules deferred steps B/C/D at evenly-spaced timestamps. If steps are backlogged, skip ahead to the latest — a skipped step is less noticeable than an off-beat step.
+**Step generation:** ISR advances `currentStep` and queues via `pendingStepCount`; main loop fires audio via `playSequence()`. For low PPQN (1 or 2), step A fires on the pulse, then a hardware one-shot timer schedules deferred steps B/C/D at precise intervals. A 2-sample interval average smooths step B timing at low BPM to reduce jitter-induced flamming. Each new pulse cancels and rearms any in-flight subdivision. If steps are backlogged, skip ahead to the latest — a skipped step is less noticeable than an off-beat one.
 
-**Drop-in:** PLAY waits for the next real pulse so the pattern starts in phase with the external clock grid. No step fires until a pulse arrives.
+**Armed count-in:** PLAY with external clock arms a full-cycle count-in (e.g. 8 pulses at 2 PPQN). The OLED shows a 4-3-2-1 beat countdown. Step 0 fires on the aligned pulse boundary. A grace window (50% of pulse interval) forgives slightly-late PLAY presses so the user doesn't end up one pulse out of phase.
 
-**Timeout:** 2 seconds without a pulse falls back to RUN_INT (if playing) or STOPPED, clearing all external clock state.
+**OLED timing guard:** The SH1106 software SPI push takes 15–25 ms. An `isSafeToPushOled()` guard skips the frame if a step is pending, a subdivision timer is due within 25 ms, or the next pulse is predicted within 25 ms. Audio timing always wins over display updates.
+
+**Timeout:** 2 seconds without a pulse falls back to RUN_INT (if playing) or STOPPED. Pulse timing state is preserved across STOP so PLAY detects external clock immediately on the next press.
+
+See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for a comprehensive technical reference covering the full sync system.
 
 ## File Structure
 
@@ -53,6 +57,7 @@ External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 8, 24,
 | `hw_setup.h` | Pin assignments, mux/LED/OLED hardware config |
 | `ext_sync.h` | External clock sync — ISRs, glitch filter, lock-in, subdivision scheduling |
 | `eeprom.h` | Pattern save/load, bass line + PPQN persistence |
+| `EXTERNAL_SYNC_ARCHITECTURE.md` | Self-contained technical reference for external sync review |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
 
