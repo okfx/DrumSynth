@@ -87,9 +87,6 @@ uint8_t bassLineNote[numSteps] = {
   36,36,36,36, 36,36,36,36, 36,36,36,36, 36,36,36,36
 };
 
-// Display constants
-// (LPF_BAR_MAX removed — LPF bar no longer shown in top bar)
-
 // sequences
 byte drum1Sequence[numSteps] = {
   0, 0, 0, 0,
@@ -167,9 +164,6 @@ uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (m
 
 // Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
 #include "oscilloscope.h"
-
-// master UI values
-// (masterLPFBarX removed — LPF bar no longer shown in top bar)
 
 // drum decays
 float d1DecayBase = 75.0f;
@@ -308,13 +302,13 @@ static bool    knobUnlocked[knobCount];    // true once the user has moved this 
 static constexpr int KNOB_UNLOCK_THRESHOLD = 10;  // ADC counts of intentional movement
 
 // helpers
-static inline float mapf(int v, int inMin, int inMax, float outMin, float outMax) {
+static inline float mapf(int inputValue, int inMin, int inMax, float outMin, float outMax) {
   if (inMax == inMin) return outMin;  // guard: avoid divide-by-zero
-  return outMin + (outMax - outMin) * float(v - inMin) / float(inMax - inMin);
+  return outMin + (outMax - outMin) * float(inputValue - inMin) / float(inMax - inMin);
 }
 
-static inline float normKnob(int v) {
-  return float(v) / 1023.0f;
+static inline float normKnob(int rawKnobValue) {
+  return float(rawKnobValue) / 1023.0f;
 }
 
 // D1 osc and pitch
@@ -329,30 +323,28 @@ inline void applyD1Freq() {
 }
 
 // choke mapping helper
-static inline int chokeOffsetFromKnob(int v) {
+static inline int chokeOffsetFromKnob(int knobVal) {
   const int CENTER = 512;
   const int DEADBAND = 80;
   const int MAX_NEG = -40;
   const int MAX_POS = 150;
 
   // Deadband: center ±50 ADC counts → offset 0ms
-  if (v >= CENTER - DEADBAND && v <= CENTER + DEADBAND) {
+  if (knobVal >= CENTER - DEADBAND && knobVal <= CENTER + DEADBAND) {
     return 0;
   }
 
   // Left of deadband: full CCW → -40ms
-  if (v < CENTER - DEADBAND) {
+  if (knobVal < CENTER - DEADBAND) {
     int lowEnd = CENTER - DEADBAND;
-    // t is 0..1 by construction: v is in [0, lowEnd), so numerator ∈ (0, lowEnd]
-    float t = float(lowEnd - v) / float(lowEnd);
-    return (int)(MAX_NEG * t);
+    float blend = float(lowEnd - knobVal) / float(lowEnd);
+    return (int)(MAX_NEG * blend);
   }
 
   // Right of deadband: full CW → +150ms
   int highStart = CENTER + DEADBAND;
-  // t is 0..1 by construction: v is in (highStart, 1023], so numerator ∈ (0, 1023-highStart]
-  float t = float(v - highStart) / float(1023 - highStart);
-  return (int)(MAX_POS * t);
+  float blend = float(knobVal - highStart) / float(1023 - highStart);
+  return (int)(MAX_POS * blend);
 }
 
 // D3 decay helper (includes choke and a small accent boost, capped at 250ms)
@@ -700,11 +692,12 @@ void loop() {
   // ============================================================================
   // SEQUENCER STEP PROCESSING (before input polling to minimize latency)
   // ============================================================================
+  // playSequence() is called at 4 points in loop() (here, post-input,
+  // mid-display-draw, and post-OLED) to minimize latency between an ISR
+  // queuing a step and the main loop firing audio. Each call is a fast
+  // no-op when pendingStepCount == 0.
 
   if (sequencePlaying) {
-    // Both internal and external clock queue steps via pendingStepCount.
-    // playSequence() consumes them and fires audio from main loop context.
-    // Subdivision steps (ppqn < 4) are queued by hardware one-shot timer.
     playSequence();
   }
   // Gain is already applied by knob handlers — no per-loop update needed when stopped
@@ -924,7 +917,8 @@ void triggerD3(uint8_t step) {
   // Use cached decay and accent mask (updated by applyChokeToDecays / accent knob)
   float applyDecay = d3CachedDecayMs;
 
-  if (d3AccentMask && ((d3AccentMask >> (15 - (step & 15))) & 1)) {
+  // step is always 0–15 (uint8_t from currentStep % numSteps)
+  if (d3AccentMask && ((d3AccentMask >> (15 - step)) & 1)) {
     applyDecay *= D3_ACCENT_FACTOR;
   }
 
@@ -1341,7 +1335,7 @@ int readKnobRaw(byte idx) {
     knobMux1.channel(idx);
     delayMicroseconds(KNOB_MUX_SETTLE_US);
     int sum = 0;
-    for (uint8_t s = 0; s < KNOB_OVERSAMPLE; s++) {
+    for (uint8_t oversampleIndex = 0; oversampleIndex < KNOB_OVERSAMPLE; oversampleIndex++) {
       sum += knobMux1.read();
     }
     raw = sum / KNOB_OVERSAMPLE;
@@ -1349,7 +1343,7 @@ int readKnobRaw(byte idx) {
     knobMux2.channel(idx - 16);
     delayMicroseconds(KNOB_MUX_SETTLE_US);
     int sum = 0;
-    for (uint8_t s = 0; s < KNOB_OVERSAMPLE; s++) {
+    for (uint8_t oversampleIndex = 0; oversampleIndex < KNOB_OVERSAMPLE; oversampleIndex++) {
       sum += knobMux2.read();
     }
     raw = sum / KNOB_OVERSAMPLE;
@@ -1394,7 +1388,7 @@ static constexpr uint8_t BASS_NOTE_MIN = 33;
 static constexpr uint8_t BASS_NOTE_MAX = 69;
 
 // Bass line frequency: maps MIDI note (33–69) to Hz via lookup table.
-// Pre-computed A1(33)=55Hz through A4(69)=440Hz. Avoids powf in ISR.
+// Pre-computed A1(33)=55Hz through A4(69)=440Hz.
 static const float BASS_LINE_FREQ[] = {
   // MIDI 33  34       35       36       37       38       39       40
   55.000f, 58.270f, 61.735f, 65.406f, 69.296f, 73.416f, 77.782f, 82.407f,
@@ -1488,9 +1482,9 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
   float maxRatio = 1400.0f / msPerBeat;
 
   int maxIdx = 0;
-  for (int i = 0; i < NUM_RATIOS; i++) {
-    if (quantizeRatios[i] <= maxRatio) {
-      maxIdx = i;
+  for (int ratioIndex = 0; ratioIndex < NUM_RATIOS; ratioIndex++) {
+    if (quantizeRatios[ratioIndex] <= maxRatio) {
+      maxIdx = ratioIndex;
     } else {
       break;
     }
@@ -1501,7 +1495,9 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
 }
 
 // Parameter overlay text — display strings for each knob.
-// KEEP IN SYNC with applyKnobToEngine() below (same case numbers).
+// IMPORTANT: This switch and applyKnobToEngine() below use the same case
+// numbers (0–31). When adding/changing a knob, update BOTH functions.
+// Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
 
 void updateParameterDisplay(byte idx, int knobValue) {
   noInterrupts();
@@ -1688,7 +1684,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = map(knobValue, 0, 1023, 100, 2500) * 0.1f;
+        float decayMs = mapf(knobValue, 0, 1023, 10.0f, 250.0f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DECAY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
         break;
@@ -1852,7 +1848,9 @@ void updateParameterDisplay(byte idx, int knobValue) {
 }
 
 // Apply knob value to audio engine — sets gains, frequencies, envelopes.
-// KEEP IN SYNC with updateParameterDisplay() above (same case numbers).
+// IMPORTANT: This switch and updateParameterDisplay() above use the same case
+// numbers (0–31). When adding/changing a knob, update BOTH functions.
+// Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
 inline void applyKnobToEngine(byte idx, int knobValue) {
   switch (idx) {
 
@@ -2246,7 +2244,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = map(knobValue, 0, 1023, 100, 2500) * 0.1f;
+        float decayMs = mapf(knobValue, 0, 1023, 10.0f, 250.0f);
         d3DecayBase = decayMs;
         applyChokeToDecays();
         break;
@@ -2690,14 +2688,16 @@ void updateKnobs() {
 // UI helpers
 
 // Draw white text with a 2-pixel black outline for readability over the scope waveform.
+// Stamps black text at 8 offsets (4 cardinal + 4 diagonal, 2px each) then white on top.
 void drawOutlinedText(int x, int y, const char* text) {
-  display.setTextColor(0);                // black
-  for (int dy = -2; dy <= 2; dy++) {      // stamp the text at every offset in a 5x5 grid
-    for (int dx = -2; dx <= 2; dx++) {    // to create a solid black border around each glyph
-      if (dx == 0 && dy == 0) continue;   // skip center (that's where the white text goes)
-      display.setCursor(x + dx, y + dy);
-      display.print(text);
-    }
+  static const int8_t offsets[][2] = {
+    {-2, 0}, {2, 0}, {0, -2}, {0, 2},   // cardinal
+    {-2,-2}, {2,-2}, {-2, 2}, {2, 2}     // diagonal
+  };
+  display.setTextColor(0);
+  for (auto& o : offsets) {
+    display.setCursor(x + o[0], y + o[1]);
+    display.print(text);
   }
   display.setTextColor(1);
   display.setCursor(x, y);
@@ -2836,11 +2836,11 @@ void updateDisplay() {
     // pulsesCounted = pulsesPerCycle - armPulseCountdown
     uint8_t p = ppqn;  // Snapshot volatile once for consistent arithmetic
     uint16_t pulsesPerCycle = (uint16_t)numSteps * p / STEPS_PER_BEAT;
-    uint16_t pulsesCounted = pulsesPerCycle - armPulseCountdown;
     uint8_t beatsPerCycle = numSteps / STEPS_PER_BEAT;  // 4
 
     uint8_t currentBeat = 0;
-    if (pulsesCounted > 0) {
+    if (armPulseCountdown < pulsesPerCycle) {
+      uint16_t pulsesCounted = pulsesPerCycle - armPulseCountdown;
       currentBeat = (pulsesCounted - 1) / p + 1;  // 1-based beat number
     }
     // Countdown: show beatsRemaining = beatsPerCycle - currentBeat + 1
@@ -2954,16 +2954,9 @@ void updateDisplay() {
   if (extBpmDisplay > 0.0f) {
     display.print("EXT");
     display.setCursor(0, 10);
-    // Round to nearest 0.5 with hysteresis to prevent display bouncing.
-    // Compare raw BPM vs last displayed value — raw float wanders
-    // continuously so 0.3 BPM deadband works naturally regardless
-    // of grid alignment.
-    static float lastSnapped = 0.0f;
+    // Round to nearest 0.5 BPM for stable readout (quantization provides hysteresis)
     float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
-    if (lastSnapped <= 0.0f || fabsf(extBpmDisplay - lastSnapped) > 0.3f) {
-      lastSnapped = snapped;
-    }
-    display.print(lastSnapped, 1);
+    display.print(snapped, 1);
   } else {
     display.print("BPM");
     display.setCursor(0, 10);
