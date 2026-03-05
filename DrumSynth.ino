@@ -87,9 +87,6 @@ uint8_t bassLineNote[numSteps] = {
   36,36,36,36, 36,36,36,36, 36,36,36,36, 36,36,36,36
 };
 
-// Display constants
-// (LPF_BAR_MAX removed — LPF bar no longer shown in top bar)
-
 // sequences
 byte drum1Sequence[numSteps] = {
   0, 0, 0, 0,
@@ -167,9 +164,6 @@ uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (m
 
 // Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
 #include "oscilloscope.h"
-
-// master UI values
-// (masterLPFBarX removed — LPF bar no longer shown in top bar)
 
 // drum decays
 float d1DecayBase = 75.0f;
@@ -266,19 +260,20 @@ float d3DelaySend = 0.0f;
 // accents
 enum AccentMode : uint8_t {
   ACCENT_OFF = 0,
+  ACCENT_PICKUP,
   ACCENT_HALF,
   ACCENT_QUARTER,
   ACCENT_EIGHTH,
-  ACCENT_EIGHTHUP,
-  ACCENT_PAT1,
-  ACCENT_PAT2,
-  ACCENT_PAT3,
-  ACCENT_PAT4,
-  ACCENT_PAT5,
-  ACCENT_PAT6,
-  ACCENT_PAT7,
-  ACCENT_PAT8,
-  ACCENT_PAT9
+  ACCENT_EIGHTH_UP,
+  ACCENT_PATTERN_1,
+  ACCENT_PATTERN_2,
+  ACCENT_PATTERN_3,
+  ACCENT_PATTERN_4,
+  ACCENT_PATTERN_5,
+  ACCENT_PATTERN_6,
+  ACCENT_PATTERN_7,
+  ACCENT_PATTERN_8,
+  ACCENT_PATTERN_9
 };
 
 uint8_t d3AccentMode = ACCENT_OFF;
@@ -293,6 +288,13 @@ Track activeTrack = TRACK_D1;  // Main-loop only — no ISR access
 // knob smoothing
 ResponsiveAnalogRead* analog[knobCount];
 
+// Knob precision tuning — adjust on hardware (testPotResolution branch)
+static constexpr uint8_t  KNOB_HW_AVG          = 8;     // Hardware ADC averaging (1, 4, 8, 16, 32)
+static constexpr uint8_t  KNOB_MUX_SETTLE_US   = 10;    // Mux settle time (µs) after channel switch (was 5)
+static constexpr uint8_t  KNOB_OVERSAMPLE      = 4;     // Software ADC reads to average (1 = none, 4 = 2× noise reduction)
+static constexpr int      KNOB_ACTIVITY_THRESH  = 10;    // RAR activity threshold (was 36; lower = finer, noisier)
+static constexpr float    KNOB_SNAP_MULTI       = 0.01f; // RAR snap multiplier (default 0.01; higher = faster tracking)
+
 // Boot-lock: suppress knob updates until user intentionally moves a knob.
 // Prevents ADC drift on power-up from changing parameter values.
 static int16_t knobBootValue[knobCount];   // ADC value at boot (after filter settles)
@@ -300,13 +302,13 @@ static bool    knobUnlocked[knobCount];    // true once the user has moved this 
 static constexpr int KNOB_UNLOCK_THRESHOLD = 10;  // ADC counts of intentional movement
 
 // helpers
-static inline float mapf(int v, int inMin, int inMax, float outMin, float outMax) {
+static inline float mapf(int inputValue, int inMin, int inMax, float outMin, float outMax) {
   if (inMax == inMin) return outMin;  // guard: avoid divide-by-zero
-  return outMin + (outMax - outMin) * float(v - inMin) / float(inMax - inMin);
+  return outMin + (outMax - outMin) * float(inputValue - inMin) / float(inMax - inMin);
 }
 
-static inline float normKnob(int v) {
-  return float(v) / 1023.0f;
+static inline float normKnob(int rawKnobValue) {
+  return float(rawKnobValue) / 1023.0f;
 }
 
 // D1 osc and pitch
@@ -321,30 +323,28 @@ inline void applyD1Freq() {
 }
 
 // choke mapping helper
-static inline int chokeOffsetFromKnob(int v) {
+static inline int chokeOffsetFromKnob(int knobVal) {
   const int CENTER = 512;
   const int DEADBAND = 80;
   const int MAX_NEG = -40;
   const int MAX_POS = 150;
 
   // Deadband: center ±50 ADC counts → offset 0ms
-  if (v >= CENTER - DEADBAND && v <= CENTER + DEADBAND) {
+  if (knobVal >= CENTER - DEADBAND && knobVal <= CENTER + DEADBAND) {
     return 0;
   }
 
   // Left of deadband: full CCW → -40ms
-  if (v < CENTER - DEADBAND) {
+  if (knobVal < CENTER - DEADBAND) {
     int lowEnd = CENTER - DEADBAND;
-    // t is 0..1 by construction: v is in [0, lowEnd), so numerator ∈ (0, lowEnd]
-    float t = float(lowEnd - v) / float(lowEnd);
-    return (int)(MAX_NEG * t);
+    float blend = float(lowEnd - knobVal) / float(lowEnd);
+    return (int)(MAX_NEG * blend);
   }
 
   // Right of deadband: full CW → +150ms
   int highStart = CENTER + DEADBAND;
-  // t is 0..1 by construction: v is in (highStart, 1023], so numerator ∈ (0, 1023-highStart]
-  float t = float(v - highStart) / float(1023 - highStart);
-  return (int)(MAX_POS * t);
+  float blend = float(knobVal - highStart) / float(1023 - highStart);
+  return (int)(MAX_POS * blend);
 }
 
 // D3 decay helper (includes choke and a small accent boost, capped at 250ms)
@@ -396,23 +396,24 @@ inline void applyMasterGainFromState();
 void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 
-// Accent pattern bitmask — single source of truth for all 14 accent modes (OFF + 13 patterns).
+// Accent pattern bitmask — single source of truth for all 15 accent modes (OFF + 14 patterns).
 // Bit 15 = step 0, bit 0 = step 15.  Used by isAccent() and LED preview.
 static inline uint16_t accentMaskFromMode(uint8_t mode) {
   switch (mode) {
-    case ACCENT_HALF: return 0b1000000010000000;     // steps 0 and 8
-    case ACCENT_QUARTER: return 0b1000100010001000;  // steps 0,4,8,12
-    case ACCENT_EIGHTH: return 0b1010101010101010;    // even steps (eighth-note pattern)
-    case ACCENT_EIGHTHUP: return 0b0101010101010101;  // odd steps (eighth-note upbeat)
-    case ACCENT_PAT1: return 0b1000100000101000;  // steps 0,4,10,12
-    case ACCENT_PAT2: return 0b0010001000100010;  // offbeat quarter (steps 2,6,10,14)
-    case ACCENT_PAT3: return 0b1010010010100101;  // steps 0,2,5,8,10,13,15
-    case ACCENT_PAT4: return 0b0111011101110111;  // all except downbeats (steps 1-3,5-7,9-11,13-15)
-    case ACCENT_PAT5: return 0b0011001100110011;  // pairs (steps 2-3,6-7,10-11,14-15)
-    case ACCENT_PAT6: return 0b0010010010010010;  // 3-step grouping (steps 2,5,8,11,14)
-    case ACCENT_PAT7: return 0b1001001001001001;  // dotted quarter (steps 0,3,6,9,12,15)
-    case ACCENT_PAT8: return 0b0000111100001111;  // back halves (steps 4-7,12-15)
-    case ACCENT_PAT9: return 0b1111000011110000;  // front halves (steps 0-3,8-11)
+    case ACCENT_PICKUP:    return 0b0000000000000010;  // step 14 only
+    case ACCENT_HALF:      return 0b1000000010000000;  // steps 0, 8
+    case ACCENT_QUARTER:   return 0b1000100010001000;  // steps 0, 4, 8, 12
+    case ACCENT_EIGHTH:    return 0b1010101010101010;  // even steps (downbeat eighths)
+    case ACCENT_EIGHTH_UP: return 0b0101010101010101;  // odd steps (upbeat eighths)
+    case ACCENT_PATTERN_1: return 0b1000100000101000;  // steps 0, 4, 10, 12
+    case ACCENT_PATTERN_2: return 0b0010001000100010;  // offbeat quarter (steps 2, 6, 10, 14)
+    case ACCENT_PATTERN_3: return 0b1010010010100101;  // steps 0, 2, 5, 8, 10, 13, 15
+    case ACCENT_PATTERN_4: return 0b0111011101110111;  // all except downbeats
+    case ACCENT_PATTERN_5: return 0b0011001100110011;  // pairs (steps 2-3, 6-7, 10-11, 14-15)
+    case ACCENT_PATTERN_6: return 0b0010010010010010;  // 3-step grouping (steps 2, 5, 8, 11, 14)
+    case ACCENT_PATTERN_7: return 0b1001001001001001;  // dotted quarter (steps 0, 3, 6, 9, 12, 15)
+    case ACCENT_PATTERN_8: return 0b0000111100001111;  // back halves (steps 4-7, 12-15)
+    case ACCENT_PATTERN_9: return 0b1111000011110000;  // front halves (steps 0-3, 8-11)
     default: return 0;
   }
 }
@@ -587,10 +588,14 @@ void setup() {
   ledShiftReg.setAllLow();
   updateLEDs();
 
+  // Configure ADC hardware averaging — cleaner signal before it reaches software
+  analogReadAveraging(KNOB_HW_AVG);
+
   // Initialize knob smoothing filters
   for (byte i = 0; i < knobCount; i++) {
     analog[i] = new ResponsiveAnalogRead(0, true);
-    analog[i]->setActivityThreshold(36);
+    analog[i]->setActivityThreshold(KNOB_ACTIVITY_THRESH);
+    analog[i]->setSnapMultiplier(KNOB_SNAP_MULTI);
   }
 
   // ============================================================================
@@ -687,11 +692,12 @@ void loop() {
   // ============================================================================
   // SEQUENCER STEP PROCESSING (before input polling to minimize latency)
   // ============================================================================
+  // playSequence() is called at 4 points in loop() (here, post-input,
+  // mid-display-draw, and post-OLED) to minimize latency between an ISR
+  // queuing a step and the main loop firing audio. Each call is a fast
+  // no-op when pendingStepCount == 0.
 
   if (sequencePlaying) {
-    // Both internal and external clock queue steps via pendingStepCount.
-    // playSequence() consumes them and fires audio from main loop context.
-    // Subdivision steps (ppqn < 4) are queued by hardware one-shot timer.
     playSequence();
   }
   // Gain is already applied by knob handlers — no per-loop update needed when stopped
@@ -911,7 +917,8 @@ void triggerD3(uint8_t step) {
   // Use cached decay and accent mask (updated by applyChokeToDecays / accent knob)
   float applyDecay = d3CachedDecayMs;
 
-  if (d3AccentMask && ((d3AccentMask >> (15 - (step & 15))) & 1)) {
+  // step is always 0–15 (uint8_t from currentStep % numSteps)
+  if (d3AccentMask && ((d3AccentMask >> (15 - step)) & 1)) {
     applyDecay *= D3_ACCENT_FACTOR;
   }
 
@@ -1326,12 +1333,20 @@ int readKnobRaw(byte idx) {
   int raw;
   if (idx < 16) {
     knobMux1.channel(idx);
-    delayMicroseconds(5);
-    raw = knobMux1.read();  // no arg — use channel already set above
+    delayMicroseconds(KNOB_MUX_SETTLE_US);
+    int sum = 0;
+    for (uint8_t oversampleIndex = 0; oversampleIndex < KNOB_OVERSAMPLE; oversampleIndex++) {
+      sum += knobMux1.read();
+    }
+    raw = sum / KNOB_OVERSAMPLE;
   } else {
     knobMux2.channel(idx - 16);
-    delayMicroseconds(5);
-    raw = knobMux2.read();  // no arg — use channel already set above
+    delayMicroseconds(KNOB_MUX_SETTLE_US);
+    int sum = 0;
+    for (uint8_t oversampleIndex = 0; oversampleIndex < KNOB_OVERSAMPLE; oversampleIndex++) {
+      sum += knobMux2.read();
+    }
+    raw = sum / KNOB_OVERSAMPLE;
   }
   // Clamp ADC edges: pots rarely hit true 0/1023 — map the reliable
   // range to the full 0-1023 so both extremes are always reachable.
@@ -1373,7 +1388,7 @@ static constexpr uint8_t BASS_NOTE_MIN = 33;
 static constexpr uint8_t BASS_NOTE_MAX = 69;
 
 // Bass line frequency: maps MIDI note (33–69) to Hz via lookup table.
-// Pre-computed A1(33)=55Hz through A4(69)=440Hz. Avoids powf in ISR.
+// Pre-computed A1(33)=55Hz through A4(69)=440Hz.
 static const float BASS_LINE_FREQ[] = {
   // MIDI 33  34       35       36       37       38       39       40
   55.000f, 58.270f, 61.735f, 65.406f, 69.296f, 73.416f, 77.782f, 82.407f,
@@ -1435,28 +1450,29 @@ static inline float bpmFromKnob(int knobValue) {
   return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
 }
 
-// Accent mode from knob position — maps knob to one of 14 accent modes (OFF + 13 patterns)
+// Accent mode from knob position — maps knob to one of 15 accent modes (OFF + 14 patterns)
 static inline uint8_t accentModeFromKnob(int knobValue) {
   const int ACCENT_DEADBAND = 24;
   if (knobValue <= ACCENT_DEADBAND) {
     return ACCENT_OFF;
   }
-  int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 13);
+  int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 14);
   switch (zone) {
-    case 1: return ACCENT_HALF;
-    case 2: return ACCENT_QUARTER;
-    case 3: return ACCENT_EIGHTH;
-    case 4: return ACCENT_EIGHTHUP;
-    case 5: return ACCENT_PAT1;
-    case 6: return ACCENT_PAT2;
-    case 7: return ACCENT_PAT3;
-    case 8: return ACCENT_PAT4;
-    case 9: return ACCENT_PAT5;
-    case 10: return ACCENT_PAT6;
-    case 11: return ACCENT_PAT7;
-    case 12: return ACCENT_PAT8;
-    case 13: return ACCENT_PAT9;
-    default: return ACCENT_PAT9;
+    case 1:  return ACCENT_PICKUP;
+    case 2:  return ACCENT_HALF;
+    case 3:  return ACCENT_QUARTER;
+    case 4:  return ACCENT_EIGHTH;
+    case 5:  return ACCENT_EIGHTH_UP;
+    case 6:  return ACCENT_PATTERN_1;
+    case 7:  return ACCENT_PATTERN_2;
+    case 8:  return ACCENT_PATTERN_3;
+    case 9:  return ACCENT_PATTERN_4;
+    case 10: return ACCENT_PATTERN_5;
+    case 11: return ACCENT_PATTERN_6;
+    case 12: return ACCENT_PATTERN_7;
+    case 13: return ACCENT_PATTERN_8;
+    case 14: return ACCENT_PATTERN_9;
+    default: return ACCENT_PATTERN_9;
   }
 }
 
@@ -1466,9 +1482,9 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
   float maxRatio = 1400.0f / msPerBeat;
 
   int maxIdx = 0;
-  for (int i = 0; i < NUM_RATIOS; i++) {
-    if (quantizeRatios[i] <= maxRatio) {
-      maxIdx = i;
+  for (int ratioIndex = 0; ratioIndex < NUM_RATIOS; ratioIndex++) {
+    if (quantizeRatios[ratioIndex] <= maxRatio) {
+      maxIdx = ratioIndex;
     } else {
       break;
     }
@@ -1479,7 +1495,9 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
 }
 
 // Parameter overlay text — display strings for each knob.
-// KEEP IN SYNC with applyKnobToEngine() below (same case numbers).
+// IMPORTANT: This switch and applyKnobToEngine() below use the same case
+// numbers (0–31). When adding/changing a knob, update BOTH functions.
+// Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
 
 void updateParameterDisplay(byte idx, int knobValue) {
   noInterrupts();
@@ -1666,7 +1684,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = map(knobValue, 0, 1023, 100, 2500) * 0.1f;
+        float decayMs = mapf(knobValue, 0, 1023, 10.0f, 250.0f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DECAY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
         break;
@@ -1830,7 +1848,9 @@ void updateParameterDisplay(byte idx, int knobValue) {
 }
 
 // Apply knob value to audio engine — sets gains, frequencies, envelopes.
-// KEEP IN SYNC with updateParameterDisplay() above (same case numbers).
+// IMPORTANT: This switch and updateParameterDisplay() above use the same case
+// numbers (0–31). When adding/changing a knob, update BOTH functions.
+// Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
 inline void applyKnobToEngine(byte idx, int knobValue) {
   switch (idx) {
 
@@ -2224,7 +2244,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = map(knobValue, 0, 1023, 100, 2500) * 0.1f;
+        float decayMs = mapf(knobValue, 0, 1023, 10.0f, 250.0f);
         d3DecayBase = decayMs;
         applyChokeToDecays();
         break;
@@ -2668,14 +2688,16 @@ void updateKnobs() {
 // UI helpers
 
 // Draw white text with a 2-pixel black outline for readability over the scope waveform.
+// Stamps black text at 8 offsets (4 cardinal + 4 diagonal, 2px each) then white on top.
 void drawOutlinedText(int x, int y, const char* text) {
-  display.setTextColor(0);                // black
-  for (int dy = -2; dy <= 2; dy++) {      // stamp the text at every offset in a 5x5 grid
-    for (int dx = -2; dx <= 2; dx++) {    // to create a solid black border around each glyph
-      if (dx == 0 && dy == 0) continue;   // skip center (that's where the white text goes)
-      display.setCursor(x + dx, y + dy);
-      display.print(text);
-    }
+  static const int8_t offsets[][2] = {
+    {-2, 0}, {2, 0}, {0, -2}, {0, 2},   // cardinal
+    {-2,-2}, {2,-2}, {-2, 2}, {2, 2}     // diagonal
+  };
+  display.setTextColor(0);
+  for (auto& o : offsets) {
+    display.setCursor(x + o[0], y + o[1]);
+    display.print(text);
   }
   display.setTextColor(1);
   display.setCursor(x, y);
@@ -2814,11 +2836,11 @@ void updateDisplay() {
     // pulsesCounted = pulsesPerCycle - armPulseCountdown
     uint8_t p = ppqn;  // Snapshot volatile once for consistent arithmetic
     uint16_t pulsesPerCycle = (uint16_t)numSteps * p / STEPS_PER_BEAT;
-    uint16_t pulsesCounted = pulsesPerCycle - armPulseCountdown;
     uint8_t beatsPerCycle = numSteps / STEPS_PER_BEAT;  // 4
 
     uint8_t currentBeat = 0;
-    if (pulsesCounted > 0) {
+    if (armPulseCountdown < pulsesPerCycle) {
+      uint16_t pulsesCounted = pulsesPerCycle - armPulseCountdown;
       currentBeat = (pulsesCounted - 1) / p + 1;  // 1-based beat number
     }
     // Countdown: show beatsRemaining = beatsPerCycle - currentBeat + 1
@@ -2932,16 +2954,9 @@ void updateDisplay() {
   if (extBpmDisplay > 0.0f) {
     display.print("EXT");
     display.setCursor(0, 10);
-    // Round to nearest 0.5 with hysteresis to prevent display bouncing.
-    // Compare raw BPM vs last displayed value — raw float wanders
-    // continuously so 0.3 BPM deadband works naturally regardless
-    // of grid alignment.
-    static float lastSnapped = 0.0f;
+    // Round to nearest 0.5 BPM for stable readout (quantization provides hysteresis)
     float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
-    if (lastSnapped <= 0.0f || fabsf(extBpmDisplay - lastSnapped) > 0.3f) {
-      lastSnapped = snapped;
-    }
-    display.print(lastSnapped, 1);
+    display.print(snapped, 1);
   } else {
     display.print("BPM");
     display.setCursor(0, 10);
