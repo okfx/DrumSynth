@@ -2,6 +2,8 @@
 
 Self-contained technical reference for reviewing the external clock synchronization system. Written for an LLM or engineer unfamiliar with the codebase.
 
+**Core philosophy:** The external clock provides tempo and phase boundaries, but not bar position. The user supplies bar alignment by pressing PLAY on the perceived downbeat of the master device. The DrumSynth performs a full-bar armed count-in before starting playback. This is a musical UX decision, not a protocol requirement.
+
 ---
 
 ## 1. Hardware and Signal Model
@@ -37,15 +39,19 @@ enum TransportState : uint8_t {
 **Transitions:**
 
 ```
-STOPPED ──[PLAY, no ext clock]──→ RUN_INT
-STOPPED ──[PLAY, ext clock detected]──→ RUN_EXT (armed count-in)
-RUN_INT ──[ext clock locks in]──→ RUN_EXT (auto-detect)
-RUN_EXT ──[2s timeout, still playing]──→ RUN_INT (fallback)
-RUN_EXT ──[2s timeout, stopped]──→ STOPPED
-RUN_INT/RUN_EXT ──[STOP button]──→ STOPPED
+STOPPED ──[PLAY, no ext clock]──────→ RUN_INT
+STOPPED ──[PLAY, ext clock detected]→ RUN_EXT (armed)
+RUN_EXT (armed) ──[countdown done]──→ RUN_EXT (running)
+RUN_INT ──[ext clock locks in]──────→ RUN_EXT (running, auto-detect)
+RUN_EXT ──[2s timeout, playing]─────→ RUN_INT (fallback)
+RUN_EXT ──[2s timeout, stopped]─────→ STOPPED
+RUN_INT/RUN_EXT ──[STOP button]─────→ STOPPED
+RUN_EXT (armed) ──[STOP button]─────→ STOPPED (countdown cancelled)
 ```
 
-Key design choice: **STOP does NOT clear pulse timing state** (`extPulseCount`, `lastPulseMicros`, `extIntervalEMA`, `prevAcceptedInterval`). This lets the PLAY handler detect external clock immediately on the next press without waiting for lock-in again.
+The `armed` flag is a behavioral sub-state of `RUN_EXT`. While armed, the ISR silently counts pulses instead of queueing steps — no audio fires until the countdown completes. STOP during armed count-in cancels the countdown: `armed` and `armPulseCountdown` are cleared, subdivision timer is stopped, and transport goes to STOPPED.
+
+Key design choice: **STOP does NOT clear pulse timing state** (`extPulseCount`, `lastPulseMicros`, `extIntervalEMA`, `prevAcceptedInterval`). This lets the PLAY handler detect external clock immediately on the next press without waiting for lock-in again. However, STOP **does** clear the subdivision timer (`subdivTimer.end()`), `subdivStepsRemaining`, `subdivTimerDueUs`, `pendingStepCount`, and `extStepAcc` — preventing stray steps from sounding after STOP.
 
 ---
 
@@ -101,9 +107,9 @@ When the user presses PLAY with an external clock detected, the sequencer does N
 
 2. **ISR counts down silently:** Each accepted pulse decrements `armPulseCountdown`. While counting, the ISR returns early — no steps are queued, no audio fires.
 
-3. **Countdown reaches 0:** The ISR clears `armed`, sets `currentStep = 0`, queues it via `pendingStepCount`, and arms subdivision for the remaining steps. This fires step 0 on a pulse boundary aligned with the Volca's next step 0 (assuming the user pressed PLAY near step 0).
+3. **Countdown reaches 0:** The ISR clears `armed`, sets `currentStep = 0`, queues it via `pendingStepCount`, and arms subdivision for the remaining steps. Step 0 fires on a pulse boundary aligned with the master's downbeat — assuming the user pressed PLAY on or near the master's step 0.
 
-**Why a full cycle?** The user presses PLAY "near" the Volca's step 0, but we don't know exactly where in the Volca's cycle we are. Counting one full cycle of pulses guarantees that step 0 fires on the same phase as the Volca's step 0, regardless of when PLAY was pressed.
+**Why a full cycle?** The Volca protocol carries no bar-position information — just pulses. The system cannot know where the master is in its pattern. Phase alignment depends entirely on the user pressing PLAY near the master's downbeat. Counting one full cycle of pulses then produces a predictable 4-beat count-in followed by a phase-aligned drop-in. If the user pressed PLAY near step 8 instead of step 0, the DrumSynth will be half a bar offset from the master — this is the user's responsibility, not a system limitation.
 
 **Display during count-in:** A 4-3-2-1 countdown is rendered on the OLED in large text (textSize 4). The SPI push is done without the timing guard since no steps are firing during count-in — there's nothing to protect.
 
@@ -197,9 +203,9 @@ interrupts();
 
 **Consumption logic:**
 - `toDo == 0` → nothing to do, return.
-- `toDo == 1` → fire `targetStep` (the common case).
-- `toDo == 2` AND `RUN_EXT` → fire both steps (back-to-back `playSequenceCore` calls). This preserves rhythmic density when the main loop was briefly blocked (e.g., by an OLED push).
-- `toDo >= 3` OR internal clock → fire only `targetStep` (skip ahead). A missing step is less noticeable than an off-beat one.
+- `toDo == 1` → fire `targetStep` (the common case at ppqn ≥ 4).
+- `toDo == 2` AND `RUN_EXT` → fire both steps (back-to-back `playSequenceCore` calls). At 2 PPQN this is the expected steady state: step A queues on the pulse, step B queues ~125 ms later (at 120 BPM), and the main loop consumes both on the next iteration. This is normal operation, not stall recovery. Firing both preserves the expected rhythmic density.
+- `toDo >= 3` OR internal clock → fire only `targetStep` (skip ahead). This is the actual stall recovery case. A missing step is less noticeable than an off-beat one.
 
 **Why advance `currentStep` in the ISR instead of main loop?** To anchor the step boundary to the hardware event (pulse or timer tick), not the variable-latency main loop. Audio fires a few microseconds later in the main loop, which is inaudible.
 
@@ -244,6 +250,8 @@ If no pulse arrives for 2 seconds (`EXT_TIMEOUT_US = 2000000`), `checkExtClockTi
 - If stopped → switch to `STOPPED`
 - In either case, `resetExternalClockState()` clears all pulse tracking, subdivision state, and display BPM
 
+**Why a fixed 2-second timeout?** An interval-relative timeout (e.g., 3× EMA) would be more responsive at high tempos but adds complexity and risk of false timeout if the EMA is unstable (e.g., during tempo changes or noisy clocks). The fixed 2-second value is conservative enough to never false-trigger at any musical tempo while still recovering promptly when the clock genuinely stops.
+
 ---
 
 ## 12. File Map
@@ -284,3 +292,7 @@ If no pulse arrives for 2 seconds (`EXT_TIMEOUT_US = 2000000`), `checkExtClockTi
 - **No swing/shuffle support.** Subdivision steps are evenly spaced within each pulse interval. Adding swing would require an additional parameter per step or per beat.
 
 - **Single-clock assumption.** The system assumes one external clock source. Multiple clocks on pin 12 would confuse the glitch filter and lock-in detection.
+
+- **Count-in latency at slow tempos.** At 60 BPM / 2 PPQN, the full-cycle count-in is 8 pulses × 500 ms = 4 seconds. At 50 BPM it approaches 5 seconds. This is a deliberate trade-off: phase alignment requires hearing one full cycle, and the 4-3-2-1 countdown gives the user feedback that the system is working. In live performance contexts where this delay is unacceptable, a "skip count-in" option (e.g., immediate start on next pulse without phase guarantee) could be added as a future feature.
+
+- **Subdivision smoothing duplication.** The 2-sample averaging logic appears in both the armed count-in path and the normal subdivision path inside `externalClockISR()`. Cross-reference comments link them. This is a deliberate style choice — the codebase favors explicit inline code over helper function extraction for readability. The trade-off is that changes to the smoothing algorithm must be applied in both places.
