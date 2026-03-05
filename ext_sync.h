@@ -46,7 +46,7 @@ extern volatile uint8_t currentStep;
 //    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
 //    extPulseCount             — uint8_t, atomic on ARM
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport() and PLAY handler
-//    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears (checkExtClockLockIn, resetExternalClockState)
+//    wantSwitchToExt           — bool, atomic on ARM, ISR sets, main loop clears (checkExtClockLockIn, resetExternalClockState, STOP handler)
 //    pendingStepCount          — uint8_t, atomic on ARM, ISR writes (stepISR, externalClockISR, subdivTimerCallback); main loop clears (playSequence) and sets (PLAY snap-to-pulse). Always written alongside currentStep.
 //    subdivIntervalUs          — uint32_t, ISR sets, timer callback reads (chaining)
 //    subdivStepsRemaining      — uint8_t, atomic on ARM, ISR sets, timer callback decrements, main loop resets
@@ -215,7 +215,10 @@ void externalClockISR() {
   // Pulse 1 has no interval. Pulse 2 seeds prevAcceptedInterval but prev==0
   // so the similarity test can't pass. Pulse 3 is the earliest possible lock-in.
   // Prevents a noise spike + real pulse from false lock-in.
-  if (extPulseCount >= 2 && transportState != RUN_EXT) {
+  // Guard: only lock in while playing — prevents auto-switch to RUN_EXT after
+  // the user presses STOP. Pulse timing state is preserved across STOP so
+  // isExtClockRunning() returns true immediately on the next PLAY press.
+  if (extPulseCount >= 2 && transportState != RUN_EXT && sequencePlaying) {
     uint32_t prev = prevAcceptedInterval;
     uint32_t curr = lastPulseInterval;
     if (prev > 0 && curr > 0) {
@@ -276,9 +279,14 @@ void externalClockISR() {
 
       uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
       uint8_t deferred = stepsPerPulse - 1;
-      uint32_t ema = extIntervalEMA;
-      if (deferred > 0 && ema > 0) {
-        uint32_t subInterval = ema / stepsPerPulse;
+      // Use the actual pulse interval for subdivision, not EMA.
+      // Each pulse re-anchors step B to the midpoint of the real window.
+      // EMA lags reality; actual interval gives immediate phase correction.
+      // Fall back to EMA only on the first pulse (no interval yet).
+      uint32_t pulseInterval = lastPulseInterval;
+      if (pulseInterval == 0) pulseInterval = extIntervalEMA;
+      if (deferred > 0 && pulseInterval > 0) {
+        uint32_t subInterval = pulseInterval / stepsPerPulse;
         subdivIntervalUs = subInterval;
         subdivStepsRemaining = deferred;
         subdivTimerDueUs = nowUs + subInterval;
@@ -303,7 +311,9 @@ void rearmStepTimer() {
 }
 
 // Clear all external clock state — pulse tracking, subdivision, and display.
-// Called from checkExtClockTimeout() after switching transport away from RUN_EXT.
+// Called from checkExtClockTimeout() (clock lost) and PPQN mode entry.
+// NOT called from STOP — STOP does a partial reset preserving pulse timing
+// so isExtClockRunning() returns true immediately on the next PLAY press.
 static inline void resetExternalClockState() {
   subdivTimer.end();
   noInterrupts();

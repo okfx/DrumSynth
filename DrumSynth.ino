@@ -320,7 +320,7 @@ inline void applyD1Freq() {
 // choke mapping helper
 static inline int chokeOffsetFromKnob(int v) {
   const int CENTER = 512;
-  const int DEADBAND = 50;
+  const int DEADBAND = 80;
   const int MAX_NEG = -40;
   const int MAX_POS = 150;
 
@@ -545,7 +545,7 @@ void setup() {
     snprintf(versionBuf, sizeof(versionBuf), FIRMWARE_VERSION_FMT, FIRMWARE_VERSION_ARGS);
     display.print(versionBuf);
     display.display();
-    delay(800);
+    delay(1250);
 
     display.clearDisplay();
     display.display();
@@ -696,7 +696,7 @@ void loop() {
   // ============================================================================
   // POST-INPUT STEP PROCESSING
   // ============================================================================
-  // Fire any step queued by the PLAY button (snap-to-recent-pulse) immediately,
+  // Fire any step queued by the PLAY button or ISR immediately,
   // before the OLED draw adds 15-25ms of latency.
   if (sequencePlaying) {
     playSequence();
@@ -1015,9 +1015,10 @@ void updateOtherButtons() {
               // its own noInterrupts/interrupts pair that would break ours.
               bool useExtClock = isExtClockRunning();
 
-              // START — reset step position so first emitted step becomes 0.
-              // Interrupts stay disabled through setTransport so the ext clock
-              // ISR can't queue steps before we finish initializing.
+              // ARM — don't trigger yet. The first external pulse (or internal
+              // tick) will advance currentStep to 0 and fire step A.
+              // This guarantees step A is always pulse-anchored, never
+              // offset by the arbitrary timing of the PLAY button press.
               subdivTimer.end();
               noInterrupts();
               currentStep = numSteps - 1;
@@ -1027,57 +1028,28 @@ void updateOtherButtons() {
               subdivTimerDueUs = 0;
               sequencePlaying = true;
 
-              // If external clock is already running, go straight to RUN_EXT.
-              // currentStep is 15, so the first ISR pulse advances to step 0.
               if (useExtClock) {
                 setTransport(RUN_EXT);
                 displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
-
-                // Snap-to-recent-pulse: if the user pressed PLAY just after
-                // a pulse, they were slightly late. Fire step 0 now instead
-                // of waiting for the next pulse (which would put the pattern
-                // one step out of phase). Window is 50% of pulse interval,
-                // capped at 80ms — covers typical human timing error
-                // without risking a false snap near the next pulse boundary.
-                uint32_t snapEma = extIntervalEMA;
-                if (snapEma > 0 && lastPulseMicros > 0) {
-                  uint32_t elapsed = micros() - lastPulseMicros;
-                  uint32_t snapWindow = snapEma / 2;
-                  if (snapWindow > 80000) snapWindow = 80000;
-                  if (elapsed < snapWindow) {
-                    // Advance currentStep here (not in ISR — this is a snap,
-                    // not a new pulse). The ISR model expects currentStep to
-                    // already point at the step to play when pendingStepCount > 0.
-                    currentStep = 0;
-                    pendingStepCount = 1;
-
-                    // Low-PPQN modes (1 or 2): arm one-shot timer for deferred steps.
-                    // subdivTimerCallback will advance currentStep for step B/C/D.
-                    if (ppqn < STEPS_PER_BEAT) {
-                      uint8_t stepsPerPulse = STEPS_PER_BEAT / ppqn;
-                      uint8_t deferred = stepsPerPulse - 1;
-                      if (deferred > 0 && snapEma > 0) {
-                        uint32_t subInterval = snapEma / stepsPerPulse;
-                        subdivIntervalUs = subInterval;
-                        subdivStepsRemaining = deferred;
-                        subdivTimerDueUs = lastPulseMicros + subInterval;
-                        uint32_t now = micros();
-                        int32_t delay = (int32_t)(subdivTimerDueUs - now);
-                        if (delay < (int32_t)SUBDIV_MIN_DELAY_US) delay = SUBDIV_MIN_DELAY_US;
-                        subdivTimer.begin(subdivTimerCallback, (uint32_t)delay);
-                      }
-                    }
-                  }
-                }
               } else {
                 setTransport(RUN_INT);
               }
               interrupts();
             } else {
-              // STOP
+              // STOP — preserve pulse timing state (extPulseCount, lastPulseMicros,
+              // extIntervalEMA, prevAcceptedInterval) so isExtClockRunning() returns
+              // true immediately on the next PLAY press. The sequencePlaying guard
+              // in the ISR lock-in check prevents auto-switch to RUN_EXT while stopped.
               sequencePlaying = false;
               setTransport(STOPPED);
-              resetExternalClockState();  // Clear pulse tracking so ext clock can't re-lock-in after STOP
+              subdivTimer.end();
+              noInterrupts();
+              pendingStepCount = 0;
+              extStepAcc = 0;
+              subdivStepsRemaining = 0;
+              subdivTimerDueUs = 0;
+              wantSwitchToExt = false;
+              interrupts();
               applyMasterGainFromState();
             }
             break;
@@ -1396,7 +1368,7 @@ static inline float d2DecayCurve(int knobValue) {
   }
 }
 
-// BPM curve: 60–400 (first 85%) then 900–1000 (remaining 15%, hyperspeed), rounded to 0.5
+// BPM curve: 60–400 (first 85%) then 900–999 (remaining 15%, hyperspeed), rounded to 0.5
 // NOTE: The 400–900 gap is intentional — hyperspeed is a separate creative effect.
 static inline float bpmFromKnob(int knobValue) {
   float norm = normKnob(knobValue);
@@ -1406,9 +1378,9 @@ static inline float bpmFromKnob(int knobValue) {
     float blend = norm / 0.85f;
     bpmValue = 60.0f + blend * (400.0f - 60.0f);
   } else {
-    // 85–100%: 900 → 1000 BPM (hyperspeed)
+    // 85–100%: 900 → 999 BPM (hyperspeed)
     float blend = (norm - 0.85f) / 0.15f;
-    bpmValue = 900.0f + blend * (1000.0f - 900.0f);
+    bpmValue = 900.0f + blend * (999.0f - 900.0f);
   }
   return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
 }
@@ -2452,7 +2424,11 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 29:  // Master Choke Offset
       {
         chokeOffsetMs = chokeOffsetFromKnob(knobValue);
-        chokeDisplayPercent = (int)((normKnob(knobValue) - 0.5f) * 200.0f);
+        if (chokeOffsetMs == 0) {
+          chokeDisplayPercent = 0;  // Match engine deadband — display shows "OFF"
+        } else {
+          chokeDisplayPercent = (int)((normKnob(knobValue) - 0.5f) * 200.0f);
+        }
         applyChokeToDecays();
         break;
       }
@@ -2884,9 +2860,9 @@ void updateDisplay() {
   }
 
   // Track
-  display.setCursor(37, 0);
+  display.setCursor(33, 0);
   display.print("TRK");
-  display.setCursor(40, 10);
+  display.setCursor(36, 10);
   if (trackSnap == TRACK_D1) {
     display.print("D1");
   } else if (trackSnap == TRACK_D2) {
@@ -2896,9 +2872,9 @@ void updateDisplay() {
   }
 
   // Choke (global decay offset)
-  display.setCursor(62, 0);
+  display.setCursor(54, 0);
   display.print("CHOKE");
-  display.setCursor(62, 10);
+  display.setCursor(54, 10);
   if (chokeSnap == 0) {
     display.print("OFF");
   } else {
