@@ -74,6 +74,10 @@ extern volatile uint8_t currentStep;
 //  single-instruction atomic (LDR/STR).  We still use noInterrupts()
 //  when reading multiple related variables that must be consistent with
 //  each other (e.g. snapshotting lastPulseMicros + extIntervalEMA together).
+//
+//  ISR priority: All ISR sources are explicitly configured to NVIC priority
+//  128 (GPIO pinned in setup(), IntervalTimer default). Same priority = no
+//  preemption, making non-atomic RMW (pendingStepCount++, currentStep) safe.
 // ============================================================================
 
 // ============================================================================
@@ -125,10 +129,12 @@ float extBpmDisplay = 0.0f;
 // Advances currentStep at ISR time so the step boundary is anchored to the
 // timer tick, not the main loop. Main loop fires audio via playSequence().
 // NOTE: pendingStepCount++ and currentStep mutation are non-atomic RMW
-// (LDRB/ADD/STRB). This is safe because stepISR, subdivTimerCallback, and
-// externalClockISR all run at the same default NVIC priority (128) on
-// Teensy 4.0, so they cannot preempt each other. If ISR priorities are ever
-// differentiated, protect these with __LDREXB/__STREXB or noInterrupts().
+// (LDRB/ADD/STRB). This is safe because all three ISR sources run at NVIC
+// priority 128: stepISR and subdivTimerCallback share IRQ_PIT (same physical
+// interrupt, cannot preempt each other by definition), and externalClockISR
+// on IRQ_GPIO6789 is explicitly pinned to 128 in setup(). Same priority =
+// no preemption. If ISR priorities are ever differentiated, protect these
+// with __LDREXB/__STREXB or noInterrupts().
 void stepISR() {
   if (transportState == RUN_INT && sequencePlaying && !wantSwitchToExt) {
     if (pendingStepCount < 255) {

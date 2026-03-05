@@ -92,6 +92,11 @@ When the sequencer is playing in `RUN_INT` and external pulses arrive, the ISR c
 
 **Guard:** Lock-in only fires while `sequencePlaying == true`. This prevents auto-switching to `RUN_EXT` after the user presses STOP.
 
+**Separation from armed count-in:** Auto-detect lock-in (this section) and armed count-in (Section 5) are mutually exclusive paths:
+- **Armed count-in** is only used for explicit PLAY-to-`RUN_EXT` starts — the PLAY handler detects a recent pulse and sets `armed = true` before entering `RUN_EXT`.
+- **Auto-detect** fires when already playing in `RUN_INT` and external pulses lock in. The ISR sets `wantSwitchToExt` and immediately queues step(s) — no count-in, no arming. The `armed` flag is false throughout.
+- The ISR checks `armed` only after confirming `transportState == RUN_EXT && sequencePlaying`. Auto-detect sets `wantSwitchToExt` before transport is `RUN_EXT`, so the armed path is never reached during lock-in.
+
 ---
 
 ## 5. Armed Count-In (Phase-Aligned Start)
@@ -109,7 +114,7 @@ When the user presses PLAY with an external clock detected, the sequencer does N
 
 3. **Countdown reaches 0:** The ISR clears `armed`, sets `currentStep = 0`, queues it via `pendingStepCount`, and arms subdivision for the remaining steps. Step 0 fires on a pulse boundary aligned with the master's downbeat — assuming the user pressed PLAY on or near the master's step 0.
 
-**Why a full cycle?** The Volca protocol carries no bar-position information — just pulses. The system cannot know where the master is in its pattern. Phase alignment depends entirely on the user pressing PLAY near the master's downbeat. Counting one full cycle of pulses then produces a predictable 4-beat count-in followed by a phase-aligned drop-in. If the user pressed PLAY near step 8 instead of step 0, the DrumSynth will be half a bar offset from the master — this is the user's responsibility, not a system limitation.
+**Why a full cycle?** The Volca protocol carries no bar-position information — just pulses. The system cannot derive the master's downbeat from the clock signal. The user supplies bar alignment by pressing PLAY on the master's perceived downbeat. The one-bar count-in is a deliberate performance feature: it starts the DrumSynth on the next bar boundary relative to the user's timing. If the user presses PLAY near step 8 instead of step 0, the DrumSynth will be half a bar offset — this is a consequence of the user's timing, not a system deficiency. The count-in itself is always exactly one pattern cycle of pulses regardless of where in the master's bar it begins.
 
 **Display during count-in:** A 4-3-2-1 countdown is rendered on the OLED in large text (textSize 4). The SPI push is done without the timing guard since no steps are firing during count-in — there's nothing to protect.
 
@@ -156,7 +161,7 @@ Where `pulseInterval` is a 2-sample average (see Section 7).
 int32_t early = (subdivTimerDueUs - micros());
 if (early > 1000) return;  // stale — don't fire
 ```
-A valid callback fires at or after its due time (early ≤ 0, or small positive from NVIC latency). A stale callback fires microseconds after the ISR reconfigured the timer, with `early ≈ subInterval` (many milliseconds).
+The rule: any callback occurring more than 1 ms before its scheduled due time is treated as stale and discarded. A valid callback fires at or after its due time (early ≤ 0, or small positive from NVIC latency). A stale callback fires microseconds after the ISR reconfigured the timer, with `early ≈ subInterval` (many milliseconds). The 1 ms threshold is well below any real subdivision interval (the shortest musical subdivision at 400 BPM / 2 PPQN is ~37 ms). This is a heuristic — a generation counter would be formally correct, but the timing-based approach is simpler and the threshold margin is large enough to be robust in practice.
 
 ---
 
@@ -170,6 +175,8 @@ pulseInterval = (lastPulseInterval + prevInterval) / 2
 ```
 
 This halves the jitter: a 5 ms error in one measurement moves step B by only 1.25 ms instead of 2.5 ms. The 2-sample window is short enough to track tempo changes within 2 pulses.
+
+**Architecture-level invariant:** `lastPulseInterval` and `prevInterval` are updated only for accepted pulses. Rejected pulses (`return` from the glitch filter) never modify `lastPulseInterval`. This guarantees the 2-sample average uses only clean intervals — noise pulses cannot contaminate the smoothing input.
 
 **Implementation detail:** `prevInterval` is captured at the very top of the ISR (before `lastPulseInterval` is overwritten):
 ```
@@ -227,13 +234,17 @@ The SH1106 OLED uses software SPI bitbang, which takes 15–25 ms per frame. Dur
 
 If any check fails, the frame is skipped. A skipped frame is cosmetic; a late step is audible.
 
+**Note on EMA vs 2-sample for prediction:** The SPI guard uses `extIntervalEMA` (alpha = 0.5) for predicting the next pulse, while subdivision scheduling uses the 2-sample raw average. This is intentional — the guard is a conservative "don't start long work if a pulse might be soon" check, not a precision timing source. A slightly lagging EMA makes the guard more conservative, which is the safe direction.
+
+**Wrap safety:** All `micros()` arithmetic uses `(int32_t)(timestamp - micros())`, the standard wrap-safe pattern for `uint32_t` timestamps. This correctly handles the `micros()` overflow at ~71 minutes because the timestamps involved are always within seconds of each other, well within the `int32_t` range.
+
 ---
 
 ## 10. Concurrency Model
 
 **ARM Cortex-M7 atomicity:** Naturally-aligned 32-bit and 16-bit loads/stores are single-instruction atomic (LDR/STR, LDRH/STRH). All shared variables are aligned by default.
 
-**ISR priority:** All three ISRs (`externalClockISR`, `stepISR`, `subdivTimerCallback`) run at default NVIC priority 128. Same priority = no preemption between ISRs. The `pendingStepCount++` and `currentStep` mutations are read-modify-write (LDRB/ADD/STRB) which are NOT atomic — but they're safe because no ISR can preempt another at the same priority.
+**ISR priority:** All ISR sources are explicitly configured to NVIC priority 128 to prevent preemption between them. `stepISR` and `subdivTimerCallback` share `IRQ_PIT` (same physical PIT interrupt, cannot preempt each other by definition). `externalClockISR` runs on `IRQ_GPIO6789` (a different physical interrupt) — its priority is explicitly pinned to 128 in `setup()` via `NVIC_SET_PRIORITY(IRQ_GPIO6789, 128)`. Same priority = no preemption. The `pendingStepCount++` and `currentStep` mutations are read-modify-write (LDRB/ADD/STRB) which are NOT atomic — but they're safe because no ISR can preempt another at the same priority. If ISR priorities are ever differentiated, these RMW sequences must be protected with `__LDREXB/__STREXB` or `noInterrupts()`.
 
 **`noInterrupts()` usage:** Used when the main loop must read multiple related ISR-written variables consistently (e.g., `lastPulseMicros` + `extIntervalEMA` together). Not needed for single-variable reads of aligned types.
 

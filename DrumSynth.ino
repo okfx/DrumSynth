@@ -600,6 +600,16 @@ void setup() {
   pinMode(EXT_CLK_PIN, INPUT_PULLDOWN);
   attachInterrupt(digitalPinToInterrupt(EXT_CLK_PIN), externalClockISR, RISING);
 
+  // Explicitly set GPIO ISR priority to match IntervalTimer default (128).
+  // All three ISR sources (externalClockISR on GPIO, stepISR and
+  // subdivTimerCallback on PIT) must run at the same NVIC priority so they
+  // cannot preempt each other. This makes the non-atomic read-modify-write
+  // on pendingStepCount and currentStep safe (see concurrency contract in
+  // ext_sync.h). attachInterrupt() does not set priority — it inherits
+  // the startup default (128), but we pin it here explicitly so a future
+  // Teensy core change can't silently break the assumption.
+  NVIC_SET_PRIORITY(IRQ_GPIO6789, 128);
+
   // ============================================================================
   // LOAD STATE AND START SEQUENCER
   // ============================================================================
@@ -1072,15 +1082,18 @@ void updateOtherButtons() {
               displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
               interrupts();
             } else {
-              // STOP — preserve pulse timing state (extPulseCount, lastPulseMicros,
+              // STOP — also aborts armed count-in if active.
+              // Preserves pulse timing state (extPulseCount, lastPulseMicros,
               // extIntervalEMA, prevAcceptedInterval) so ext clock is detected
               // immediately on the next PLAY press.
+              // Clears step-generation state (armed, subdivision, pending steps)
+              // to prevent stray steps from sounding after STOP.
               sequencePlaying = false;
-              armed = false;
-              armPulseCountdown = 0;
               setTransport(STOPPED);
               subdivTimer.end();
               noInterrupts();
+              armed = false;
+              armPulseCountdown = 0;
               pendingStepCount = 0;
               extStepAcc = 0;
               subdivStepsRemaining = 0;
