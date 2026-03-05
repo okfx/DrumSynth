@@ -24,6 +24,8 @@
 // Transport & sequencer state
 extern volatile TransportState transportState;
 extern volatile bool sequencePlaying;
+extern volatile bool armed;
+extern volatile uint16_t armPulseCountdown;
 extern float bpm;
 extern volatile uint8_t ppqn;
 
@@ -55,6 +57,8 @@ extern volatile uint8_t currentStep;
 //  Main loop writes (read by ISR):
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
 //    sequencePlaying           — bool, atomic on ARM, safe for ISR to read
+//    armed                     — bool, atomic on ARM. Main loop sets (PLAY handler), ISR clears (countdown complete → fires step 0).
+//    armPulseCountdown         — uint16_t, atomic on ARM (aligned LDRH/STRH). Main loop sets (PLAY handler), ISR decrements.
 //    ppqn                      — volatile uint8_t, main loop writes (PPQN mode), ISR reads. Atomic on ARM.
 //
 //  ISR writes, main loop reads:
@@ -232,10 +236,48 @@ void externalClockISR() {
   // Update previous interval for next lock-in comparison
   prevAcceptedInterval = lastPulseInterval;
 
-  // Step generation — advance currentStep and queue for main loop via
-  // pendingStepCount. currentStep is advanced HERE at pulse time so the
-  // step boundary is anchored to the external pulse, not the main loop.
-  // Main loop fires audio via playSequence() → playSequenceCore().
+  // ---- Armed count-in: count one full cycle of pulses, then fire step 0 ----
+  // PLAY sets armed=true and armPulseCountdown=pulsesPerCycle. The DrumSynth
+  // is silent while counting down. Each accepted pulse decrements the counter.
+  // When it reaches 0, we fire step 0 on a pulse boundary aligned with the
+  // Volca's next step 0 (assuming the user pressed PLAY near step 0).
+  if (armed && transportState == RUN_EXT && sequencePlaying) {
+    armPulseCountdown--;
+    if (armPulseCountdown > 0) return;  // Still counting — stay silent
+
+    // Countdown complete — fire step 0
+    armed = false;
+
+    subdivTimer.end();  // safety — should already be ended by PLAY handler
+
+    currentStep = 0;
+    if (pendingStepCount < 255) pendingStepCount++;
+
+    // Arm subdivision for deferred steps (step B for ppqn=2, B/C/D for ppqn=1)
+    uint8_t p = ppqn;
+    if (p < STEPS_PER_BEAT) {
+      uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
+      uint8_t deferred = stepsPerPulse - 1;
+      uint32_t pulseInterval = lastPulseInterval;
+      if (pulseInterval == 0) pulseInterval = extIntervalEMA;
+      if (deferred > 0 && pulseInterval > 0) {
+        uint32_t subInterval = pulseInterval / stepsPerPulse;
+        subdivIntervalUs = subInterval;
+        subdivStepsRemaining = deferred;
+        subdivTimerDueUs = nowUs + subInterval;
+        subdivTimer.begin(subdivTimerCallback, subInterval);
+      }
+    }
+
+    extStepAcc = 0;  // Reset accumulator for clean start
+    return;
+  }
+
+  // ---- Normal step generation (steady-state) ----
+  // Advance currentStep and queue for main loop via pendingStepCount.
+  // currentStep is advanced HERE at pulse time so the step boundary is
+  // anchored to the external pulse, not the main loop. Main loop fires
+  // audio via playSequence() → playSequenceCore().
   // Fires both in steady-state RUN_EXT and on the locking pulse
   // so the first step aligns with a real pulse, not a synthesized main-loop call.
   bool canStep = (transportState == RUN_EXT || wantSwitchToExt);
@@ -326,6 +368,8 @@ static inline void resetExternalClockState() {
   subdivStepsRemaining = 0;
   subdivTimerDueUs = 0;
   wantSwitchToExt = false;
+  armed = false;
+  armPulseCountdown = 0;
   interrupts();
   extBpmDisplay = 0.0f;
 }
@@ -392,19 +436,25 @@ bool isExtClockRunning() {
 // Derive EXT BPM from the fast EMA (alpha=0.5) — same interval the engine
 // uses for glitch filtering, so the display matches what the engine hears.
 // Light display-side smoothing (alpha=0.25) damps jitter for stable readout.
+// Updates whenever external pulses are being received (even while STOPPED),
+// so the user can see the incoming sync tempo before pressing PLAY.
+// Clears to 0 when pulses stop (timeout).
 void updateExtBpmDisplay() {
-  if (transportState == RUN_EXT) {
-    noInterrupts();
-    uint32_t emaCopy = extIntervalEMA;
-    interrupts();
-    if (emaCopy > 0) {
-      float rawBpm = 60000000.0f / ((float)emaCopy * (float)ppqn);
-      if (extBpmDisplay <= 0.0f) {
-        extBpmDisplay = rawBpm;           // First reading — snap immediately
-      } else {
-        extBpmDisplay += 0.25f * (rawBpm - extBpmDisplay);  // Light smoothing
-      }
+  noInterrupts();
+  uint32_t emaCopy = extIntervalEMA;
+  uint32_t lastPCopy = lastPulseMicros;
+  interrupts();
+
+  // Show ext BPM if we've received pulses recently (within timeout)
+  if (lastPCopy != 0 && (micros() - lastPCopy) < EXT_TIMEOUT_US && emaCopy > 0) {
+    float rawBpm = 60000000.0f / ((float)emaCopy * (float)ppqn);
+    if (extBpmDisplay <= 0.0f) {
+      extBpmDisplay = rawBpm;           // First reading — snap immediately
+    } else {
+      extBpmDisplay += 0.25f * (rawBpm - extBpmDisplay);  // Light smoothing
     }
+  } else {
+    extBpmDisplay = 0.0f;  // No recent pulses — clear display
   }
 }
 

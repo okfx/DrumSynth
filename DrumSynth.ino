@@ -136,6 +136,8 @@ enum TransportState : uint8_t {
 
 volatile TransportState transportState = STOPPED;  // Read by stepISR, externalClockISR
 volatile bool sequencePlaying = false;     // Read by stepISR, externalClockISR
+volatile bool armed = false;              // PLAY sets true; ISR counts down then fires step 0
+volatile uint16_t armPulseCountdown = 0;  // Pulses remaining before step 0 fires (one full cycle)
 
 // PPQN for external clock — loaded from EEPROM at boot, selectable via UI.
 // ISR reads (externalClockISR), main loop writes (PPQN selection mode).
@@ -159,6 +161,7 @@ volatile uint32_t lastFrameDrawTick = 0;
 static constexpr uint32_t OLED_WATCHDOG_TIMEOUT_MS = 750;
 static constexpr uint32_t OLED_FRAME_INTERVAL_MS = 42;        // ~24 fps
 static constexpr uint32_t OLED_FRAME_INTERVAL_EXT_MS = 100;   // ~10 fps (ext sync — reduces SPI blocking)
+static constexpr uint32_t OLED_SUBDIV_GUARD_US = 30000;      // Skip OLED frame if subdivision due within 30ms
 volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main loop
 uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (main-loop only)
 
@@ -723,7 +726,20 @@ void loop() {
                            ? OLED_FRAME_INTERVAL_EXT_MS
                            : OLED_FRAME_INTERVAL_MS;
   if ((uint32_t)(tickCopy - lastDrawCopy) >= frameInterval) {
-    updateDisplay();
+    // Skip OLED frame if a subdivision step is due soon — OLED push takes
+    // 15-25ms (SPI bitbang) which would delay the step. Better to drop a
+    // display frame than miss a musical beat.
+    bool skipForSubdiv = false;
+    if (transportState == RUN_EXT && subdivTimerDueUs != 0) {
+      uint32_t nowUs = micros();
+      int32_t untilDue = (int32_t)(subdivTimerDueUs - nowUs);
+      if (untilDue > 0 && (uint32_t)untilDue < OLED_SUBDIV_GUARD_US) {
+        skipForSubdiv = true;
+      }
+    }
+    if (!skipForSubdiv) {
+      updateDisplay();
+    }
   }
 
   // ============================================================================
@@ -957,26 +973,12 @@ void updateOtherButtons() {
             ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
             ppqnModeLastActivityTick = nowTick;  // Reset timeout
           } else {
-            // Short press — cycle memory slot and auto-load
+            // Short press — cycle memory slot (display only, no load).
+            // The LOAD button (case 8) loads the selected slot.
             activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
-            activeRail = RAIL_NONE;
-            if (!loadStateFromEEPROM(activeSaveSlot)) {
-              // Empty slot — clear to initialized pattern
-              noInterrupts();
-              for (int step = 0; step < numSteps; step++) {
-                drum1Sequence[step] = 0;
-                drum2Sequence[step] = 0;
-                drum3Sequence[step] = 0;
-                bassLineNote[step] = 36;  // C2 default
-              }
-              interrupts();
-              updateLEDs();
-              patternDirty = false;
-              snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
-              snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
-              parameterOverlayStartTick = nowTick;
-            }
-            // loadStateFromEEPROM() sets its own overlay ("PATTERN LOADED") on success
+            snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "SELECT");
+            parameterOverlayStartTick = nowTick;
           }
           btn7EnteredPpqn = false;
         }
@@ -1011,36 +1013,54 @@ void updateOtherButtons() {
 
           case 6:
             if (!sequencePlaying) {
-              // Check ext clock BEFORE noInterrupts — isExtClockRunning() has
-              // its own noInterrupts/interrupts pair that would break ours.
-              bool useExtClock = isExtClockRunning();
+              // Check for recent external sync pulses — even 1 is enough for drop-in.
+              // isExtClockRunning() requires 2+ pulses (for lock-in auto-detect),
+              // which is too strict for explicit drop-in. Here we only need to know
+              // "has the Volca been sending clock recently?"
+              bool hasRecentPulse = false;
+              noInterrupts();
+              uint32_t lastP = lastPulseMicros;
+              interrupts();
+              if (lastP != 0 && (micros() - lastP) < EXT_TIMEOUT_US) {
+                hasRecentPulse = true;
+              }
 
-              // ARM — don't trigger yet. The first external pulse (or internal
-              // tick) will advance currentStep to 0 and fire step A.
-              // This guarantees step A is always pulse-anchored, never
-              // offset by the arbitrary timing of the PLAY button press.
+              // PLAY = ARM. No step fires here. The next external pulse (or
+              // internal tick for RUN_INT) fires step 0.
               subdivTimer.end();
               noInterrupts();
-              currentStep = numSteps - 1;
               pendingStepCount = 0;
               extStepAcc = 0;
               subdivStepsRemaining = 0;
               subdivTimerDueUs = 0;
-              sequencePlaying = true;
 
-              if (useExtClock) {
+              if (hasRecentPulse) {
+                // External sync detected — count-in for one full cycle, then fire step 0.
+                // The user presses PLAY near the Volca's step 0. The ISR counts
+                // pulsesPerCycle accepted pulses silently. When the countdown reaches 0,
+                // step 0 fires on a pulse boundary aligned with the Volca's next step 0.
+                armed = true;
+                armPulseCountdown = (uint16_t)numSteps * ppqn / STEPS_PER_BEAT;
+                sequencePlaying = true;
                 setTransport(RUN_EXT);
-                displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
               } else {
+                // No external clock — start on internal timer immediately.
+                // currentStep = numSteps-1 so the first internal tick advances to step 0.
+                armed = false;
+                armPulseCountdown = 0;
+                currentStep = numSteps - 1;
+                sequencePlaying = true;
                 setTransport(RUN_INT);
               }
               interrupts();
+              displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
             } else {
               // STOP — preserve pulse timing state (extPulseCount, lastPulseMicros,
-              // extIntervalEMA, prevAcceptedInterval) so isExtClockRunning() returns
-              // true immediately on the next PLAY press. The sequencePlaying guard
-              // in the ISR lock-in check prevents auto-switch to RUN_EXT while stopped.
+              // extIntervalEMA, prevAcceptedInterval) so ext clock is detected
+              // immediately on the next PLAY press.
               sequencePlaying = false;
+              armed = false;
+              armPulseCountdown = 0;
               setTransport(STOPPED);
               subdivTimer.end();
               noInterrupts();
@@ -1679,8 +1699,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 24:  // Master Delay Time (quantized to tempo)
       {
         // Use external BPM when synced, fall back to internal knob BPM
-        float activeBpm = (transportState == RUN_EXT && extBpmDisplay > 0.0f)
-                          ? extBpmDisplay : bpm;
+        float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
         int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
         snprintf(displayParameter1, sizeof(displayParameter1), "DELAY TIME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", ratioLabels[ratioIdx]);
@@ -2346,8 +2365,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 24:  // Master Delay Time (quantized to tempo)
       {
         // Use external BPM when synced, fall back to internal knob BPM
-        float activeBpm = (transportState == RUN_EXT && extBpmDisplay > 0.0f)
-                          ? extBpmDisplay : bpm;
+        float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
         int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
         float msPerBeat = 60000.0f / activeBpm;
 
@@ -2709,6 +2727,44 @@ void updateDisplay() {
   nowMs = sysTickMs;
   interrupts();
 
+  // Count-in display — shows "4" "3" "2" "1" countdown while armed
+  if (armed && transportState == RUN_EXT) {
+    display.clearDisplay();
+    display.setFont(NULL);
+    display.setTextColor(1);
+    display.setTextWrap(false);
+
+    // Calculate beat countdown: 4, 3, 2, 1
+    // pulsesPerCycle = numSteps * ppqn / STEPS_PER_BEAT
+    // pulsesPerBeat = ppqn
+    // pulsesCounted = pulsesPerCycle - armPulseCountdown
+    uint16_t pulsesPerCycle = (uint16_t)numSteps * ppqn / STEPS_PER_BEAT;
+    uint16_t pulsesCounted = pulsesPerCycle - armPulseCountdown;
+    uint8_t beatsPerCycle = numSteps / STEPS_PER_BEAT;  // 4
+
+    uint8_t currentBeat = 0;
+    if (pulsesCounted > 0) {
+      currentBeat = (pulsesCounted - 1) / ppqn + 1;  // 1-based beat number
+    }
+    // Countdown: show beatsRemaining = beatsPerCycle - currentBeat + 1
+    // But before first pulse (currentBeat=0), show beatsPerCycle
+    uint8_t countdown = (currentBeat == 0)
+                        ? beatsPerCycle
+                        : beatsPerCycle - currentBeat + 1;
+
+    // Large centered countdown number
+    display.setTextSize(4);  // ~24px wide per char
+    display.setCursor(52, 16);
+    display.print(countdown);
+
+    // SPI push — no timing guard needed during count-in (no steps firing)
+    display.display();
+    noInterrupts();
+    lastFrameDrawTick = nowMs;
+    interrupts();
+    return;
+  }
+
   // PPQN selection mode — full-screen takeover, skip normal UI
   if (ppqnModeActive) {
     display.clearDisplay();
@@ -2836,23 +2892,23 @@ void updateDisplay() {
   display.drawLine(0, 63, 0, 20, 1);
   display.drawLine(1, 19, 127, 19, 1);
 
-  // BPM / EXT clock state — always show one decimal place
+  // BPM / EXT clock state — always show one decimal place.
+  // Show "EXT" and external BPM whenever sync pulses are being received,
+  // even while STOPPED — so the user sees the incoming tempo before pressing PLAY.
   display.setCursor(0, 0);
-  if (transportState == RUN_EXT) {
+  if (extBpmDisplay > 0.0f) {
     display.print("EXT");
     display.setCursor(0, 10);
-    if (extBpmDisplay > 0) {
-      // Round to nearest 0.5 with hysteresis to prevent display bouncing.
-      // Compare raw BPM vs last displayed value — raw float wanders
-      // continuously so 0.3 BPM deadband works naturally regardless
-      // of grid alignment.
-      static float lastSnapped = 0.0f;
-      float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
-      if (lastSnapped <= 0.0f || fabsf(extBpmDisplay - lastSnapped) > 0.3f) {
-        lastSnapped = snapped;
-      }
-      display.print(lastSnapped, 1);
+    // Round to nearest 0.5 with hysteresis to prevent display bouncing.
+    // Compare raw BPM vs last displayed value — raw float wanders
+    // continuously so 0.3 BPM deadband works naturally regardless
+    // of grid alignment.
+    static float lastSnapped = 0.0f;
+    float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
+    if (lastSnapped <= 0.0f || fabsf(extBpmDisplay - lastSnapped) > 0.3f) {
+      lastSnapped = snapped;
     }
+    display.print(lastSnapped, 1);
   } else {
     display.print("BPM");
     display.setCursor(0, 10);
@@ -2872,9 +2928,9 @@ void updateDisplay() {
   }
 
   // Choke (global decay offset)
-  display.setCursor(54, 0);
+  display.setCursor(56, 0);
   display.print("CHOKE");
-  display.setCursor(54, 10);
+  display.setCursor(56, 10);
   if (chokeSnap == 0) {
     display.print("OFF");
   } else {
