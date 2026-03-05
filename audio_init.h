@@ -10,9 +10,9 @@
 // ============================================================================
 
 // Globals coming from the main file that we use for initial mixer volumes
-extern float d1Vol;
-extern float d2Vol;
-extern float d3Vol;
+extern float d1Volume;
+extern float d2Volume;
+extern float d3Volume;
 
 inline void audioInit() {
 
@@ -60,17 +60,17 @@ inline void audioInit() {
   // ============================================================================
 
   // D1 oscillators
-  d1.begin(WAVEFORM_SINE);
-  d1.amplitude(0.85f);
-  d1.frequencyModulation(4);
+  d1OscSine.begin(WAVEFORM_SINE);
+  d1OscSine.amplitude(0.85f);
+  d1OscSine.frequencyModulation(4);
 
-  d1b.begin(WAVEFORM_SAWTOOTH);
-  d1b.amplitude(0.85f);
-  d1b.frequencyModulation(4);
+  d1OscSaw.begin(WAVEFORM_SAWTOOTH);
+  d1OscSaw.amplitude(0.85f);
+  d1OscSaw.frequencyModulation(4);
 
-  d1c.begin(WAVEFORM_SQUARE);
-  d1c.amplitude(0.85f);
-  d1c.frequencyModulation(4);
+  d1OscSquare.begin(WAVEFORM_SQUARE);
+  d1OscSquare.amplitude(0.85f);
+  d1OscSquare.frequencyModulation(4);
 
   // D1 oscillator mixer (ch0=sine, ch1=saw, ch2=square; ch3 unused)
   d1OscMixer.gain(0, 0.9f);
@@ -78,8 +78,8 @@ inline void audioInit() {
   d1OscMixer.gain(2, 0.0f);
 
   // D1 pitch envelope and modulation
-  d1DC.amplitude(0.25f);
-  d1DCwf.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
+  d1PitchDC.amplitude(0.25f);
+  d1WfDrive.amplitude(0.0f);  // wavefolder drive off at boot — set by knob at runtime
   d1PitchEnv.attack(0.0f);   // Instant onset — pitch sweep snaps, no ramp
   d1PitchEnv.hold(2.5f);     // Library default — peak pitch sustains briefly before decay
   d1PitchEnv.decay(25.0f);
@@ -92,23 +92,23 @@ inline void audioInit() {
   d1AmpEnv.sustain(0.0f);
 
   // D1 drum voice (transient layer)
-  drum1.frequency(150.0f);
-  drum1.length(15.0f);
-  drum1.pitchMod(1.0f);
-  drum1Amp.gain(2.0f);
+  d1Snap.frequency(150.0f);
+  d1Snap.length(15.0f);
+  d1Snap.pitchMod(1.0f);
+  d1SnapAmp.gain(2.0f);
 
   // D1 voice mixer (dry oscillators + drum transient + wavefolder)
-  d1Mixer.gain(0, 0.3f);   // d1LowPass (dry osc)
-  d1Mixer.gain(1, 0.9f);   // drum1Amp (transient)
-  d1Mixer.gain(2, 0.0f);   // unconnected
-  d1Mixer.gain(3, 0.25f);  // d1Wavefolder (wet)
+  d1VoiceMixer.gain(0, 0.3f);   // d1LowPass (dry osc)
+  d1VoiceMixer.gain(1, 0.9f);   // d1SnapAmp (transient)
+  d1VoiceMixer.gain(2, 0.0f);   // unconnected
+  d1VoiceMixer.gain(3, 0.25f);  // d1Wavefolder (wet)
 
   // D1 filters
   d1LowPass.frequency(3000.0f);
   d1LowPass.resonance(2.0f);
 
-  d1Filter.frequency(85.0f);
-  d1Filter.resonance(2.0f);
+  d1HighPass.frequency(85.0f);
+  d1HighPass.resonance(2.0f);
 
   // D1 EQ — stages 0-2 set at runtime by knob 6 (D1 Body)
   d1EQ.setLowpass(3, 8000.0f, 0.707f);  // Stage 3: permanent hiss filter
@@ -121,10 +121,10 @@ inline void audioInit() {
   // ============================================================================
 
   // D2 main oscillators
-  d2.begin(WAVEFORM_SINE);
-  d2.amplitude(0.75f);
-  d2.frequency(200.0f);
-  d2.frequencyModulation(1);
+  d2Osc.begin(WAVEFORM_SINE);
+  d2Osc.amplitude(0.75f);
+  d2Osc.frequency(200.0f);
+  d2Osc.frequencyModulation(1);
 
   // D2 amplitude envelope
   d2AmpEnv.decay(75.0f);
@@ -132,19 +132,19 @@ inline void audioInit() {
   d2AmpEnv.sustain(0.0f);
 
   // D2 attack transient
-  d2Attack.frequency(1000.0f);
-  d2Attack.length(15.0f);
-  d2Attack.pitchMod(0.6f);
+  d2ClickTransient.frequency(1000.0f);
+  d2ClickTransient.length(15.0f);
+  d2ClickTransient.pitchMod(0.6f);
 
-  d2AttackFilter.frequency(2000.0f);
-  d2AttackFilter.resonance(4.0f);
+  d2ClickFilter.frequency(2000.0f);
+  d2ClickFilter.resonance(4.0f);
 
   // D2 noise layer
   d2Noise.amplitude(0.75f);
 
-  d2NoiseEnvelope.attack(10.0f);
-  d2NoiseEnvelope.decay(100.0f);
-  d2NoiseEnvelope.sustain(0.0f);
+  d2NoiseEnv.attack(10.0f);
+  d2NoiseEnv.decay(100.0f);
+  d2NoiseEnv.sustain(0.0f);
 
   d2NoiseFilter.frequency(5000.0f);
   d2NoiseFilter.resonance(2.0f);
@@ -155,18 +155,18 @@ inline void audioInit() {
   drum2.pitchMod(0.5f);
 
   // D2 voice mixer (oscillator + drum transient + noise + attack)
-  d2Mixer.gain(0, 0.33f);
-  d2Mixer.gain(1, 0.1f);
-  d2Mixer.gain(2, 0.1f);
-  d2Mixer.gain(3, 0.09f);
+  d2VoiceMixer.gain(0, 0.33f);
+  d2VoiceMixer.gain(1, 0.1f);
+  d2VoiceMixer.gain(2, 0.1f);
+  d2VoiceMixer.gain(3, 0.09f);
 
   // D2 main filter
-  d2Filter.frequency(400.0f);
-  d2Filter.resonance(1.25f);
+  d2VoiceHighPass.frequency(400.0f);
+  d2VoiceHighPass.resonance(1.25f);
 
   // D2 wavefolder
-  d2WfSine.amplitude(1.0f);
-  d2WfSine.frequency(20.0f);
+  d2WfSineOsc.amplitude(1.0f);
+  d2WfSineOsc.frequency(20.0f);
 
   d2WfAmp.gain(1.0f);
 
@@ -174,8 +174,8 @@ inline void audioInit() {
   d2WfLowpass.resonance(2.0f);
 
   // D2 reverb
-  d2Verb.damping(1.0f);
-  d2Verb.roomsize(0.3f);
+  d2Reverb.damping(1.0f);
+  d2Reverb.roomsize(0.3f);
 
   // --- Clap effects ---
 
@@ -184,22 +184,22 @@ inline void audioInit() {
   clapNoise2.amplitude(0.75f);
 
   // Clap filters
-  clap1Filter.frequency(1100.0f);
-  clap1Filter.resonance(1.8f);
+  clapFilter1.frequency(1100.0f);
+  clapFilter1.resonance(1.8f);
 
-  clap2Filter.frequency(900.0f);
-  clap2Filter.resonance(1.8f);
+  clapFilter2.frequency(900.0f);
+  clapFilter2.resonance(1.8f);
 
   // Clap envelopes
-  clap1AmpEnv.attack(0.5f);
-  clap1AmpEnv.hold(4.0f);
-  clap1AmpEnv.decay(20.0f);
-  clap1AmpEnv.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
+  clapAmpEnv1.attack(0.5f);
+  clapAmpEnv1.hold(4.0f);
+  clapAmpEnv1.decay(20.0f);
+  clapAmpEnv1.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
 
-  clap2AmpEnv.attack(0.5f);
-  clap2AmpEnv.hold(5.0f);
-  clap2AmpEnv.decay(24.0f);
-  clap2AmpEnv.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
+  clapAmpEnv2.attack(0.5f);
+  clapAmpEnv2.hold(5.0f);
+  clapAmpEnv2.decay(24.0f);
+  clapAmpEnv2.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
@@ -223,8 +223,8 @@ inline void audioInit() {
   clapMixer2.gain(2, 0.10f);
   clapMixer2.gain(3, 0.05f);
 
-  clapMixerMaster.gain(0, 1.0f);
-  clapMixerMaster.gain(1, 1.0f);
+  clapBusMixer.gain(0, 1.0f);
+  clapBusMixer.gain(1, 1.0f);
 
   // Clap master filter and envelope
   clapMasterFilter.frequency(1250.0f);
@@ -240,7 +240,7 @@ inline void audioInit() {
   // --- D2 output mixing ---
 
   // Snare / clap mixer (feeds D2 FX and delay)
-  // in0: snare body (from d2Filter)
+  // in0: snare body (from d2VoiceHighPass)
   // in1: clap envelope (from clapMasterEnv)
   // in2 / in3: spare or extra tone if you want later
   snareClapMixer.gain(0, 0.6f);
@@ -250,7 +250,7 @@ inline void audioInit() {
 
   // D2 master mixer: dry bus, verb return, wavefolder output
   // in0: snareClapMixer dry
-  // in1: d2Verb
+  // in1: d2Reverb
   // in2: d2Wavefolder
   // in3: unused
   d2MasterMixer.gain(0, 0.7f);  // dry
@@ -266,31 +266,31 @@ inline void audioInit() {
 
   float d3606baseFreq = 350.0f;
 
-  d3606W1.begin(0.5f, d3606baseFreq * 1.00f, WAVEFORM_SQUARE);  // 350.0
-  d3606W2.begin(0.5f, d3606baseFreq * 1.08f, WAVEFORM_SQUARE);  // 378.0
-  d3606W3.begin(0.5f, d3606baseFreq * 1.17f, WAVEFORM_SQUARE);  // 409.5
-  d3606W4.begin(0.5f, d3606baseFreq * 1.26f, WAVEFORM_SQUARE);  // 441.0
-  d3606W5.begin(0.5f, d3606baseFreq * 1.36f, WAVEFORM_SQUARE);  // 476.0
-  d3606W6.begin(0.5f, d3606baseFreq * 1.48f, WAVEFORM_SQUARE);  // 518.0
+  d3606Osc1.begin(0.5f, d3606baseFreq * 1.00f, WAVEFORM_SQUARE);  // 350.0
+  d3606Osc2.begin(0.5f, d3606baseFreq * 1.08f, WAVEFORM_SQUARE);  // 378.0
+  d3606Osc3.begin(0.5f, d3606baseFreq * 1.17f, WAVEFORM_SQUARE);  // 409.5
+  d3606Osc4.begin(0.5f, d3606baseFreq * 1.26f, WAVEFORM_SQUARE);  // 441.0
+  d3606Osc5.begin(0.5f, d3606baseFreq * 1.36f, WAVEFORM_SQUARE);  // 476.0
+  d3606Osc6.begin(0.5f, d3606baseFreq * 1.48f, WAVEFORM_SQUARE);  // 518.0
 
-  d3606Mixer1.gain(0, 0.25f);
-  d3606Mixer1.gain(1, 0.25f);
-  d3606Mixer1.gain(2, 0.25f);
-  d3606Mixer1.gain(3, 0.25f);
+  d3606OscMixer1.gain(0, 0.25f);
+  d3606OscMixer1.gain(1, 0.25f);
+  d3606OscMixer1.gain(2, 0.25f);
+  d3606OscMixer1.gain(3, 0.25f);
 
-  d3606Mixer2.gain(0, 0.25f);  // W5
-  d3606Mixer2.gain(1, 0.25f);  // W6
-  d3606Mixer2.gain(2, 0.0f);   // unconnected
-  d3606Mixer2.gain(3, 0.0f);   // unconnected
+  d3606OscMixer2.gain(0, 0.25f);  // W5
+  d3606OscMixer2.gain(1, 0.25f);  // W6
+  d3606OscMixer2.gain(2, 0.0f);   // unconnected
+  d3606OscMixer2.gain(3, 0.0f);   // unconnected
 
-  d3606MasterMixer.gain(0, 1.0f);
-  d3606MasterMixer.gain(1, 1.0f);
+  d3606BusMixer.gain(0, 1.0f);
+  d3606BusMixer.gain(1, 1.0f);
 
-  d3606HPF.frequency(1000.0f);
-  d3606HPF.resonance(1.25f);
+  d3606HighPass.frequency(1000.0f);
+  d3606HighPass.resonance(1.25f);
 
-  d3606BPF.frequency(5000.0f);
-  d3606BPF.resonance(1.25f);
+  d3606BandPass.frequency(5000.0f);
+  d3606BandPass.resonance(1.25f);
 
   d3606AmpEnv.attack(1.0f);
   d3606AmpEnv.decay(45.0f);
@@ -312,43 +312,43 @@ inline void audioInit() {
   const float mod1Freq     = carrier1Freq * ratio1;  // ≈ 1118 Hz
   const float mod2Freq     = carrier2Freq * ratio2;  // ≈ 1484.7 Hz
 
-  d3W1.begin(0.30f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
-  d3W1.frequencyModulation(8);  // wide FM bandwidth for dense sidebands
+  d3FmCarrier1.begin(0.30f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
+  d3FmCarrier1.frequencyModulation(8);  // wide FM bandwidth for dense sidebands
 
-  d3W3.begin(0.30f, carrier2Freq, WAVEFORM_SINE);  // carrier 2
-  d3W3.frequencyModulation(8);
+  d3FmCarrier2.begin(0.30f, carrier2Freq, WAVEFORM_SINE);  // carrier 2
+  d3FmCarrier2.frequencyModulation(8);
 
-  d3W2.begin(0.65f, mod1Freq, WAVEFORM_SINE);  // modulator 1 — aggressive depth
-  d3W4.begin(0.55f, mod2Freq, WAVEFORM_SINE);  // modulator 2
+  d3FmMod1.begin(0.65f, mod1Freq, WAVEFORM_SINE);  // modulator 1 — aggressive depth
+  d3FmMod2.begin(0.55f, mod2Freq, WAVEFORM_SINE);  // modulator 2
 
-  d3Mixer1.gain(0, 0.75f);  // FM carrier 1
-  d3Mixer1.gain(1, 0.75f);  // FM carrier 2
-  d3Mixer1.gain(2, 0.0f);
-  d3Mixer1.gain(3, 0.0f);
+  d3FmCarrierMixer.gain(0, 0.75f);  // FM carrier 1
+  d3FmCarrierMixer.gain(1, 0.75f);  // FM carrier 2
+  d3FmCarrierMixer.gain(2, 0.0f);
+  d3FmCarrierMixer.gain(3, 0.0f);
 
-  d3MasterMixer.gain(0, 1.0f);  // FM voice at full into filter chain
-  d3MasterMixer.gain(1, 0.0f);  // channel 1: unused (no patch cord connected)
+  d3FmBusMixer.gain(0, 1.0f);  // FM voice at full into filter chain
+  d3FmBusMixer.gain(1, 0.0f);  // channel 1: unused (no patch cord connected)
 
-  // FM voice shaping filters (d3MasterMixer → d3BPF → d3Filter → d3AmpEnv)
-  d3BPF.frequency(4000.0f);     // bandpass: tracks pitch knob (4000–8000 Hz)
-  d3BPF.resonance(0.9f);
+  // FM voice shaping filters (d3FmBusMixer → d3FmBandPass → d3FmHighPass → d3FmAmpEnv)
+  d3FmBandPass.frequency(4000.0f);     // bandpass: tracks pitch knob (4000–8000 Hz)
+  d3FmBandPass.resonance(0.9f);
 
-  d3Filter.frequency(1500.0f);  // highpass: tracks pitch knob (1500–3000 Hz)
-  d3Filter.resonance(0.7f);
+  d3FmHighPass.frequency(1500.0f);  // highpass: tracks pitch knob (1500–3000 Hz)
+  d3FmHighPass.resonance(0.7f);
 
-  d3AmpEnv.attack(1.0f);
-  d3AmpEnv.decay(45.0f);
-  d3AmpEnv.sustain(0.0f);
+  d3FmAmpEnv.attack(1.0f);
+  d3FmAmpEnv.decay(45.0f);
+  d3FmAmpEnv.sustain(0.0f);
 
   // --- D3 "PERC" voice: noise-based percussion ---
 
-  drum3.pitchMod(0.5f);
-  drum3.frequency(700.0f);
-  drum3.length(15.0f);
+  d3Perc.pitchMod(0.5f);
+  d3Perc.frequency(700.0f);
+  d3Perc.length(15.0f);
 
   // --- D3 output mixing ---
 
-  d3WfSine.begin(0.0f, 400.0f, WAVEFORM_SINE);  // fold-depth modulator — off at boot, knob 19 sets amplitude + freq
+  d3WfOsc.begin(0.0f, 400.0f, WAVEFORM_SINE);  // fold-depth modulator — off at boot, knob 19 sets amplitude + freq
 
   // D3 voice mixer (606 + FM + PERC) — feeds both dry path and wavefolder
   d3VoiceMixer.gain(0, 0.35f);  // 606 voice — raised for parity with FM
@@ -356,8 +356,8 @@ inline void audioInit() {
   d3VoiceMixer.gain(2, 0.15f);  // PERC voice — lowered to balance against 606/FM
 
   // D3 final mixer (dry + wavefolder)
-  d3Mixer.gain(0, 0.70f);  // d3VoiceMixer (dry) — parity with D1 (0.7) and D2 (0.7)
-  d3Mixer.gain(1, 0.0f);   // d3Wavefolder (wet) — off at boot, knob 19 enables
+  d3MasterMixer.gain(0, 0.70f);  // d3VoiceMixer (dry) — parity with D1 (0.7) and D2 (0.7)
+  d3MasterMixer.gain(1, 0.0f);   // d3Wavefolder (wet) — off at boot, knob 19 enables
   // inputs 2–3: unconnected
 
   // D3 master filter
@@ -369,24 +369,24 @@ inline void audioInit() {
   // ============================================================================
 
   // Drum bus mixer (D1, D2, D3 → master)
-  drumMixer.gain(0, d1Vol);  // D1 bus
-  drumMixer.gain(1, d2Vol);  // D2 bus (from d2MasterMixer)
-  drumMixer.gain(2, d3Vol);  // D3 bus
+  drumMixer.gain(0, d1Volume);  // D1 bus
+  drumMixer.gain(1, d2Volume);  // D2 bus (from d2MasterMixer)
+  drumMixer.gain(2, d3Volume);  // D3 bus
   drumMixer.gain(3, 0.0f);   // unconnected
 
-  // Master wavefolder oscillators (wfSine + wfSaw → wfMixer → masterWf input 1)
-  wfSine.begin(WAVEFORM_SINE);
-  wfSine.amplitude(1.0f);
-  wfSine.frequency(80.0f);
+  // Master wavefolder oscillators (masterWfOscSine + masterWfOscSaw → masterWfInputMixer → masterWavefolder input 1)
+  masterWfOscSine.begin(WAVEFORM_SINE);
+  masterWfOscSine.amplitude(1.0f);
+  masterWfOscSine.frequency(80.0f);
 
-  wfSaw.begin(WAVEFORM_SAWTOOTH);
-  wfSaw.amplitude(1.0f);
-  wfSaw.frequency(80.0f);
+  masterWfOscSaw.begin(WAVEFORM_SAWTOOTH);
+  masterWfOscSaw.amplitude(1.0f);
+  masterWfOscSaw.frequency(80.0f);
 
-  wfMixer.gain(0, 0.0f);          // sine channel — knob 30 controls mix
-  wfMixer.gain(1, 0.0f);          // saw channel
-  wfMixer.gain(2, 0.0f);
-  wfMixer.gain(3, 0.0f);
+  masterWfInputMixer.gain(0, 0.0f);          // sine channel — knob 30 controls mix
+  masterWfInputMixer.gain(1, 0.0f);          // saw channel
+  masterWfInputMixer.gain(2, 0.0f);
+  masterWfInputMixer.gain(3, 0.0f);
 
   // Final output amplifier — 3× makeup gain compensates for master filter chain attenuation
   finalAmp.gain(3.0f);
@@ -406,10 +406,10 @@ inline void audioInit() {
   delayAmp.gain(0.79f);  // matches PEAK_LEVEL in delay amount knob handler
 
   // Delay mixer and feedback
-  delayMixer.gain(0, 0.0f);  // D1 send
-  delayMixer.gain(1, 0.0f);  // D2 send from snareClapMixer
-  delayMixer.gain(2, 0.0f);  // D3 send
-  delayMixer.gain(3, 0.0f);  // feedback tap
+  delaySendMixer.gain(0, 0.0f);  // D1 send
+  delaySendMixer.gain(1, 0.0f);  // D2 send from snareClapMixer
+  delaySendMixer.gain(2, 0.0f);  // D3 send
+  delaySendMixer.gain(3, 0.0f);  // feedback tap
 
   // Master filters
   masterHiPass.resonance(1.5f);

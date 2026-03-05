@@ -87,7 +87,10 @@ uint8_t bassLineNote[numSteps] = {
   36,36,36,36, 36,36,36,36, 36,36,36,36, 36,36,36,36
 };
 
-// sequences
+// ============================================================================
+//  Sequences
+// ============================================================================
+
 byte drum1Sequence[numSteps] = {
   0, 0, 0, 0,
   0, 0, 0, 0,
@@ -109,14 +112,15 @@ byte drum3Sequence[numSteps] = {
   0, 0, 0, 0
 };
 
-// timers
-IntervalTimer tickTimer1k;
+// ============================================================================
+//  Timing, Tempo, and Transport
+// ============================================================================
+
+IntervalTimer sysTickTimer;
 IntervalTimer stepTimer;
 
-// global time and step
 volatile uint32_t sysTickMs = 0;  // Written by sysTickISR, read by main loop
 
-// tempo
 // bpm: main-loop only — not accessed from any ISR. rearmStepTimer() is only
 // called from setTransport() and setup(), both main-loop context.
 float bpm = 120.0f;
@@ -124,7 +128,7 @@ float bpm = 120.0f;
 // main loop reads. See concurrency contract in ext_sync.h.
 volatile uint8_t currentStep = 0;
 
-// transport — three states: internal clock, external clock, or stopped
+// Three states: internal clock, external clock, or stopped
 enum TransportState : uint8_t {
   STOPPED   = 0,
   RUN_INT   = 1,   // Internal timer drives steps
@@ -165,32 +169,38 @@ uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (m
 // Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
 #include "oscilloscope.h"
 
-// drum decays
+// ============================================================================
+//  Decay and Envelope State
+// ============================================================================
+
+// Base decay values (raw knob position, before choke offset)
 float d1DecayBase = 75.0f;
-float d1Decay = 75.0f;  // Effective D1 decay (base + choke). Written by applyChokeToDecays(), read by updateD1HoldCache().
 float d2DecayBase = 75.0f;
 float d3DecayBase = 25.0f;
 
-// global choke offset in ms
+// Effective decays (base + choke offset, updated by applyChokeToDecays)
+float d1EffectiveDecay = 75.0f;
+float d2ClapEffectiveDecay = 120.0f;  // Derived from d2DecayBase via normalized mapping
+float d3EffectiveDecay = 25.0f;       // Includes accent boost when accent mode active
+
+// Global choke offset
 int chokeOffsetMs = 0;
 int chokeDisplayPercent = 0;  // -100 to +100, for top bar and overlay display
-
-// D2 clap effective decay
-float clapEffDecayMs = 120.0f;  // Cached: clap decay (from D2 decay) + chokeOffsetMs, floored at 10
-
-// D3 cached effective decay (updated by applyChokeToDecays / accent knob)
-float d3CachedDecayMs = 25.0f;
 
 // D1 cached envelope params (updated on knob change / choke change)
 float d1CachedAttackMs = 0.5f;
 float d1CachedHoldMs = 56.25f;   // defaults; see updateD1HoldCache()
 
-// parameter overlay text — Main-loop only, no ISR access
+// ============================================================================
+//  Display State — Main-loop only, no ISR access
+// ============================================================================
+
+// Parameter overlay text
 char displayParameter1[24] = "";
 char displayParameter2[24] = "";
 uint32_t parameterOverlayStartTick = 0;
 
-// UI voice rails
+// Voice rail caret positions
 float uiMixD1Shape = 0.0f;
 float uiMixD2Voice = 0.0f;
 float uiMixD3Voice = 0.0f;
@@ -245,12 +255,12 @@ static constexpr int NUM_RATIOS = sizeof(quantizeRatios) / sizeof(quantizeRatios
 
 // master gain and wavefolder compensation
 float masterNominalGain = 1.0f;
-float masterWfComp = 1.0f;
+float masterWavefoldComp = 1.0f;
 
 // drum levels
-float d1Vol = 0.75f;
-float d2Vol = 0.75f;
-float d3Vol = 0.75f;
+float d1Volume = 0.75f;
+float d2Volume = 0.75f;
+float d3Volume = 0.75f;
 
 // delay sends
 float d1DelaySend = 0.0f;
@@ -302,12 +312,12 @@ static bool    knobUnlocked[knobCount];    // true once the user has moved this 
 static constexpr int KNOB_UNLOCK_THRESHOLD = 10;  // ADC counts of intentional movement
 
 // helpers
-static inline float mapf(int inputValue, int inMin, int inMax, float outMin, float outMax) {
+static inline float mapFloat(int inputValue, int inMin, int inMax, float outMin, float outMax) {
   if (inMax == inMin) return outMin;  // guard: avoid divide-by-zero
   return outMin + (outMax - outMin) * float(inputValue - inMin) / float(inMax - inMin);
 }
 
-static inline float normKnob(int rawKnobValue) {
+static inline float normalizeKnob(int rawKnobValue) {
   return float(rawKnobValue) / 1023.0f;
 }
 
@@ -316,9 +326,9 @@ float d1BaseFreq = 100.0f;
 
 inline void applyD1Freq() {
   AudioNoInterrupts();
-  d1.frequency(d1BaseFreq);
-  d1b.frequency(d1BaseFreq);
-  d1c.frequency(d1BaseFreq);
+  d1OscSine.frequency(d1BaseFreq);
+  d1OscSaw.frequency(d1BaseFreq);
+  d1OscSquare.frequency(d1BaseFreq);
   AudioInterrupts();
 }
 
@@ -365,7 +375,7 @@ static inline float d2EffectiveBaseDecay() {
 }
 
 // sequence routing
-inline byte* seqByTrack(Track t) {
+inline byte* sequenceForTrack(Track t) {
   switch (t) {
     case TRACK_D1: return drum1Sequence;
     case TRACK_D2: return drum2Sequence;
@@ -379,14 +389,14 @@ void updateOtherButtons();
 void updateStepButtons();
 void updateLEDs();
 void updateDisplay();
-void selectSequence(int index);
+void selectTrack(int index);
 void playSequence();
 void playSequenceCore(uint8_t step);
 void triggerD1();
 void triggerD2();
 void triggerD3(uint8_t step);
-inline int readKnobRaw(byte idx);
-inline void updateParameterDisplay(byte idx, int knobValue);
+int readKnobRaw(byte idx);
+void updateParameterDisplay(byte idx, int knobValue);
 inline void applyKnobToEngine(byte idx, int knobValue);
 void updateKnobs();
 void setTransport(TransportState s);
@@ -452,15 +462,15 @@ inline void updateDrumDelayGains() {
   }
 
   AudioNoInterrupts();
-  delayMixer.gain(0, s1);
-  delayMixer.gain(1, s2);
-  delayMixer.gain(2, s3);
+  delaySendMixer.gain(0, s1);
+  delaySendMixer.gain(1, s2);
+  delaySendMixer.gain(2, s3);
   AudioInterrupts();
 }
 
 inline void applyMasterGainFromState() {
-  // always honor masterNominalGain and masterWfComp, even when stopped
-  float g = masterNominalGain * masterWfComp;
+  // always honor masterNominalGain and masterWavefoldComp, even when stopped
+  float g = masterNominalGain * masterWavefoldComp;
   masterAmp.gain(g);
 }
 
@@ -468,23 +478,23 @@ inline void applyMasterGainFromState() {
 // instant punch); hold scales with decay. Call on choke or decay change.
 static inline void updateD1HoldCache() {
   d1CachedAttackMs = 0.5f;
-  d1CachedHoldMs = d1Decay * 0.75f;
+  d1CachedHoldMs = d1EffectiveDecay * 0.75f;
 }
 
 // choke application on all relevant decays
 
 void applyChokeToDecays() {
   // D1: floor at 17 ms
-  float d1EffDecay = d1DecayBase + chokeOffsetMs;
-  if (d1EffDecay < 17.0f) d1EffDecay = 17.0f;
-  d1Decay = d1EffDecay;
+  float decay = d1DecayBase + chokeOffsetMs;
+  if (decay < 17.0f) decay = 17.0f;
+  d1EffectiveDecay = decay;
 
   // Update D1 hold cache
   updateD1HoldCache();
 
   AudioNoInterrupts();
   d1AmpEnv.hold(d1CachedHoldMs);
-  d1AmpEnv.decay(d1Decay);
+  d1AmpEnv.decay(d1EffectiveDecay);
   AudioInterrupts();
 
   // D2 main decay using helper
@@ -500,16 +510,16 @@ void applyChokeToDecays() {
   if (d2Norm < 0.0f) d2Norm = 0.0f;
   if (d2Norm > 1.0f) d2Norm = 1.0f;
   float clapDecayBase = 120.0f + d2Norm * (275.0f - 120.0f);
-  clapEffDecayMs = clapDecayBase + chokeOffsetMs;
-  if (clapEffDecayMs < 10.0f) clapEffDecayMs = 10.0f;
+  d2ClapEffectiveDecay = clapDecayBase + chokeOffsetMs;
+  if (d2ClapEffectiveDecay < 10.0f) d2ClapEffectiveDecay = 10.0f;
 
   // Cache D3 effective decay for use in triggerD3()
-  d3CachedDecayMs = d3EffectiveBaseDecay();
+  d3EffectiveDecay = d3EffectiveBaseDecay();
 
   AudioNoInterrupts();
-  clap1AmpEnv.decay(clapEffDecayMs);
-  clap2AmpEnv.decay(clapEffDecayMs);
-  clapMasterEnv.decay(clapEffDecayMs);
+  clapAmpEnv1.decay(d2ClapEffectiveDecay);
+  clapAmpEnv2.decay(d2ClapEffectiveDecay);
+  clapMasterEnv.decay(d2ClapEffectiveDecay);
   AudioInterrupts();
 }
 
@@ -560,7 +570,7 @@ void setup() {
   // ============================================================================
 
   AudioMemory(1200);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
-  tickTimer1k.begin(sysTickISR, 1000);
+  sysTickTimer.begin(sysTickISR, 1000);
   audioInit();
   scopeQueue.begin();
 
@@ -871,7 +881,7 @@ void triggerD1() {
   AudioNoInterrupts();
   d1AmpEnv.attack(d1CachedAttackMs);
   d1AmpEnv.hold(d1CachedHoldMs);
-  d1AmpEnv.decay(d1Decay);
+  d1AmpEnv.decay(d1EffectiveDecay);
   AudioInterrupts();
 
   if (!skipNoteOff) {
@@ -880,7 +890,7 @@ void triggerD1() {
   }
   d1AmpEnv.noteOn();
   d1PitchEnv.noteOn();
-  drum1.noteOn();
+  d1Snap.noteOn();
 }
 
 // Trigger D2 (snare/clap) — called from main loop via playSequenceCore().
@@ -893,18 +903,18 @@ void triggerD2() {
 
   if (!skipNoteOff) {
     d2AmpEnv.noteOff();
-    clap1AmpEnv.noteOff();
-    clap2AmpEnv.noteOff();
+    clapAmpEnv1.noteOff();
+    clapAmpEnv2.noteOff();
     clapMasterEnv.noteOff();
-    d2NoiseEnvelope.noteOff();
+    d2NoiseEnv.noteOff();
   }
   d2AmpEnv.noteOn();
-  clap1AmpEnv.noteOn();
-  clap2AmpEnv.noteOn();
+  clapAmpEnv1.noteOn();
+  clapAmpEnv2.noteOn();
   clapMasterEnv.noteOn();
   drum2.noteOn();
-  d2Attack.noteOn();
-  d2NoiseEnvelope.noteOn();
+  d2ClickTransient.noteOn();
+  d2NoiseEnv.noteOn();
 }
 
 // Trigger D3 (hi-hat) — called from main loop via playSequenceCore().
@@ -915,7 +925,7 @@ void triggerD3(uint8_t step) {
   lastD3TriggerUs = now;
 
   // Use cached decay and accent mask (updated by applyChokeToDecays / accent knob)
-  float applyDecay = d3CachedDecayMs;
+  float applyDecay = d3EffectiveDecay;
 
   // step is always 0–15 (uint8_t from currentStep % numSteps)
   if (d3AccentMask && ((d3AccentMask >> (15 - step)) & 1)) {
@@ -923,18 +933,18 @@ void triggerD3(uint8_t step) {
   }
 
   AudioNoInterrupts();
-  d3AmpEnv.decay(applyDecay);
+  d3FmAmpEnv.decay(applyDecay);
   d3606AmpEnv.decay(applyDecay);
-  drum3.length(applyDecay);
+  d3Perc.length(applyDecay);
   AudioInterrupts();
 
   if (!skipNoteOff) {
-    d3AmpEnv.noteOff();
+    d3FmAmpEnv.noteOff();
     d3606AmpEnv.noteOff();
   }
-  d3AmpEnv.noteOn();
+  d3FmAmpEnv.noteOn();
   d3606AmpEnv.noteOn();
-  drum3.noteOn();
+  d3Perc.noteOn();
 }
 
 // buttons and LEDs
@@ -944,13 +954,13 @@ void updateOtherButtons() {
   static bool btnState[otherButtonsCount] = { false };
   static bool btnLastState[otherButtonsCount] = { false };
 
-  // Button 7 long-hold state — shared between state-change and continuous-hold blocks
-  static uint32_t btn7PressTick = 0;
-  static bool btn7EnteredPpqn = false;
+  // Button 7 (MEMORY) long-hold state — press/release below, continuous hold check at end of loop
+  static uint32_t btnMemoryPressTick = 0;
+  static bool btnMemoryEnteredPpqn = false;
 
-  // Button 0 long-hold state — bass line mode toggle
-  static uint32_t btn0PressTick = 0;
-  static bool btn0EnteredBassLine = false;
+  // Button 0 (D1) long-hold state — press/release below, continuous hold check at end of loop
+  static uint32_t btnD1PressTick = 0;
+  static bool btnD1EnteredBassLine = false;
 
   uint32_t nowTick;
   noInterrupts();
@@ -978,11 +988,11 @@ void updateOtherButtons() {
       if (i == 7) {
         if (btnState[7]) {
           // Press down — record timestamp
-          btn7PressTick = nowTick;
-          btn7EnteredPpqn = false;
+          btnMemoryPressTick = nowTick;
+          btnMemoryEnteredPpqn = false;
         } else {
           // Release
-          if (btn7EnteredPpqn) {
+          if (btnMemoryEnteredPpqn) {
             // Hold already entered PPQN mode — ignore release (don't cycle slot)
           } else if (ppqnModeActive) {
             // Short press in PPQN mode — cycle to next value
@@ -1000,7 +1010,7 @@ void updateOtherButtons() {
             snprintf(displayParameter2, sizeof(displayParameter2), "SELECT");
             parameterOverlayStartTick = nowTick;
           }
-          btn7EnteredPpqn = false;
+          btnMemoryEnteredPpqn = false;
         }
       }
 
@@ -1008,17 +1018,17 @@ void updateOtherButtons() {
       if (i == 0) {
         if (btnState[0]) {
           // Press down — record timestamp
-          btn0PressTick = nowTick;
-          btn0EnteredBassLine = false;
+          btnD1PressTick = nowTick;
+          btnD1EnteredBassLine = false;
         } else {
           // Release
-          if (btn0EnteredBassLine) {
-            // Long-press toggled bass line mode — suppress selectSequence
+          if (btnD1EnteredBassLine) {
+            // Long-press toggled bass line mode — suppress selectTrack
           } else {
             // Short press — normal D1 sequence select
-            selectSequence(0);
+            selectTrack(0);
           }
-          btn0EnteredBassLine = false;
+          btnD1EnteredBassLine = false;
         }
       }
 
@@ -1026,8 +1036,8 @@ void updateOtherButtons() {
       if (btnState[i] && i != 7 && i != 0) {
         switch (i) {
 
-          case 1: selectSequence(1); break;
-          case 2: selectSequence(2); break;
+          case 1: selectTrack(1); break;
+          case 2: selectTrack(2); break;
 
           // cases 3, 4, 5: hardware-present but unassigned
 
@@ -1155,11 +1165,10 @@ void updateOtherButtons() {
       }
     }
 
-    // Button 7 continuous hold check — enters/exits PPQN mode after 2s while held.
-    // Runs on every scan iteration (not just state change). Uses function-scope
-    // btn7PressTick/btn7EnteredPpqn shared with the state-change block above.
-    if (i == 7 && btnState[7] && !btn7EnteredPpqn) {
-      if ((uint32_t)(nowTick - btn7PressTick) >= PPQN_LONG_PRESS_MS) {
+    // Button 7 (MEMORY) continuous hold check — pairs with press/release handling above.
+    // Runs on every scan iteration (not just state change). Enters/exits PPQN mode after 2s.
+    if (i == 7 && btnState[7] && !btnMemoryEnteredPpqn) {
+      if ((uint32_t)(nowTick - btnMemoryPressTick) >= PPQN_LONG_PRESS_MS) {
         if (ppqnModeActive) {
           // Long-press while in PPQN mode — save and exit
           ppqn = ppqnModeSelection;
@@ -1188,15 +1197,15 @@ void updateOtherButtons() {
           ppqnModeLastActivityTick = nowTick;
           ppqnModeSelection = ppqn;
         }
-        btn7EnteredPpqn = true;  // Prevent release from cycling slot/PPQN
+        btnMemoryEnteredPpqn = true;  // Prevent release from cycling slot/PPQN
       }
     }
 
-    // Button 0 continuous hold check — enters/exits bass line mode after 2s while held.
-    if (i == 0 && btnState[0] && !btn0EnteredBassLine) {
-      if ((uint32_t)(nowTick - btn0PressTick) >= BASSLINE_LONG_PRESS_MS) {
+    // Button 0 (D1) continuous hold check — pairs with press/release handling above.
+    if (i == 0 && btnState[0] && !btnD1EnteredBassLine) {
+      if ((uint32_t)(nowTick - btnD1PressTick) >= BASSLINE_LONG_PRESS_MS) {
         bassLineModeActive = !bassLineModeActive;
-        btn0EnteredBassLine = true;
+        btnD1EnteredBassLine = true;
         snprintf(displayParameter1, sizeof(displayParameter1),
                  bassLineModeActive ? "BASSLINE MODE" : "EXITING BASSLINE");
         displayParameter2[0] = 0;
@@ -1208,7 +1217,7 @@ void updateOtherButtons() {
   }
 }
 
-void selectSequence(int index) {
+void selectTrack(int index) {
   switch (index) {
     case 0: activeTrack = TRACK_D1; break;
     case 1: activeTrack = TRACK_D2; break;
@@ -1233,7 +1242,7 @@ void updateLEDs() {
   }
 
   // Normal pattern display with optional current step indicator
-  byte* seq = seqByTrack(activeTrack);
+  byte* seq = sequenceForTrack(activeTrack);
 
   // Snapshot play state — both volatile (ISR-written)
   uint8_t currentStepSnap;
@@ -1261,7 +1270,7 @@ void updateStepButtons() {
   static bool btnLastState[stepButtonCount] = { false };
   static uint32_t stepPressTick[stepButtonCount] = { 0 };
 
-  byte* seq = seqByTrack(activeTrack);
+  byte* seq = sequenceForTrack(activeTrack);
 
   // single stable timebase for this whole scan
   uint32_t nowTick;
@@ -1314,7 +1323,7 @@ void updateStepButtons() {
       if (bassLineHeldStep == i) {
         // Already in note-select — keep overlay alive
         char noteName[5];
-        bassLinePitch(bassLineNote[i], noteName);
+        formatBassNote(bassLineNote[i], noteName);
         snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
         parameterOverlayStartTick = nowTick;
@@ -1361,7 +1370,7 @@ int readKnobRaw(byte idx) {
 
 // D1 Decay curve: piecewise 50–70 ms (low range) then 70–1000 ms (high range)
 static inline float d1DecayCurve(int knobValue) {
-  float norm = normKnob(knobValue);
+  float norm = normalizeKnob(knobValue);
   if (norm <= 0.25f) {
     float blend = norm / 0.25f;
     return 50.0f + (70.0f - 50.0f) * blend;
@@ -1373,7 +1382,7 @@ static inline float d1DecayCurve(int knobValue) {
 
 // D1 Pitch curve: piecewise 55–110 Hz (A1→A2) then 110–440 Hz (A2→A4)
 static inline float d1PitchCurve(int knobValue) {
-  float norm = normKnob(knobValue);
+  float norm = normalizeKnob(knobValue);
   if (norm <= 0.33f) {
     float blend = norm / 0.33f;
     return 55.0f + (110.0f - 55.0f) * blend;   // A1(55) → A2(110)
@@ -1409,7 +1418,7 @@ inline float bassLineFreq(uint8_t midiNote) {
 
 // Bass line pitch: writes note name string for display.
 // outName must be >= 5 chars.
-static inline void bassLinePitch(uint8_t midiNote, char* outName) {
+static inline void formatBassNote(uint8_t midiNote, char* outName) {
   static const char* NOTE_NAMES[] = {
     "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
   };
@@ -1425,7 +1434,7 @@ static inline uint8_t bassLineKnobToNote(int knobValue) {
 
 // D2 Decay curve: piecewise 50–300 ms (low half) then 300–1000 ms (high half)
 static inline float d2DecayCurve(int knobValue) {
-  float norm = normKnob(knobValue);
+  float norm = normalizeKnob(knobValue);
   if (norm <= 0.5f) {
     return 50.0f + (300.0f - 50.0f) * (norm / 0.5f);
   } else {
@@ -1436,7 +1445,7 @@ static inline float d2DecayCurve(int knobValue) {
 // BPM curve: 60–400 (first 85%) then 900–999 (remaining 15%, hyperspeed), rounded to 0.5
 // NOTE: The 400–900 gap is intentional — hyperspeed is a separate creative effect.
 static inline float bpmFromKnob(int knobValue) {
-  float norm = normKnob(knobValue);
+  float norm = normalizeKnob(knobValue);
   float bpmValue;
   if (norm <= 0.85f) {
     // 0–85%: 60 → 400 BPM (normal range)
@@ -1490,7 +1499,7 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
     }
   }
 
-  int ratioIdx = (int)(normKnob(knobValue) * maxIdx + 0.5f);
+  int ratioIdx = (int)(normalizeKnob(knobValue) * maxIdx + 0.5f);
   return constrain(ratioIdx, 0, maxIdx);
 }
 
@@ -1513,7 +1522,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 0:  // D1 Drive/Distortion
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORTION");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1524,7 +1533,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
         displayParameter1[0] = 0;
         displayParameter2[0] = 0;
         activeRail = RAIL_D1_SHAPE;
-        uiMixD1Shape = normKnob(knobValue);
+        uiMixD1Shape = normalizeKnob(knobValue);
         break;
       }
 
@@ -1553,7 +1562,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
               bassLineNote[bassLineHeldStep] = note;
             }
             char noteName[5];
-            bassLinePitch(note, noteName);
+            formatBassNote(note, noteName);
             snprintf(displayParameter1, sizeof(displayParameter1),
                      "STEP %d", bassLineHeldStep + 1);
             snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
@@ -1571,7 +1580,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 4:  // D1 Volume
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1579,7 +1588,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 5:  // D1 Attack/Snap
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1587,7 +1596,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 6:  // D1 EQ (Body)
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1595,7 +1604,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 7:  // D1 Delay Send
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DELAY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1607,7 +1616,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
-        float freqHz = mapf(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
+        float freqHz = mapFloat(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE FREQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
         break;
@@ -1626,13 +1635,13 @@ void updateParameterDisplay(byte idx, int knobValue) {
         displayParameter1[0] = 0;
         displayParameter2[0] = 0;
         activeRail = RAIL_D2_VOICE;
-        uiMixD2Voice = normKnob(knobValue);
+        uiMixD2Voice = normalizeKnob(knobValue);
         break;
       }
 
     case 11:  // D2 Wavefolder Drive
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 DISTORTION");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1640,7 +1649,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 12:  // D2 Delay Send
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 DELAY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1648,7 +1657,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 13:  // D2 Reverb
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 REVERB");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1656,7 +1665,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 14:  // D2 Noise
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE NOISE");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1664,7 +1673,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 15:  // D2 Volume
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1676,7 +1685,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 16:  // D3 Pitch (displayed as generic "tune")
       {
-        int tune = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int tune = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
         break;
@@ -1684,7 +1693,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = mapf(knobValue, 0, 1023, 10.0f, 250.0f);
+        float decayMs = mapFloat(knobValue, 0, 1023, 10.0f, 250.0f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DECAY");
         snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
         break;
@@ -1695,13 +1704,13 @@ void updateParameterDisplay(byte idx, int knobValue) {
         displayParameter1[0] = 0;
         displayParameter2[0] = 0;
         activeRail = RAIL_D3_VOICE;
-        uiMixD3Voice = normKnob(knobValue);
+        uiMixD3Voice = normalizeKnob(knobValue);
         break;
       }
 
     case 19:  // D3 Distort (sine-driven wavefolder)
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORTION");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1709,7 +1718,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 20:  // D3 Delay Send
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DELAY SEND");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1717,7 +1726,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 21:  // D3 Filter
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         float cutoffHz = 5000.0f * expf(norm * 0.405f);  // 5000–7500 Hz exponential
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
@@ -1734,7 +1743,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 23:  // D3 Volume
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1756,7 +1765,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 25:  // Wavefold Frequency
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1789,7 +1798,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 28:  // Master Volume
       {
-        int percent = (int)(normKnob(knobValue) * 100.0f + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "MASTER VOLUME");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1808,7 +1817,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 30:  // Wavefold (master wavefolder drive)
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         const float DEADBAND = 0.02f;
         float active = (norm <= DEADBAND) ? 0.0f
                      : (norm - DEADBAND) / (1.0f - DEADBAND);
@@ -1823,7 +1832,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 31:  // Master Delay Mix/Feedback
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         snprintf(displayParameter1, sizeof(displayParameter1), "DELAY AMOUNT");
         if (norm <= 0.02f) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
@@ -1862,24 +1871,24 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         if (knobValue < 10) {
           AudioNoInterrupts();
-          d1DCwf.amplitude(0.0f);
-          d1Mixer.gain(3, 0.0f);   // wavefolder return off
+          d1WfDrive.amplitude(0.0f);
+          d1VoiceMixer.gain(3, 0.0f);   // wavefolder return off
           AudioInterrupts();
           break;
         }
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         float wavefolderAmp = 0.1f + norm * 1.023f;
 
         AudioNoInterrupts();
-        d1DCwf.amplitude(wavefolderAmp);
-        d1Mixer.gain(3, 0.25f);  // wavefolder return on
+        d1WfDrive.amplitude(wavefolderAmp);
+        d1VoiceMixer.gain(3, 0.25f);  // wavefolder return on
         AudioInterrupts();
         break;
       }
 
     case 1:  // D1 Waveform Shape
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
 
         // Always keep a sine fundamental present
         const float SIN_FLOOR = 0.35f;
@@ -1951,30 +1960,30 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 4:  // D1 Volume
       {
-        float norm = normKnob(knobValue);
-        d1Vol = norm * norm * 0.75f;  // Log taper (square law), max 0.75
-        drumMixer.gain(0, d1Vol);
+        float norm = normalizeKnob(knobValue);
+        d1Volume = norm * norm * 0.75f;  // Log taper (square law), max 0.75
+        drumMixer.gain(0, d1Volume);
         updateDrumDelayGains();
         break;
       }
 
     case 5:  // D1 Snap (transient character only — does NOT affect amp envelope)
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
 
         // Pitch snap depth increases with knob
         float pitchDepth = 0.60f + (0.40f * norm);
-        drum1.pitchMod(pitchDepth);
+        d1Snap.pitchMod(pitchDepth);
 
         // Transient emphasis, capped at unity
         float transientGain = 0.85f + (0.15f * norm);
-        d1Mixer.gain(1, transientGain);
+        d1VoiceMixer.gain(1, transientGain);
         break;
       }
 
     case 6:  // D1 EQ (Body)
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         float eqAmount = 0.4f + 0.6f * norm;
 
         float blend;
@@ -1999,7 +2008,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 7:  // D1 Delay Send
       {
         // Capped at 75% to prevent feedback runaway
-        float delaySend = normKnob(knobValue) * 0.75f;
+        float delaySend = normalizeKnob(knobValue) * 0.75f;
         d1DelaySend = delaySend;
         updateDrumDelayGains();
         break;
@@ -2011,8 +2020,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
-        float freqHz = mapf(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
-        d2.frequency(freqHz);
+        float freqHz = mapFloat(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
+        d2Osc.frequency(freqHz);
         break;
       }
 
@@ -2025,7 +2034,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 10:  // D2 Voice Mix - Snare/Clap
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
 
         float gainSnare = norm;
         float gainClap = 1.0f - norm;
@@ -2039,7 +2048,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 11:  // D2 Wavefolder Drive
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         bool offZone = (knobValue < 10);
 
         // Default values (off state)
@@ -2087,7 +2096,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // Apply as one atomic update
         AudioNoInterrupts();
         d2WfAmp.gain(driveGain);
-        d2WfSine.frequency(freqHz);
+        d2WfSineOsc.frequency(freqHz);
         d2WfLowpass.frequency(lpfFreqHz);
         d2MasterMixer.gain(0, gainDry);  // dry
         d2MasterMixer.gain(2, gainWet);  // wavefolder return
@@ -2098,7 +2107,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 12:  // D2 Delay Send
       {
         // Capped at 75% to prevent feedback runaway
-        float delaySend = normKnob(knobValue) * 0.75f;
+        float delaySend = normalizeKnob(knobValue) * 0.75f;
         d2DelaySend = delaySend;
         updateDrumDelayGains();
         break;
@@ -2106,7 +2115,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 13:  // D2 Reverb
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
 
         if (norm <= 0.02f) {
           // Off
@@ -2119,8 +2128,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           float roomSize = 0.3f + blend * 0.6f;
 
           AudioNoInterrupts();
-          d2Verb.roomsize(roomSize);
-          d2Verb.damping(1.0f);  // Damping always maxed — absorbs high frequencies
+          d2Reverb.roomsize(roomSize);
+          d2Reverb.damping(1.0f);  // Damping always maxed — absorbs high frequencies
           d2MasterMixer.gain(1, blend);
           AudioInterrupts();
         }
@@ -2131,32 +2140,32 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         if (knobValue >= 10) {
           float decayMs = (knobValue < 512)
-                            ? mapf(knobValue, 10, 511, 30.0f, 70.0f)
-                            : mapf(knobValue, 512, 1023, 70.0f, 200.0f);
+                            ? mapFloat(knobValue, 10, 511, 30.0f, 70.0f)
+                            : mapFloat(knobValue, 512, 1023, 70.0f, 200.0f);
 
           float filterFreqHz = 3000.0f + 10.0f * decayMs;
-          float norm = normKnob(knobValue);
+          float norm = normalizeKnob(knobValue);
           float noiseGain = 0.045f + 0.22f * norm;
 
           AudioNoInterrupts();
-          d2NoiseEnvelope.hold(decayMs * 0.5f);
-          d2NoiseEnvelope.decay(decayMs);
+          d2NoiseEnv.hold(decayMs * 0.5f);
+          d2NoiseEnv.decay(decayMs);
           d2NoiseFilter.frequency(filterFreqHz);
-          d2Mixer.gain(2, noiseGain);
+          d2VoiceMixer.gain(2, noiseGain);
           AudioInterrupts();
 
         } else {
           // Off
-          d2Mixer.gain(2, 0.0f);
+          d2VoiceMixer.gain(2, 0.0f);
         }
         break;
       }
 
     case 15:  // D2 Volume
       {
-        float norm = normKnob(knobValue);
-        d2Vol = norm * norm * 0.75f;  // Log taper (square law), max 0.75
-        drumMixer.gain(1, d2Vol);
+        float norm = normalizeKnob(knobValue);
+        d2Volume = norm * norm * 0.75f;  // Log taper (square law), max 0.75
+        drumMixer.gain(1, d2Volume);
         updateDrumDelayGains();
         break;
       }
@@ -2167,7 +2176,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 16:  // D3 Pitch
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
 
         // --- Shared pitch bend curve (both voices use the same shape) ---
         const float BEND_START = 0.25f;
@@ -2215,28 +2224,28 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         AudioNoInterrupts();
 
         // FM voice
-        d3W1.frequency(carrier1Hz);
-        d3W3.frequency(carrier2Hz);
-        d3W2.frequency(modulator1Hz);
-        d3W4.frequency(modulator2Hz);
-        d3W2.amplitude(depth1);
-        d3W4.amplitude(depth2);
-        d3BPF.frequency(fmBpfHz);
-        d3Filter.frequency(fmHpfHz);
+        d3FmCarrier1.frequency(carrier1Hz);
+        d3FmCarrier2.frequency(carrier2Hz);
+        d3FmMod1.frequency(modulator1Hz);
+        d3FmMod2.frequency(modulator2Hz);
+        d3FmMod1.amplitude(depth1);
+        d3FmMod2.amplitude(depth2);
+        d3FmBandPass.frequency(fmBpfHz);
+        d3FmHighPass.frequency(fmHpfHz);
 
         // 606 voice oscillator bank
-        d3606W1.frequency(hatBaseHz * 1.00f);
-        d3606W2.frequency(hatBaseHz * 1.08f);
-        d3606W3.frequency(hatBaseHz * 1.17f);
-        d3606W4.frequency(hatBaseHz * 1.26f);
-        d3606W5.frequency(hatBaseHz * 1.36f);
-        d3606W6.frequency(hatBaseHz * 1.48f);
-        d3606HPF.frequency(hpfHz);
-        d3606BPF.frequency(bpfHz);
+        d3606Osc1.frequency(hatBaseHz * 1.00f);
+        d3606Osc2.frequency(hatBaseHz * 1.08f);
+        d3606Osc3.frequency(hatBaseHz * 1.17f);
+        d3606Osc4.frequency(hatBaseHz * 1.26f);
+        d3606Osc5.frequency(hatBaseHz * 1.36f);
+        d3606Osc6.frequency(hatBaseHz * 1.48f);
+        d3606HighPass.frequency(hpfHz);
+        d3606BandPass.frequency(bpfHz);
 
         // PERC voice — A3(220) → A6(1760), independent of FM carriers
         static const float LOG_NOISE_RATIO = logf(1760.0f / 220.0f);  // A3→A6
-        drum3.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
+        d3Perc.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
 
         AudioInterrupts();
         break;
@@ -2244,7 +2253,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 17:  // D3 Decay
       {
-        float decayMs = mapf(knobValue, 0, 1023, 10.0f, 250.0f);
+        float decayMs = mapFloat(knobValue, 0, 1023, 10.0f, 250.0f);
         d3DecayBase = decayMs;
         applyChokeToDecays();
         break;
@@ -2298,26 +2307,26 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         // True OFF in the first tiny region
         if (knobValue < 5) {
-          d3WfSine.amplitude(0.0f);
+          d3WfOsc.amplitude(0.0f);
           AudioNoInterrupts();
-          d3Mixer.gain(0, 0.70f);  // dry at default (parity with D1/D2)
-          d3Mixer.gain(1, 0.0f);   // wavefolder return off
+          d3MasterMixer.gain(0, 0.70f);  // dry at default (parity with D1/D2)
+          d3MasterMixer.gain(1, 0.0f);   // wavefolder return off
           AudioInterrupts();
           break;
         }
 
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         // Both ramps use full knob range — no plateau, no dead zone at either end
         float ampActive = norm;
         float freqActive = norm;
 
         // Amplitude: 0.05 → 0.50 (caps at 1:00, stays flat after)
         float drive = 0.05f + 0.45f * ampActive;
-        d3WfSine.amplitude(drive);
+        d3WfOsc.amplitude(drive);
 
         // Frequency: 50 → 440 Hz (exponential, full knob range)
         float freqHz = 50.0f * expf(freqActive * 2.17f);  // ln(8.74) ≈ 2.17
-        d3WfSine.frequency(freqHz);
+        d3WfOsc.frequency(freqHz);
 
         // Dry pulls down slightly as drive rises (0.70 → 0.62, before loudness comp)
         float dryGain = 0.70f - 0.08f * ampActive;
@@ -2336,8 +2345,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         wetGain *= comp;
 
         AudioNoInterrupts();
-        d3Mixer.gain(0, dryGain);  // dry
-        d3Mixer.gain(1, wetGain);  // wavefolder return
+        d3MasterMixer.gain(0, dryGain);  // dry
+        d3MasterMixer.gain(1, wetGain);  // wavefolder return
         AudioInterrupts();
         break;
       }
@@ -2345,7 +2354,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 20:  // D3 Delay Send
       {
         // Capped at 75% to prevent feedback runaway (same as D1/D2)
-        float delaySend = normKnob(knobValue) * 0.75f;
+        float delaySend = normalizeKnob(knobValue) * 0.75f;
         d3DelaySend = delaySend;
         updateDrumDelayGains();
         break;
@@ -2353,7 +2362,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 21:  // D3 Filter
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
 
         // Cutoff: exponential curve 5000–7500 Hz (log-spaced for natural feel)
         float cutoffHz = 5000.0f * expf(norm * 0.405f);  // ln(7500/5000) ≈ 0.405
@@ -2376,11 +2385,11 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
         // Only recompute decay + preview when mode actually changes
         if (d3AccentMode != prevMode) {
-          d3CachedDecayMs = d3EffectiveBaseDecay();
+          d3EffectiveDecay = d3EffectiveBaseDecay();
           AudioNoInterrupts();
-          d3AmpEnv.decay(d3CachedDecayMs);
-          d3606AmpEnv.decay(d3CachedDecayMs);
-          drum3.length(d3CachedDecayMs);
+          d3FmAmpEnv.decay(d3EffectiveDecay);
+          d3606AmpEnv.decay(d3EffectiveDecay);
+          d3Perc.length(d3EffectiveDecay);
           AudioInterrupts();
 
           // Show the new pattern briefly on step LEDs
@@ -2401,9 +2410,9 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 23:  // D3 Volume
       {
-        float norm = normKnob(knobValue);
-        d3Vol = norm * norm * 0.75f;  // Log taper (square law), max 0.75
-        drumMixer.gain(2, d3Vol);
+        float norm = normalizeKnob(knobValue);
+        d3Volume = norm * norm * 0.75f;  // Log taper (square law), max 0.75
+        drumMixer.gain(2, d3Volume);
         updateDrumDelayGains();
         break;
       }
@@ -2428,7 +2437,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 25:  // Wavefold Frequency
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         float baseFreq = 40.0f + norm * (1000.0f - 40.0f);
 
         float sineFreq, sawFreq;
@@ -2449,8 +2458,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
           sawFreq  = baseFreq * (1.0f + blend * 3.0f);       // 1× → 4× baseFreq
         }
 
-        wfSine.frequency(sineFreq);
-        wfSaw.frequency(sawFreq);
+        masterWfOscSine.frequency(sineFreq);
+        masterWfOscSaw.frequency(sawFreq);
         break;
       }
 
@@ -2481,7 +2490,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 28:  // Master Volume
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         float volume = norm * 2.0f;
 
         masterNominalGain = volume * 5.0f;
@@ -2495,7 +2504,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (chokeOffsetMs == 0) {
           chokeDisplayPercent = 0;  // Match engine deadband — display shows "OFF"
         } else {
-          chokeDisplayPercent = (int)((normKnob(knobValue) - 0.5f) * 200.0f);
+          chokeDisplayPercent = (int)((normalizeKnob(knobValue) - 0.5f) * 200.0f);
         }
         applyChokeToDecays();
         break;
@@ -2503,17 +2512,17 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 30:  // Wavefold (master wavefolder drive)
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
 
         // Deadband at bottom 2% — wavefolder fully off
         const float DEADBAND = 0.02f;
         if (norm <= DEADBAND) {
           AudioNoInterrupts();
-          wfMixer.gain(0, 0.0f);
-          wfMixer.gain(1, 0.0f);
-          wfMixer.gain(2, 0.0f);  // kick env off
-          wfMixer.gain(3, 0.0f);  // snare/clap env off
-          masterWfComp = 1.0f;
+          masterWfInputMixer.gain(0, 0.0f);
+          masterWfInputMixer.gain(1, 0.0f);
+          masterWfInputMixer.gain(2, 0.0f);  // kick env off
+          masterWfInputMixer.gain(3, 0.0f);  // snare/clap env off
+          masterWavefoldComp = 1.0f;
           masterMixer.gain(0, 1.0f);  // dry at unity
           masterMixer.gain(1, 0.0f);  // wavefolder return off
           AudioInterrupts();
@@ -2563,13 +2572,13 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         float sum = dryLevel + wfReturn + envGain * 0.5f;
         float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
         comp *= 1.0f - 0.45f * active * active;
-        masterWfComp = comp;
+        masterWavefoldComp = comp;
 
         AudioNoInterrupts();
-        wfMixer.gain(0, sineGain);
-        wfMixer.gain(1, sawGain);
-        wfMixer.gain(2, envGain);   // kick envelope
-        wfMixer.gain(3, envGain);   // snare/clap envelope
+        masterWfInputMixer.gain(0, sineGain);
+        masterWfInputMixer.gain(1, sawGain);
+        masterWfInputMixer.gain(2, envGain);   // kick envelope
+        masterWfInputMixer.gain(3, envGain);   // snare/clap envelope
         masterMixer.gain(0, dryLevel);
         masterMixer.gain(1, wfReturn);
         AudioInterrupts();
@@ -2580,7 +2589,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 31:  // Master Delay Mix/Feedback
       {
-        float norm = normKnob(knobValue);
+        float norm = normalizeKnob(knobValue);
         const float PEAK_LEVEL = 0.73f;
 
         // Compute all gains before applying as one atomic update
@@ -2619,7 +2628,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         AudioNoInterrupts();
         delayAmp.gain(ampGain);
         masterMixer.gain(2, returnGain);
-        delayMixer.gain(3, fbGain);
+        delaySendMixer.gain(3, fbGain);
         AudioInterrupts();
         break;
       }
