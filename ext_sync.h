@@ -7,7 +7,8 @@
 //  ISR advances currentStep at pulse time and queues via pendingStepCount;
 //  main loop fires audio via playSequence() → playSequenceCore().
 //  For ppqn < 4, ISR queues step A on the pulse; a hardware one-shot
-//  timer (subdivTimer) queues deferred steps B/C/D at precise intervals.
+//  timer (subdivTimer) queues deferred steps B/C/D at intervals derived
+//  from a slow-filtered period (synthInterval, alpha=1/8) that resists jitter.
 //  Two-part glitch filter (300µs floor + 40% relative EMA).
 //  Lock-in requires 3 accepted pulses (2 consecutive similar intervals).
 //
@@ -44,6 +45,7 @@ extern volatile uint8_t currentStep;
 //    lastPulseMicros           — uint32_t, read in main loop with noInterrupts()
 //    lastPulseInterval         — uint32_t, ISR writes, ISR reads (lock-in), reset clears
 //    extIntervalEMA            — uint32_t, read in main loop with noInterrupts() (glitch filter + BPM display + subdivision fallback)
+//    synthIntervalUs           — uint32_t, ISR writes (externalClockISR), ISR reads (subdivision path). Slow EMA for step B placement. Reset by resetExternalClockState().
 //    prevAcceptedInterval      — uint32_t, ISR-only (lock-in similarity check)
 //    extPulseCount             — uint8_t, atomic on ARM
 //    extStepAcc                — uint8_t, written by ISR, reset by setTransport() and PLAY handler
@@ -88,6 +90,7 @@ static constexpr uint32_t EXT_GLITCH_US = 300;            // Hard floor for glit
 static constexpr uint32_t EXT_TIMEOUT_US = 2000000;       // No pulse for 2s → fall back to internal
 static constexpr uint8_t  STEPS_PER_BEAT = 4;             // 16th-note sequencer: 4 steps per quarter note
 static constexpr uint32_t SUBDIV_MIN_DELAY_US = 50;       // Floor for one-shot timer to avoid immediate refire
+static constexpr uint8_t  SYNTH_INTERVAL_SHIFT = 3;       // EMA shift for synthInterval (3 = alpha 1/8, 4 = alpha 1/16)
 
 // ============================================================================
 //  State variables — external clock
@@ -97,6 +100,7 @@ static constexpr uint32_t SUBDIV_MIN_DELAY_US = 50;       // Floor for one-shot 
 volatile uint32_t lastPulseMicros = 0;     // Timestamp of last accepted pulse (µs)
 volatile uint32_t lastPulseInterval = 0;   // Interval between last two accepted pulses (µs)
 volatile uint32_t extIntervalEMA = 0;      // Fast EMA (alpha=0.5) — glitch filter + BPM display
+volatile uint32_t synthIntervalUs = 0;     // Slow EMA (alpha=1/2^SYNTH_INTERVAL_SHIFT) — subdivision placement only
 volatile uint32_t prevAcceptedInterval = 0; // Previous accepted interval — lock-in similarity check
 volatile uint8_t  extPulseCount = 0;       // Accepted pulse count (3 needed for lock-in — see below)
 
@@ -185,8 +189,6 @@ void subdivTimerCallback() {
 void externalClockISR() {
   uint32_t nowUs = micros();
   uint32_t prevUs = lastPulseMicros;
-  uint32_t prevInterval = lastPulseInterval;  // Capture before overwrite — subdivision smoothing
-
   // Two-part glitch filter:
   //   1. Hard floor: reject < 300µs (contact bounce / electrical noise)
   //   2. Relative: reject < 40% of EMA (filters noise but allows swing/jitter)
@@ -213,6 +215,13 @@ void externalClockISR() {
     extIntervalEMA = (ema == 0)
         ? interval
         : ema + (((int32_t)(interval - ema)) >> 1);
+
+    // Slow EMA for subdivision placement — doesn't chase jitter like the fast EMA.
+    // At 80 BPM / 2 PPQN, 5 ms of pulse jitter shifts synthInterval by only 0.625 ms.
+    // Seeded on first interval; subsequent intervals smooth with alpha = 1/2^SYNTH_INTERVAL_SHIFT.
+    synthIntervalUs = (synthIntervalUs == 0)
+        ? interval
+        : synthIntervalUs + (((int32_t)(interval - synthIntervalUs)) >> SYNTH_INTERVAL_SHIFT);
   }
 
   // Good pulse — record timestamp
@@ -260,16 +269,12 @@ void externalClockISR() {
     if (pendingStepCount < 255) pendingStepCount++;
 
     // Arm subdivision for deferred steps (step B for ppqn=2, B/C/D for ppqn=1).
-    // Smoothing logic must match the normal subdivision path below — see
-    // "Subdivision smoothing" comment in the SUBDIVISION PATH section.
+    // Uses slow-filtered synthInterval — same source as the normal subdivision path.
     uint8_t p = ppqn;
     if (p < STEPS_PER_BEAT) {
       uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
       uint8_t deferred = stepsPerPulse - 1;
-      uint32_t pulseInterval = lastPulseInterval;
-      if (prevInterval > 0 && pulseInterval > 0) {
-        pulseInterval = (pulseInterval + prevInterval) / 2;
-      }
+      uint32_t pulseInterval = synthIntervalUs;
       if (pulseInterval == 0) pulseInterval = extIntervalEMA;
       if (deferred > 0 && pulseInterval > 0) {
         uint32_t subInterval = pulseInterval / stepsPerPulse;
@@ -332,18 +337,11 @@ void externalClockISR() {
 
       uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
       uint8_t deferred = stepsPerPulse - 1;
-      // Subdivision smoothing: average current and previous pulse intervals.
-      // Using only lastPulseInterval makes step B jitter-sensitive — any
-      // measurement error shifts the midpoint.  Averaging two intervals
-      // halves the jitter while still tracking tempo changes quickly.
-      // Falls back to raw interval on pulse 2 (no prev yet),
-      // and to EMA on pulse 1 (no interval at all).
-      // NOTE: This smoothing logic is duplicated in the armed count-in path
-      // above — keep both in sync if the algorithm changes.
-      uint32_t pulseInterval = lastPulseInterval;
-      if (prevInterval > 0 && pulseInterval > 0) {
-        pulseInterval = (pulseInterval + prevInterval) / 2;
-      }
+      // Subdivision placement uses the slow-filtered synthInterval (alpha=1/8)
+      // instead of raw or 2-sample-averaged intervals. This prevents pulse
+      // jitter from shifting step B — at 80 BPM, 5 ms of jitter only moves
+      // synthInterval by 0.625 ms. Falls back to fast EMA before seeded.
+      uint32_t pulseInterval = synthIntervalUs;
       if (pulseInterval == 0) pulseInterval = extIntervalEMA;
       if (deferred > 0 && pulseInterval > 0) {
         uint32_t subInterval = pulseInterval / stepsPerPulse;
@@ -381,6 +379,7 @@ static inline void resetExternalClockState() {
   lastPulseMicros = 0;
   lastPulseInterval = 0;
   extIntervalEMA = 0;
+  synthIntervalUs = 0;
   prevAcceptedInterval = 0;
   pendingStepCount = 0;
   subdivStepsRemaining = 0;
