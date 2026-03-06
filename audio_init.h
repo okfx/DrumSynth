@@ -178,65 +178,68 @@ inline void audioInit() {
   d2Reverb.damping(1.0f);
   d2Reverb.roomsize(0.3f);
 
-  // --- Clap effects ---
+  // --- Clap effects (808-style) ---
 
   // Clap noise sources
-  clapNoise1.amplitude(0.75f);
-  clapNoise2.amplitude(0.75f);
+  clapNoise1.amplitude(0.8f);
+  clapNoise2.amplitude(0.6f);   // secondary layer quieter
 
-  // Clap filters
-  clapFilter1.frequency(2500.0f);
+  // Clap bandpass filters — shape noise before delay taps
+  // Two different frequencies reduce comb filtering between layers
+  clapFilter1.frequency(1000.0f);  // body path — classic 808 center
   clapFilter1.resonance(1.8f);
 
-  clapFilter2.frequency(1800.0f);
-  clapFilter2.resonance(1.8f);
+  clapFilter2.frequency(1200.0f);  // brighter path
+  clapFilter2.resonance(1.5f);
 
-  // Clap envelopes
-  clapAmpEnv1.attack(0.5f);
-  clapAmpEnv1.hold(4.0f);
-  clapAmpEnv1.decay(20.0f);
-  clapAmpEnv1.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
+  // Clap per-burst envelopes — sharp sawtooth spikes, no hold
+  clapAmpEnv1.attack(0.0f);
+  clapAmpEnv1.hold(0.0f);
+  clapAmpEnv1.decay(12.0f);
+  clapAmpEnv1.sustain(0.0f);
 
-  clapAmpEnv2.attack(0.5f);
-  clapAmpEnv2.hold(5.0f);
-  clapAmpEnv2.decay(24.0f);
-  clapAmpEnv2.sustain(0.0f);  // Decay to silence (Teensy default is 1.0 = held open)
+  clapAmpEnv2.attack(0.0f);
+  clapAmpEnv2.hold(0.0f);
+  clapAmpEnv2.decay(14.0f);
+  clapAmpEnv2.sustain(0.0f);
 
-  // Clap delay lines
-  clapDelay1.delay(0, 0);
-  clapDelay1.delay(1, 180);
-  clapDelay1.delay(2, 360);
-  clapDelay1.delay(3, 620);
+  // Clap delay lines — tight 808-style spacing (~10ms apart)
+  // Two layers interleaved to create dense cluster without overlap
+  clapDelay1.delay(0, 0);     // hit 1
+  clapDelay1.delay(1, 11);    // hit 2
+  clapDelay1.delay(2, 22);    // hit 3
+  clapDelay1.delay(3, 35);    // hit 4 (slightly stretched)
 
-  clapDelay2.delay(0, 70);
-  clapDelay2.delay(1, 250);
-  clapDelay2.delay(2, 480);
-  clapDelay2.delay(3, 700);
+  clapDelay2.delay(0, 5);     // fills gap between path 1 hits
+  clapDelay2.delay(1, 16);
+  clapDelay2.delay(2, 28);
+  clapDelay2.delay(3, 42);
 
-  // Clap delay mixers (tapering gains — first hits louder)
-  clapMixer1.gain(0, 0.30f);
+  // Clap delay mixers — tapering gains per burst
+  clapMixer1.gain(0, 0.35f);
   clapMixer1.gain(1, 0.25f);
-  clapMixer1.gain(2, 0.15f);  // tapers down — shorter tail reduces phasing
-  clapMixer1.gain(3, 0.10f);
+  clapMixer1.gain(2, 0.15f);
+  clapMixer1.gain(3, 0.08f);
 
-  clapMixer2.gain(0, 0.25f);
-  clapMixer2.gain(1, 0.20f);
+  clapMixer2.gain(0, 0.20f);
+  clapMixer2.gain(1, 0.15f);
   clapMixer2.gain(2, 0.10f);
   clapMixer2.gain(3, 0.05f);
 
   clapBusMixer.gain(0, 1.0f);
-  clapBusMixer.gain(1, 1.0f);
+  clapBusMixer.gain(1, 0.7f);   // secondary layer lower in mix
 
-  // Clap master filter and envelope
-  clapMasterFilter.frequency(650.0f);
-  clapMasterFilter.resonance(2.3f);
+  // Clap master filter (highpass output) — removes rumble, low resonance
+  clapMasterFilter.frequency(600.0f);
+  clapMasterFilter.resonance(0.7f);
 
-  clapMasterEnv.attack(0.5f);
-  clapMasterEnv.hold(1.0f);
-  clapMasterEnv.decay(200.0f);
+  // Clap master envelope — overall tail shape
+  clapMasterEnv.attack(0.0f);
+  clapMasterEnv.hold(0.5f);
+  clapMasterEnv.decay(150.0f);
   clapMasterEnv.sustain(0.0f);
 
-  clapAmp.gain(1.0f);
+  clapAmp.gain(0.8f);
 
   // --- D2 output mixing ---
 
@@ -244,8 +247,8 @@ inline void audioInit() {
   // in0: snare body (from d2VoiceHighPass)
   // in1: clap envelope (from clapMasterEnv)
   // in2 / in3: spare or extra tone if you want later
-  snareClapMixer.gain(0, 0.6f);
-  snareClapMixer.gain(1, 0.6f);
+  snareClapMixer.gain(0, 0.8f);
+  snareClapMixer.gain(1, 0.8f);
   snareClapMixer.gain(2, 0.0f);
   snareClapMixer.gain(3, 0.0f);
 
@@ -254,7 +257,7 @@ inline void audioInit() {
   // in1: d2Reverb
   // in2: d2Wavefolder
   // in3: unused
-  d2MasterMixer.gain(0, 0.7f);  // dry
+  d2MasterMixer.gain(0, 0.8f);  // dry
   d2MasterMixer.gain(1, 0.5f);  // verb
   d2MasterMixer.gain(2, 0.4f);  // wavefolder
   d2MasterMixer.gain(3, 0.0f);  // unused
@@ -352,9 +355,9 @@ inline void audioInit() {
   d3WfOsc.begin(0.0f, 400.0f, WAVEFORM_SINE);  // fold-depth modulator — off at boot, knob 19 sets amplitude + freq
 
   // D3 voice mixer (606 + FM + PERC) — feeds both dry path and wavefolder
-  d3VoiceMixer.gain(0, 0.35f);  // 606 voice — raised for parity with FM
+  d3VoiceMixer.gain(0, 0.18f);  // 606 voice
   d3VoiceMixer.gain(1, 0.25f);  // FM voice
-  d3VoiceMixer.gain(2, 0.15f);  // PERC voice — lowered to balance against 606/FM
+  d3VoiceMixer.gain(2, 0.10f);  // PERC voice
 
   // D3 final mixer (dry + wavefolder)
   d3MasterMixer.gain(0, 0.70f);  // d3VoiceMixer (dry) — parity with D1 (0.7) and D2 (0.7)

@@ -156,16 +156,6 @@ uint32_t lastD1TriggerUs = 0;
 uint32_t lastD2TriggerUs = 0;
 uint32_t lastD3TriggerUs = 0;
 
-// D3 ratchet — hold D3 select button for continuous 8th note triplets
-bool d3RatchetHeld = false;
-uint32_t nextRatchetUs = 0;
-uint32_t ratchetIntervalUs = 0;
-
-// D2 accelerating roll — hold D2 select button for 8th→32nd note roll over 1 bar
-bool d2RollHeld = false;
-uint32_t nextRollUs = 0;
-uint32_t rollStartUs = 0;
-
 // ---------------------------------------------------------------------------
 // Mid-file includes: These headers define functions/ISRs that reference globals
 // declared above. Arduino IDE compiles .ino as a single translation unit, so
@@ -277,8 +267,8 @@ static constexpr int NUM_RATIOS = sizeof(quantizeRatios) / sizeof(quantizeRatios
 float masterNominalGain = 1.0f;
 
 // drum levels
-float d1Volume = 0.75f;
-float d2Volume = 0.9f;
+float d1Volume = 0.65f;
+float d2Volume = 1.25f;
 float d3Volume = 0.75f;
 
 // delay sends
@@ -342,6 +332,7 @@ static inline float normalizeKnob(int rawKnobValue) {
 
 // D1 osc and pitch
 float d1BaseFreq = 100.0f;
+float d1FreqBeforeBassLine = 100.0f;  // saved on bass line entry, restored on exit
 
 inline void applyD1Freq() {
   AudioNoInterrupts();
@@ -522,8 +513,8 @@ void applyChokeToDecays() {
   d2Body.length(base2 * 0.25f);
   AudioInterrupts();
 
-  // D2 clap family — derive clap decay from D2 decay (50–1000ms → 120–275ms)
-  float d2Norm = (d2DecayBase - 50.0f) / (1000.0f - 50.0f);
+  // D2 clap family — derive clap decay from D2 decay (40–1000ms → 120–275ms)
+  float d2Norm = (d2DecayBase - 40.0f) / (1000.0f - 40.0f);
   if (d2Norm < 0.0f) d2Norm = 0.0f;
   if (d2Norm > 1.0f) d2Norm = 1.0f;
   float clapDecayBase = 120.0f + d2Norm * (275.0f - 120.0f);
@@ -927,8 +918,8 @@ void playSequenceCore(uint8_t step) {
     }
     triggerD1();
   }
-  if (d2Sequence[step] && !d2RollHeld) triggerD2();
-  if (d3Sequence[step] && !d3RatchetHeld) triggerD3(step);
+  if (d2Sequence[step]) triggerD2();
+  if (d3Sequence[step]) triggerD3(step);
 }
 
 void triggerD1() {
@@ -1006,24 +997,6 @@ void triggerD3(uint8_t step) {
   d3FmAmpEnv.noteOn();
   d3606AmpEnv.noteOn();
   d3Perc.noteOn();
-}
-
-// Step interval in microseconds — shared by D3 ratchet and D2 roll.
-// Works in both internal and external clock modes.
-uint32_t calcStepIntervalUs() {
-  if (transportState == RUN_EXT) {
-    noInterrupts();
-    uint32_t pulse = synthIntervalUs > 0 ? synthIntervalUs : extIntervalEMA;
-    interrupts();
-    uint8_t p = ppqn;
-    return (p < STEPS_PER_BEAT) ? pulse / (STEPS_PER_BEAT / p) : pulse;
-  }
-  return (uint32_t)(60000000.0f / (STEPS_PER_BEAT * bpm));
-}
-
-// D3 ratchet: 8th note triplet interval (3 hits per beat)
-uint32_t calcRatchetIntervalUs() {
-  return calcStepIntervalUs() * 4 / 3;
 }
 
 // ============================================================================
@@ -1192,34 +1165,14 @@ void updateOtherButtons() {
         }
       }
 
-      // Button 1 (D2 SEQ SELECT) — hold for accelerating roll (8th→32nd over 1 bar).
-      if (i == 1) {
-        if (btnState[1]) {
-          // Press — select track and start roll
-          selectTrack(TRACK_D2);
-          d2RollHeld = true;
-          rollStartUs = micros();
-          triggerD2();
-          nextRollUs = rollStartUs + calcStepIntervalUs() * 2;  // first gap = 8th note
-        } else {
-          // Release — stop roll
-          d2RollHeld = false;
-        }
+      // Button 1 (D2 SEQ SELECT) — simple track select
+      if (i == 1 && btnState[1]) {
+        selectTrack(TRACK_D2);
       }
 
-      // Button 2 (D3 SEQ SELECT) — hold for ratchet (8th note triplet fill).
-      if (i == 2) {
-        if (btnState[2]) {
-          // Press — select track and start ratchet
-          selectTrack(TRACK_D3);
-          d3RatchetHeld = true;
-          triggerD3(currentStep);
-          ratchetIntervalUs = calcRatchetIntervalUs();
-          nextRatchetUs = micros() + ratchetIntervalUs;
-        } else {
-          // Release — stop ratchet
-          d3RatchetHeld = false;
-        }
+      // Button 2 (D3 SEQ SELECT) — simple track select
+      if (i == 2 && btnState[2]) {
+        selectTrack(TRACK_D3);
       }
 
       // Buttons 0, 1, 2, and 7 handled separately
@@ -1310,6 +1263,12 @@ void updateOtherButtons() {
       if ((uint32_t)(nowTick - btnD1PressTick) >= BASSLINE_LONG_PRESS_MS) {
         bassLineModeActive = !bassLineModeActive;
         btnD1EnteredBassLine = true;
+        if (bassLineModeActive) {
+          d1FreqBeforeBassLine = d1BaseFreq;  // save pitch on entry
+        } else {
+          d1BaseFreq = d1FreqBeforeBassLine;  // restore pitch on exit
+          applyD1Freq();
+        }
         snprintf(displayParameter1, sizeof(displayParameter1),
                  bassLineModeActive ? "BASSLINE MODE" : "EXITING BASSLINE");
         displayParameter2[0] = 0;
@@ -1519,13 +1478,13 @@ static inline uint8_t bassLineKnobToNote(int knobValue) {
   return (uint8_t)(note + 33);  // A1 = MIDI 33
 }
 
-// D2 Decay curve: piecewise 50–300 ms (low half) then 300–1000 ms (high half)
+// D2 Decay curve: piecewise 40–200 ms (low half) then 200–1000 ms (high half)
 static inline float d2DecayCurve(int knobValue) {
   float norm = normalizeKnob(knobValue);
   if (norm <= 0.5f) {
-    return 50.0f + (300.0f - 50.0f) * (norm / 0.5f);
+    return 40.0f + (200.0f - 40.0f) * (norm / 0.5f);
   } else {
-    return 300.0f + (1000.0f - 300.0f) * ((norm - 0.5f) / 0.5f);
+    return 200.0f + (1000.0f - 200.0f) * ((norm - 0.5f) / 0.5f);
   }
 }
 
@@ -2030,7 +1989,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 4:  // D1 Volume
       {
         float norm = normalizeKnob(knobValue);
-        d1Volume = norm * norm * 0.75f;  // Log taper (square law), max 0.75
+        d1Volume = norm * norm * 0.65f;  // Log taper (square law), max 0.65
         drumMixer.gain(0, d1Volume);
         updateDrumDelayGains();
         break;
@@ -2216,18 +2175,18 @@ void applyKnobToEngine(byte idx, int knobValue) {
       {
         if (knobValue >= 10) {
           float norm = normalizeKnob(knobValue);
-          // 0–40%: gain/filter ramp, 40–55%: hold/decay ramp, 55–100%: final ramp
-          float noiseScale = norm * 2.5f;            // 0→1 over 0–40% knob
+          // 0–25%: gain/filter ramp, 30–45%: hold/decay ramp, 45–100%: final ramp
+          float noiseScale = norm * 4.0f;            // 0→1 over 0–25% knob
           if (noiseScale > 1.0f) noiseScale = 1.0f;
-          float above40 = (norm > 0.4f) ? (norm - 0.4f) / 0.15f : 0.0f;  // 0→1 over 40–55%
-          if (above40 > 1.0f) above40 = 1.0f;
-          float above55 = (norm > 0.55f) ? (norm - 0.55f) / 0.45f : 0.0f; // 0→1 over 55–100%
+          float above30 = (norm > 0.3f) ? (norm - 0.3f) / 0.15f : 0.0f;  // 0→1 over 30–45%
+          if (above30 > 1.0f) above30 = 1.0f;
+          float above45 = (norm > 0.45f) ? (norm - 0.45f) / 0.55f : 0.0f; // 0→1 over 45–100%
           float attackMs = 1.5f;                                            // fixed
-          float holdMs = 7.0f + above40 * 15.5f + above55 * 12.5f;  // 7→22.5→35ms
-          float decayMs = 25.0f + above40 * 3.75f + above55 * 16.25f; // 25→28.75→45ms
+          float holdMs = 7.0f + above30 * 15.5f + above45 * 22.5f;  // 7→22.5→45ms
+          float decayMs = 25.0f + above30 * 3.75f + above45 * 26.25f; // 25→28.75→55ms
           float filterFreqHz = 3000.0f + 2000.0f * noiseScale;
           float noiseScaleCapped = (noiseScale > 0.5f) ? 0.5f : noiseScale;
-          float noiseGain = 0.043f + 0.209f * noiseScaleCapped;  // gain caps at 20% knob (~5% trim)
+          float noiseGain = 0.043f + 0.209f * noiseScaleCapped;  // gain caps at ~12.5% knob
 
           AudioNoInterrupts();
           d2NoiseEnv.attack(attackMs);
@@ -2247,7 +2206,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 15:  // D2 Volume
       {
         float norm = normalizeKnob(knobValue);
-        d2Volume = norm * norm * 0.97f;  // Log taper (square law), max 0.97 (+29% vs D1/D3)
+        d2Volume = norm * norm * 1.25f;  // Log taper (square law), max 1.25
         drumMixer.gain(1, d2Volume);
         updateDrumDelayGains();
         break;
@@ -2895,18 +2854,6 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
     }
   }
 
-  // D3 ratchet hit due within 25ms — protect triplet timing
-  if (d3RatchetHeld) {
-    int32_t remaining = (int32_t)(nextRatchetUs - micros());
-    if (remaining > 0 && remaining < 25000) return false;
-  }
-
-  // D2 roll hit due within 25ms — protect roll timing
-  if (d2RollHeld) {
-    int32_t remaining = (int32_t)(nextRollUs - micros());
-    if (remaining > 0 && remaining < 25000) return false;
-  }
-
   return true;
 }
 
@@ -3132,25 +3079,6 @@ void updateDisplay() {
   // blocking SPI transfer adds another 15-25ms of latency.
   if (sequencePlaying) {
     playSequence();
-  }
-
-  // D3 ratchet — fire next triplet hit if due
-  if (d3RatchetHeld && micros() >= nextRatchetUs) {
-    triggerD3(currentStep);
-    ratchetIntervalUs = calcRatchetIntervalUs();
-    nextRatchetUs += ratchetIntervalUs;
-  }
-
-  // D2 accelerating roll — 8th notes → 32nd notes over 1 bar
-  if (d2RollHeld && micros() >= nextRollUs) {
-    triggerD2();
-    uint32_t stepUs = calcStepIntervalUs();
-    uint32_t barUs = stepUs * 16;
-    uint32_t elapsed = micros() - rollStartUs;
-    float t = (float)elapsed / (float)barUs;
-    if (t > 1.0f) t = 1.0f;
-    uint32_t interval = (uint32_t)((float)(stepUs * 2) * powf(0.25f, t));
-    nextRollUs += interval;
   }
 
   if (isSafeToPushOled(nowMs)) {
