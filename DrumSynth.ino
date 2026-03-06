@@ -268,7 +268,7 @@ float masterNominalGain = 1.0f;
 
 // drum levels
 float d1Volume = 0.75f;
-float d2Volume = 0.75f;
+float d2Volume = 0.9f;
 float d3Volume = 0.75f;
 
 // delay sends
@@ -2031,7 +2031,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
 
         AudioNoInterrupts();
         snareClapMixer.gain(0, gainSnare * 1.05f);
-        snareClapMixer.gain(1, gainClap * 0.75f);
+        snareClapMixer.gain(1, gainClap * 0.875f);
         AudioInterrupts();
         break;
       }
@@ -2113,13 +2113,20 @@ void applyKnobToEngine(byte idx, int knobValue) {
           d2MasterMixer.gain(1, 0.0f);
           AudioInterrupts();
         } else {
-          // Active reverb
-          float blend = (norm - 0.02f) / 0.98f;
-          float roomSize = 0.3f + blend * 0.6f;
+          // Active reverb — sqrt wet gain, cbrt room, damping opens above 75%
+          float rawBlend = (norm - 0.02f) / 0.98f;
+          float blend = sqrtf(rawBlend);               // ~0.5 at 9 o'clock (25%)
+          float roomRaw = (norm - 0.02f) / 0.73f;      // 0→1 over 2–75% knob
+          if (roomRaw > 1.0f) roomRaw = 1.0f;
+          float roomSize = 0.3f + cbrtf(roomRaw) * 0.45f; // 0.3→0.75, ~0.6 at 25%
+          float above50 = (norm > 0.5f) ? (norm - 0.5f) / 0.25f : 0.0f;  // 0→1 over 50–75%
+          if (above50 > 1.0f) above50 = 1.0f;
+          float above75 = (norm > 0.75f) ? (norm - 0.75f) / 0.25f : 0.0f;  // 0→1 over 75–100%
+          float damping = 1.0f - above50 * 0.25f - above75 * 0.25f; // 1.0→0.75→0.5
 
           AudioNoInterrupts();
           d2Reverb.roomsize(roomSize);
-          d2Reverb.damping(1.0f);  // Damping always maxed — absorbs high frequencies
+          d2Reverb.damping(damping);
           d2MasterMixer.gain(1, blend);
           AudioInterrupts();
         }
@@ -2130,13 +2137,21 @@ void applyKnobToEngine(byte idx, int knobValue) {
       {
         if (knobValue >= 10) {
           float norm = normalizeKnob(knobValue);
-          float holdMs = 7.0f + norm * 68.0f;     // 7ms → 75ms
-          float decayMs = 30.0f + norm * 20.0f;   // 30ms → 50ms
-          float filterFreqHz = 3000.0f + 2000.0f * norm;
-          float normCapped = (norm > 0.5f) ? 0.5f : norm;
-          float noiseGain = 0.045f + 0.22f * normCapped;  // gain caps at 50% knob travel
+          // 0–40%: gain/filter ramp, 40–55%: hold/decay ramp, 55–100%: final ramp
+          float ns = norm * 2.5f;            // 0→1 over 0–40% knob
+          if (ns > 1.0f) ns = 1.0f;
+          float above40 = (norm > 0.4f) ? (norm - 0.4f) / 0.15f : 0.0f;  // 0→1 over 40–55%
+          if (above40 > 1.0f) above40 = 1.0f;
+          float above55 = (norm > 0.55f) ? (norm - 0.55f) / 0.45f : 0.0f; // 0→1 over 55–100%
+          float attackMs = 1.5f;                                            // fixed
+          float holdMs = 7.0f + above40 * 15.5f + above55 * 12.5f;  // 7→22.5→35ms
+          float decayMs = 25.0f + above40 * 3.75f + above55 * 16.25f; // 25→28.75→45ms
+          float filterFreqHz = 3000.0f + 2000.0f * ns;
+          float nsCapped = (ns > 0.5f) ? 0.5f : ns;
+          float noiseGain = 0.043f + 0.209f * nsCapped;  // gain caps at 20% knob (~5% trim)
 
           AudioNoInterrupts();
+          d2NoiseEnv.attack(attackMs);
           d2NoiseEnv.hold(holdMs);
           d2NoiseEnv.decay(decayMs);
           d2NoiseFilter.frequency(filterFreqHz);
@@ -2153,7 +2168,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 15:  // D2 Volume
       {
         float norm = normalizeKnob(knobValue);
-        d2Volume = norm * norm * 0.75f;  // Log taper (square law), max 0.75
+        d2Volume = norm * norm * 0.97f;  // Log taper (square law), max 0.97 (+29% vs D1/D3)
         drumMixer.gain(1, d2Volume);
         updateDrumDelayGains();
         break;

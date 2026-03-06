@@ -24,7 +24,7 @@ inline void audioInit() {
   sgtl5000_1.enable();
 
   // Analog output staging
-  sgtl5000_1.volume(0.45f);     // Lower headphone amp gain reduces SGTL5000 noise floor contribution
+  sgtl5000_1.volume(0.65f);     // Headphone amp gain
   sgtl5000_1.lineOutLevel(29);  // Line out voltage swing (Teensy default)
 
   // Enable DAP (required for EQ / AVC on output)
@@ -229,7 +229,7 @@ inline void audioInit() {
 
   // Clap master filter and envelope
   clapMasterFilter.frequency(650.0f);
-  clapMasterFilter.resonance(1.8f);
+  clapMasterFilter.resonance(2.3f);
 
   clapMasterEnv.attack(0.5f);
   clapMasterEnv.hold(1.0f);
