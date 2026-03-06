@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer + bass line built on Teensy 4.0.
+A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.0.
 
 ## Voices
 
@@ -21,8 +21,8 @@ Long-press (2s) the track-select button on D1 to toggle bass line mode. Each ste
 
 ## Hardware
 
-- **MCU:** Teensy 4.0 (ARM Cortex-M7 @ 600MHz)
-- **Audio:** Teensy Audio Library → on-board DAC
+- **MCU:** Teensy 4.1 (ARM Cortex-M7 @ 600MHz)
+- **Audio:** Teensy Audio Library → SGTL5000 codec (headphone + line out)
 - **Display:** 128x64 SH1106 OLED (software SPI) with oscilloscope waveform view
 - **Controls:** 32 knobs (2x 16-ch analog mux), 16 step buttons, 10 control buttons
 - **LEDs:** 16 step LEDs (74HC595 shift register)
@@ -31,13 +31,13 @@ Long-press (2s) the track-select button on D1 to toggle bass line mode. Each ste
 
 ## External Clock Sync
 
-External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 8, 24, 48, 96) — default 2 PPQN (Korg Volca standard). Long-press the slot button (2s) to enter PPQN selection mode, tap to cycle through values, long-press again to save. Labels shown for common values (2 = VOLCA, 4 = VOLCA ALT, 24 = ROLAND). 5-second timeout exits without saving.
+External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 8, 24, 48, 96) — default 2 PPQN (Korg Volca standard). Long-press the slot button (2s) to enter PPQN selection mode, tap to cycle through values, long-press again to save. 5-second timeout exits without saving.
 
 **Transport states:** STOPPED, RUN_INT (internal timer), RUN_EXT (external pulses).
 
 **Lock-in:** 3 accepted pulses (2 consecutive intervals within 25%) required to auto-switch from RUN_INT to RUN_EXT. Two-part glitch filter rejects noise (300 µs hard floor + 40% of EMA relative threshold).
 
-**Step generation:** ISR advances `currentStep` and queues via `pendingStepCount`; main loop fires audio via `playSequence()`. For low PPQN (1 or 2), step A fires on the pulse, then a hardware one-shot timer schedules deferred steps B/C/D at precise intervals. A 2-sample interval average smooths step B timing at low BPM to reduce jitter-induced flamming. Each new pulse cancels and rearms any in-flight subdivision. If steps are backlogged, skip ahead to the latest — a skipped step is less noticeable than an off-beat one.
+**Step generation:** ISR advances `currentStep` and queues via `pendingStepCount`; main loop fires audio via `playSequence()`. For low PPQN (1 or 2), step A fires on the pulse, then a hardware one-shot timer schedules deferred steps B/C/D at precise intervals. A slow EMA (alpha=1/8) smooths step B placement to resist pulse jitter. Each new pulse cancels and rearms any in-flight subdivision. If steps are backlogged, skip ahead to the latest — a skipped step is less noticeable than an off-beat one.
 
 **Armed count-in:** PLAY with external clock arms a full-cycle count-in (e.g. 8 pulses at 2 PPQN). The OLED shows a 4-3-2-1 beat countdown. Step 0 fires on the aligned pulse boundary. A grace window (50% of pulse interval) forgives slightly-late PLAY presses so the user doesn't end up one pulse out of phase.
 
@@ -74,6 +74,6 @@ See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for a compr
 Open in Arduino IDE or compile with arduino-cli:
 
 ```bash
-arduino-cli compile --fqbn teensy:avr:teensy40 .
-arduino-cli upload --fqbn teensy:avr:teensy40 -p /dev/ttyACM0 .
+arduino-cli compile --fqbn teensy:avr:teensy41 --build-property "build.flags.optimize=-O2" .
+arduino-cli upload --fqbn teensy:avr:teensy41 -p /dev/ttyACM0 .
 ```
