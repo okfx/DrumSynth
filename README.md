@@ -17,7 +17,7 @@ A 3-voice drum synthesizer + bass line built on Teensy 4.0.
 
 ## Bass Line Mode
 
-Long-press (2s) the track-select button on D1 to toggle bass line mode. Each step gets its own chromatic pitch (A1–A4, default C2). Hold a step button for 300ms to enter note-select, then turn the D1 pitch knob to set that step's note (soft-pickup — knob is ignored until it matches the stored note). Bass line notes are saved with patterns to EEPROM.
+Long-press (2s) the track-select button on D1 to toggle bass line mode. Each step gets its own chromatic pitch (A1–A4, default C2). Hold a step button for 300ms to enter note-select, then turn the D1 pitch knob to set that step's note. Bass line notes are saved with patterns to EEPROM.
 
 ## Hardware
 
