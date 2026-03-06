@@ -24,7 +24,7 @@ inline void audioInit() {
   sgtl5000_1.enable();
 
   // Analog output staging
-  sgtl5000_1.volume(0.65f);     // Headphone amp gain
+  sgtl5000_1.volume(0.60f);     // Headphone amp gain
   sgtl5000_1.lineOutLevel(29);  // Line out voltage swing (Teensy default)
 
   // Enable DAP (required for EQ / AVC on output)
@@ -390,7 +390,7 @@ inline void audioInit() {
   masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
   // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
-  finalAmp.gain(5.25f);
+  finalAmp.gain(5.51f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums

@@ -69,7 +69,7 @@ extern volatile uint8_t currentStep;
 //                                PLAY handler writes inside noInterrupts (snap-to-pulse init).
 //
 //  Main loop only (not shared with ISR):
-//    drum1/2/3Sequence[], triggerD1/D2/D3, updateLEDs()
+//    d1/d2/d3Sequence[], triggerD1/D2/D3, updateLEDs()
 //    — accessed only from main loop via playSequence() → playSequenceCore()
 //
 //  Rule: On ARM Cortex-M7, naturally-aligned 32-bit loads/stores are

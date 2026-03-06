@@ -32,9 +32,9 @@ static uint8_t crc8(const uint8_t* data, size_t len) {
 // ============================================================================
 
 // Sequence data
-extern byte drum1Sequence[];
-extern byte drum2Sequence[];
-extern byte drum3Sequence[];
+extern byte d1Sequence[];
+extern byte d2Sequence[];
+extern byte d3Sequence[];
 extern uint8_t bassLineNote[];
 
 // PPQN
@@ -115,9 +115,9 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   // ext_sync.h), so this guard is belt-and-suspenders — not strictly needed.
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
-    drum1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
-    drum2Sequence[step] = slot.patterns.drum2[step] ? 1 : 0;
-    drum3Sequence[step] = slot.patterns.drum3[step] ? 1 : 0;
+    d1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
+    d2Sequence[step] = slot.patterns.drum2[step] ? 1 : 0;
+    d3Sequence[step] = slot.patterns.drum3[step] ? 1 : 0;
     bassLineNote[step] = constrain(slot.patterns.bassLine[step], 33, 69);  // A1–A4
   }
   interrupts();
@@ -164,9 +164,9 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   // ext_sync.h), so this guard is belt-and-suspenders — not strictly needed.
   noInterrupts();
   for (int step = 0; step < numSteps; step++) {
-    slot.patterns.drum1[step] = drum1Sequence[step];
-    slot.patterns.drum2[step] = drum2Sequence[step];
-    slot.patterns.drum3[step] = drum3Sequence[step];
+    slot.patterns.drum1[step] = d1Sequence[step];
+    slot.patterns.drum2[step] = d2Sequence[step];
+    slot.patterns.drum3[step] = d3Sequence[step];
     slot.patterns.bassLine[step] = bassLineNote[step];
   }
   interrupts();

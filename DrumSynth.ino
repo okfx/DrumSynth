@@ -91,21 +91,21 @@ uint8_t bassLineNote[numSteps] = {
 //  Sequences
 // ============================================================================
 
-byte drum1Sequence[numSteps] = {
+byte d1Sequence[numSteps] = {
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0
 };
 
-byte drum2Sequence[numSteps] = {
+byte d2Sequence[numSteps] = {
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0
 };
 
-byte drum3Sequence[numSteps] = {
+byte d3Sequence[numSteps] = {
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0,
@@ -366,8 +366,8 @@ static inline int chokeOffsetFromKnob(int knobVal) {
   return (int)(MAX_POS * blend);
 }
 
-// D3 decay helper (includes choke and a small accent boost, capped at 250ms)
-static inline float d3EffectiveBaseDecay() {
+// D3 effective decay (includes choke and accent boost, capped at 250ms)
+static inline float computeD3Decay() {
   float base = d3DecayBase + chokeOffsetMs;
   if (base < 7.0f) base = 7.0f;
   if (d3AccentMode != ACCENT_OFF) base += 7.0f;
@@ -375,21 +375,14 @@ static inline float d3EffectiveBaseDecay() {
   return base;
 }
 
-// D2 decay helper (includes choke, capped at 1000ms)
-static inline float d2EffectiveBaseDecay() {
-  float base = d2DecayBase + chokeOffsetMs;
-  if (base < 15.0f) base = 15.0f;
-  if (base > 1000.0f) base = 1000.0f;
-  return base;
-}
 
 // sequence routing
 inline byte* sequenceForTrack(Track t) {
   switch (t) {
-    case TRACK_D1: return drum1Sequence;
-    case TRACK_D2: return drum2Sequence;
-    case TRACK_D3: return drum3Sequence;
-    default:       return drum1Sequence;
+    case TRACK_D1: return d1Sequence;
+    case TRACK_D2: return d2Sequence;
+    case TRACK_D3: return d3Sequence;
+    default:       return d1Sequence;
   }
 }
 
@@ -398,7 +391,7 @@ void updateOtherButtons();
 void updateStepButtons();
 void updateLEDs();
 void updateDisplay();
-void selectTrack(int index);
+void selectTrack(Track t);
 void playSequence();
 void playSequenceCore(uint8_t step);
 void triggerD1();
@@ -412,6 +405,7 @@ void setTransport(TransportState s);
 void updateDrumDelayGains();
 void initKnobsFromHardware();
 void applyMasterGain();
+void handlePlayStop();
 void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 
@@ -508,8 +502,10 @@ void applyChokeToDecays() {
   d1AmpEnv.decay(d1EffectiveDecay);
   AudioInterrupts();
 
-  // D2 main decay using helper
-  float base2 = d2EffectiveBaseDecay();
+  // D2 main decay (choke applied, clamped to 15–1000ms)
+  float base2 = d2DecayBase + chokeOffsetMs;
+  if (base2 < 15.0f) base2 = 15.0f;
+  if (base2 > 1000.0f) base2 = 1000.0f;
   AudioNoInterrupts();
   d2AmpEnv.hold(base2 * 0.5f);
   d2AmpEnv.decay(base2);
@@ -525,7 +521,7 @@ void applyChokeToDecays() {
   if (d2ClapEffectiveDecay < 10.0f) d2ClapEffectiveDecay = 10.0f;
 
   // Cache D3 effective decay for use in triggerD3()
-  d3EffectiveDecay = d3EffectiveBaseDecay();
+  d3EffectiveDecay = computeD3Decay();
 
   AudioNoInterrupts();
   clapAmpEnv1.decay(d2ClapEffectiveDecay);
@@ -865,15 +861,15 @@ void playSequence() {
 // so this function only fires audio — no step counter mutation.
 // Called from main loop context via playSequence().
 void playSequenceCore(uint8_t step) {
-  if (drum1Sequence[step]) {
+  if (d1Sequence[step]) {
     if (bassLineModeActive) {
       d1BaseFreq = bassLineFreq(bassLineNote[step]);
       applyD1Freq();
     }
     triggerD1();
   }
-  if (drum2Sequence[step]) triggerD2();
-  if (drum3Sequence[step]) triggerD3(step);
+  if (d2Sequence[step]) triggerD2();
+  if (d3Sequence[step]) triggerD3(step);
 }
 
 void triggerD1() {
@@ -956,6 +952,76 @@ void triggerD3(uint8_t step) {
 // ============================================================================
 //  Buttons and LEDs
 // ============================================================================
+
+// PLAY/STOP handler — called on button 6 press from updateOtherButtons().
+void handlePlayStop() {
+  if (!sequencePlaying) {
+    // Check for recent external sync pulses — even 1 is enough for drop-in.
+    // Lock-in auto-detect requires 3 pulses (two similar intervals),
+    // which is too strict for explicit drop-in. Here we only need to know
+    // "has the Volca been sending clock recently?"
+    bool hasRecentPulse = false;
+    noInterrupts();
+    uint32_t lastP = lastPulseMicros;
+    interrupts();
+    if (lastP != 0 && (micros() - lastP) < EXT_TIMEOUT_US) {
+      hasRecentPulse = true;
+    }
+
+    // PLAY = ARM. No step fires here. The next external pulse (or
+    // internal tick for RUN_INT) fires step 0.
+    subdivTimer.end();
+    // Wide critical section — all ISR-shared state must be initialized
+    // before setTransport() arms the timer that creates the ISR source.
+    noInterrupts();
+    pendingStepCount = 0;
+    extStepAcc = 0;
+    subdivStepsRemaining = 0;
+    subdivTimerDueUs = 0;
+
+    if (hasRecentPulse) {
+      // External sync — count-in for one full cycle, then fire step 0.
+      armed = true;
+      armPulseCountdown = (uint16_t)numSteps * ppqn / STEPS_PER_BEAT;
+
+      // Grace window: snap to nearest pulse.
+      // If the user pressed PLAY just after a pulse (within the first
+      // half of a pulse interval), credit that pulse to the count-in.
+      // Guard: keep at least 1 so the ISR fires step 0 on a real pulse.
+      uint32_t ema = extIntervalEMA;       // safe: interrupts already off
+      uint32_t elapsed = micros() - lastPulseMicros;
+      if (ema > 0 && elapsed < (ema / 2) && armPulseCountdown > 1) {
+        armPulseCountdown--;
+      }
+
+      sequencePlaying = true;
+      setTransport(RUN_EXT);
+    } else {
+      // No external clock — start on internal timer immediately.
+      // currentStep = numSteps-1 so the first internal tick advances to step 0.
+      armed = false;
+      armPulseCountdown = 0;
+      currentStep = numSteps - 1;
+      sequencePlaying = true;
+      setTransport(RUN_INT);
+    }
+    displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
+    interrupts();
+  } else {
+    // STOP — also aborts armed count-in if active.
+    // Preserves pulse timing state so ext clock is detected
+    // immediately on the next PLAY press.
+    sequencePlaying = false;
+    setTransport(STOPPED);
+    noInterrupts();
+    armed = false;
+    armPulseCountdown = 0;
+    pendingStepCount = 0;
+    wantSwitchToExt = false;
+    interrupts();
+    applyMasterGain();
+  }
+}
 
 // Button index → function mapping:
 //   0 = D1 SEQ SELECT   (short press: selectTrack, long hold: toggle bass line mode)
@@ -1043,7 +1109,7 @@ void updateOtherButtons() {
             // Long-press toggled bass line mode — suppress selectTrack
           } else {
             // Short press — normal D1 sequence select
-            selectTrack(0);
+            selectTrack(TRACK_D1);
           }
           btnD1EnteredBassLine = false;
         }
@@ -1053,97 +1119,21 @@ void updateOtherButtons() {
       if (btnState[i] && i != 7 && i != 0) {
         switch (i) {
 
-          case 1: selectTrack(1); break;
-          case 2: selectTrack(2); break;
+          case 1: selectTrack(TRACK_D2); break;
+          case 2: selectTrack(TRACK_D3); break;
 
           // cases 3, 4, 5: hardware-present but unassigned
 
-          case 6:
-            if (!sequencePlaying) {
-              // Check for recent external sync pulses — even 1 is enough for drop-in.
-              // Lock-in auto-detect requires 3 pulses (two similar intervals),
-              // which is too strict for explicit drop-in. Here we only need to know
-              // "has the Volca been sending clock recently?"
-              bool hasRecentPulse = false;
-              noInterrupts();
-              uint32_t lastP = lastPulseMicros;
-              interrupts();
-              if (lastP != 0 && (micros() - lastP) < EXT_TIMEOUT_US) {
-                hasRecentPulse = true;
-              }
-
-              // PLAY = ARM. No step fires here. The next external pulse (or
-              // internal tick for RUN_INT) fires step 0.
-              subdivTimer.end();
-              // Wide critical section — all ISR-shared state must be initialized
-              // before setTransport() arms the timer that creates the ISR source.
-              noInterrupts();
-              pendingStepCount = 0;
-              extStepAcc = 0;
-              subdivStepsRemaining = 0;
-              subdivTimerDueUs = 0;
-
-              if (hasRecentPulse) {
-                // External sync detected — count-in for one full cycle, then fire step 0.
-                // The user presses PLAY near the Volca's step 0. The ISR counts
-                // pulsesPerCycle accepted pulses silently. When the countdown reaches 0,
-                // step 0 fires on a pulse boundary aligned with the Volca's next step 0.
-                armed = true;
-                armPulseCountdown = (uint16_t)numSteps * ppqn / STEPS_PER_BEAT;
-
-                // Grace window: snap to nearest pulse.
-                // If the user pressed PLAY just after a pulse (within the first
-                // half of a pulse interval), credit that pulse to the count-in.
-                // This forgives slightly-late presses — the user "meant" to press
-                // on that pulse but was a hair late.  Without this, being 30ms
-                // late shifts the entire count-in by one pulse and breaks phase.
-                // Guard: keep at least 1 so the ISR fires step 0 on a real pulse.
-                uint32_t ema = extIntervalEMA;       // safe: interrupts already off
-                uint32_t elapsed = micros() - lastPulseMicros;
-                if (ema > 0 && elapsed < (ema / 2) && armPulseCountdown > 1) {
-                  armPulseCountdown--;
-                }
-
-                sequencePlaying = true;
-                setTransport(RUN_EXT);
-              } else {
-                // No external clock — start on internal timer immediately.
-                // currentStep = numSteps-1 so the first internal tick advances to step 0.
-                armed = false;
-                armPulseCountdown = 0;
-                currentStep = numSteps - 1;
-                sequencePlaying = true;
-                setTransport(RUN_INT);
-              }
-              displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
-              interrupts();
-            } else {
-              // STOP — also aborts armed count-in if active.
-              // Preserves pulse timing state (extPulseCount, lastPulseMicros,
-              // extIntervalEMA, prevAcceptedInterval) so ext clock is detected
-              // immediately on the next PLAY press.
-              // setTransport(STOPPED) handles subdivision + timer cleanup;
-              // remaining ISR-shared state cleared here under noInterrupts.
-              sequencePlaying = false;
-              setTransport(STOPPED);
-              noInterrupts();
-              armed = false;
-              armPulseCountdown = 0;
-              pendingStepCount = 0;
-              wantSwitchToExt = false;
-              interrupts();
-              applyMasterGain();
-            }
-            break;
+          case 6: handlePlayStop(); break;
 
           case 8:
             if (!loadStateFromEEPROM(activeSaveSlot)) {
               // Empty slot — clear to initialized pattern (no steps programmed)
               noInterrupts();
               for (int step = 0; step < numSteps; step++) {
-                drum1Sequence[step] = 0;
-                drum2Sequence[step] = 0;
-                drum3Sequence[step] = 0;
+                d1Sequence[step] = 0;
+                d2Sequence[step] = 0;
+                d3Sequence[step] = 0;
                 bassLineNote[step] = 36;  // C2 default
               }
               interrupts();
@@ -1227,13 +1217,8 @@ void updateOtherButtons() {
   }
 }
 
-void selectTrack(int index) {
-  switch (index) {
-    case 0: activeTrack = TRACK_D1; break;
-    case 1: activeTrack = TRACK_D2; break;
-    case 2: activeTrack = TRACK_D3; break;
-    default: return;
-  }
+void selectTrack(Track t) {
+  activeTrack = t;
   updateLEDs();
 }
 
@@ -1347,24 +1332,14 @@ void updateStepButtons() {
 }
 
 int readKnobRaw(byte idx) {
-  int raw;
-  if (idx < 16) {
-    knobMux1.channel(idx);
-    delayMicroseconds(KNOB_MUX_SETTLE_US);
-    int sum = 0;
-    for (uint8_t oversampleIndex = 0; oversampleIndex < KNOB_OVERSAMPLE; oversampleIndex++) {
-      sum += knobMux1.read();
-    }
-    raw = sum / KNOB_OVERSAMPLE;
-  } else {
-    knobMux2.channel(idx - 16);
-    delayMicroseconds(KNOB_MUX_SETTLE_US);
-    int sum = 0;
-    for (uint8_t oversampleIndex = 0; oversampleIndex < KNOB_OVERSAMPLE; oversampleIndex++) {
-      sum += knobMux2.read();
-    }
-    raw = sum / KNOB_OVERSAMPLE;
+  Mux& mux = (idx < 16) ? knobMux1 : knobMux2;
+  mux.channel(idx < 16 ? idx : idx - 16);
+  delayMicroseconds(KNOB_MUX_SETTLE_US);
+  int sum = 0;
+  for (uint8_t i = 0; i < KNOB_OVERSAMPLE; i++) {
+    sum += mux.read();
   }
+  int raw = sum / KNOB_OVERSAMPLE;
   // Clamp ADC edges: pots rarely hit true 0/1023 — map the reliable
   // range to the full 0-1023 so both extremes are always reachable.
   raw = constrain(raw, 3, 1020);
@@ -2113,7 +2088,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
           d2MasterMixer.gain(1, 0.0f);
           AudioInterrupts();
         } else {
-          // Active reverb — sqrt wet gain, cbrt room, damping opens above 75%
+          // Active reverb — sqrt wet gain, cbrt room, two-stage damping above 50%
           float rawBlend = (norm - 0.02f) / 0.98f;
           float blend = sqrtf(rawBlend);               // ~0.5 at 9 o'clock (25%)
           float roomRaw = (norm - 0.02f) / 0.73f;      // 0→1 over 2–75% knob
@@ -2138,17 +2113,17 @@ void applyKnobToEngine(byte idx, int knobValue) {
         if (knobValue >= 10) {
           float norm = normalizeKnob(knobValue);
           // 0–40%: gain/filter ramp, 40–55%: hold/decay ramp, 55–100%: final ramp
-          float ns = norm * 2.5f;            // 0→1 over 0–40% knob
-          if (ns > 1.0f) ns = 1.0f;
+          float noiseScale = norm * 2.5f;            // 0→1 over 0–40% knob
+          if (noiseScale > 1.0f) noiseScale = 1.0f;
           float above40 = (norm > 0.4f) ? (norm - 0.4f) / 0.15f : 0.0f;  // 0→1 over 40–55%
           if (above40 > 1.0f) above40 = 1.0f;
           float above55 = (norm > 0.55f) ? (norm - 0.55f) / 0.45f : 0.0f; // 0→1 over 55–100%
           float attackMs = 1.5f;                                            // fixed
           float holdMs = 7.0f + above40 * 15.5f + above55 * 12.5f;  // 7→22.5→35ms
           float decayMs = 25.0f + above40 * 3.75f + above55 * 16.25f; // 25→28.75→45ms
-          float filterFreqHz = 3000.0f + 2000.0f * ns;
-          float nsCapped = (ns > 0.5f) ? 0.5f : ns;
-          float noiseGain = 0.043f + 0.209f * nsCapped;  // gain caps at 20% knob (~5% trim)
+          float filterFreqHz = 3000.0f + 2000.0f * noiseScale;
+          float noiseScaleCapped = (noiseScale > 0.5f) ? 0.5f : noiseScale;
+          float noiseGain = 0.043f + 0.209f * noiseScaleCapped;  // gain caps at 20% knob (~5% trim)
 
           AudioNoInterrupts();
           d2NoiseEnv.attack(attackMs);
@@ -2388,7 +2363,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
 
         // Only recompute decay + preview when mode actually changes
         if (d3AccentMode != prevMode) {
-          d3EffectiveDecay = d3EffectiveBaseDecay();
+          d3EffectiveDecay = computeD3Decay();
           AudioNoInterrupts();
           d3FmAmpEnv.decay(d3EffectiveDecay);
           d3606AmpEnv.decay(d3EffectiveDecay);
@@ -2493,7 +2468,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
 
     case 28:  // Master Volume
       {
-        masterNominalGain = normalizeKnob(knobValue) * 10.0f;  // 0–10× range
+        masterNominalGain = normalizeKnob(knobValue) * 10.5f;  // 0–10.5× range
         applyMasterGain();
         break;
       }
