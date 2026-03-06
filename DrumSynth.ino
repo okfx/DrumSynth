@@ -524,9 +524,18 @@ void applyChokeToDecays() {
   // Cache D3 effective decay for use in triggerD3()
   d3EffectiveDecay = computeD3Decay();
 
+  // Per-burst envelopes: scale modestly with choke to keep short spike character
+  // Base 12/14ms, choke offsets them but clamps to stay burst-like (5–40ms)
+  float burstDecay1 = 12.0f + chokeOffsetMs * 0.15f;
+  float burstDecay2 = 14.0f + chokeOffsetMs * 0.15f;
+  if (burstDecay1 < 5.0f) burstDecay1 = 5.0f;
+  if (burstDecay1 > 40.0f) burstDecay1 = 40.0f;
+  if (burstDecay2 < 5.0f) burstDecay2 = 5.0f;
+  if (burstDecay2 > 40.0f) burstDecay2 = 40.0f;
+
   AudioNoInterrupts();
-  clapAmpEnv1.decay(d2ClapEffectiveDecay);
-  clapAmpEnv2.decay(d2ClapEffectiveDecay);
+  clapAmpEnv1.decay(burstDecay1);
+  clapAmpEnv2.decay(burstDecay2);
   clapMasterEnv.decay(d2ClapEffectiveDecay);
   AudioInterrupts();
 }
