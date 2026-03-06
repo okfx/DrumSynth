@@ -2957,10 +2957,10 @@ void updateDisplay() {
     display.print(bpmSnap, 1);
   }
 
-  // Track
-  display.setCursor(33, 0);
+  // Track — label center = 44
+  display.setCursor(35, 0);
   display.print("TRK");
-  display.setCursor(36, 10);
+  display.setCursor(38, 10);  // 2-char value centered: 44 - 6 = 38
   if (trackSnap == TRACK_D1) {
     display.print("D1");
   } else if (trackSnap == TRACK_D2) {
@@ -2969,29 +2969,35 @@ void updateDisplay() {
     display.print("D3");
   }
 
-  // Choke (global decay offset)
-  display.setCursor(56, 0);
+  // Choke (global decay offset) — label center = 73
+  display.setCursor(58, 0);
   display.print("CHOKE");
-  display.setCursor(56, 10);
-  if (chokeSnap == 0) {
-    display.print("OFF");
-  } else {
+  {
     char chokeBuf[6];
-    snprintf(chokeBuf, sizeof(chokeBuf), "%+d%%", chokeSnap);
+    if (chokeSnap == 0) {
+      strcpy(chokeBuf, "OFF");
+    } else {
+      snprintf(chokeBuf, sizeof(chokeBuf), "%+d%%", chokeSnap);
+    }
+    display.setCursor(73 - (int)strlen(chokeBuf) * 3, 10);
     display.print(chokeBuf);
   }
 
-  // Memory slot
-  display.setCursor(94, 0);
+  // Memory slot — label center = 104
+  display.setCursor(95, 0);
   display.print("MEM");
-  display.setCursor(96, 10);
-  display.print(slotSnap + 1);
+  {
+    char memBuf[4];
+    snprintf(memBuf, sizeof(memBuf), "%d", slotSnap + 1);
+    display.setCursor(104 - (int)strlen(memBuf) * 3, 10);
+    display.print(memBuf);
+  }
 
   // Play/Stop icon
   if (playingSnap) {
-    display.drawBitmap(116, 4, image_play_bits, 10, 10, 1);
+    display.drawBitmap(118, 4, image_play_bits, 10, 10, 1);
   } else {
-    display.drawBitmap(116, 4, image_stop_bits, 10, 10, 1);
+    display.drawBitmap(118, 4, image_stop_bits, 10, 10, 1);
   }
 
   // Oscilloscope waveform
