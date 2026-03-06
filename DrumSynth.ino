@@ -282,17 +282,17 @@ enum AccentMode : uint8_t {
   ACCENT_PICKUP,
   ACCENT_HALF,
   ACCENT_QUARTER,
-  ACCENT_EIGHTH,
+  ACCENT_EIGHTH_DOWN,
   ACCENT_EIGHTH_UP,
-  ACCENT_PATTERN_1,
-  ACCENT_PATTERN_2,
-  ACCENT_PATTERN_3,
-  ACCENT_PATTERN_4,
-  ACCENT_PATTERN_5,
-  ACCENT_PATTERN_6,
-  ACCENT_PATTERN_7,
-  ACCENT_PATTERN_8,
-  ACCENT_PATTERN_9
+  ACCENT_BOSSA,
+  ACCENT_OFFBEAT,
+  ACCENT_CLAVE,
+  ACCENT_THREE_TWO,
+  ACCENT_PAIRS,
+  ACCENT_TRIPLET,
+  ACCENT_DOTTED_EIGHTH,
+  ACCENT_BACK_HALF,
+  ACCENT_CASCADE
 };
 
 uint8_t d3AccentMode = ACCENT_OFF;
@@ -417,17 +417,17 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
     case ACCENT_PICKUP:    return 0b0000000000000010;  // step 14 only
     case ACCENT_HALF:      return 0b1000000010000000;  // steps 0, 8
     case ACCENT_QUARTER:   return 0b1000100010001000;  // steps 0, 4, 8, 12
-    case ACCENT_EIGHTH:    return 0b1010101010101010;  // even steps (downbeat eighths)
-    case ACCENT_EIGHTH_UP: return 0b0101010101010101;  // odd steps (upbeat eighths)
-    case ACCENT_PATTERN_1: return 0b1000100000101000;  // steps 0, 4, 10, 12
-    case ACCENT_PATTERN_2: return 0b0010001000100010;  // offbeat quarter (steps 2, 6, 10, 14)
-    case ACCENT_PATTERN_3: return 0b1010010010100101;  // steps 0, 2, 5, 8, 10, 13, 15
-    case ACCENT_PATTERN_4: return 0b0111011101110111;  // all except downbeats
-    case ACCENT_PATTERN_5: return 0b0011001100110011;  // pairs (steps 2-3, 6-7, 10-11, 14-15)
-    case ACCENT_PATTERN_6: return 0b0010010010010010;  // 3-step grouping (steps 2, 5, 8, 11, 14)
-    case ACCENT_PATTERN_7: return 0b1001001001001001;  // dotted quarter (steps 0, 3, 6, 9, 12, 15)
-    case ACCENT_PATTERN_8: return 0b0000111100001111;  // back halves (steps 4-7, 12-15)
-    case ACCENT_PATTERN_9: return 0b1111000011110000;  // front halves (steps 0-3, 8-11)
+    case ACCENT_EIGHTH_DOWN:   return 0b1010101010101010;  // even steps (downbeat eighths)
+    case ACCENT_EIGHTH_UP:     return 0b0101010101010101;  // odd steps (upbeat eighths)
+    case ACCENT_BOSSA:         return 0b1001001010010100;  // steps 0, 3, 6, 10, 13
+    case ACCENT_OFFBEAT:       return 0b0010001000100010;  // offbeat quarter (steps 2, 6, 10, 14)
+    case ACCENT_CLAVE:         return 0b1001001000101000;  // steps 0, 3, 6, 10, 12
+    case ACCENT_THREE_TWO:     return 0b1001001010010010;  // steps 0, 3, 6, 8, 11, 14
+    case ACCENT_PAIRS:         return 0b0011001100110011;  // pairs (steps 2-3, 6-7, 10-11, 14-15)
+    case ACCENT_TRIPLET:       return 0b0010010010010010;  // 3-step grouping (steps 2, 5, 8, 11, 14)
+    case ACCENT_DOTTED_EIGHTH: return 0b1001001001001001;  // dotted quarter (steps 0, 3, 6, 9, 12, 15)
+    case ACCENT_BACK_HALF:     return 0b0000111100001111;  // back halves (steps 4-7, 12-15)
+    case ACCENT_CASCADE:       return 0b1010010010100101;  // steps 0, 2, 5, 8, 10, 13, 15
     default: return 0;
   }
 }
@@ -1525,18 +1525,18 @@ static inline uint8_t accentModeFromKnob(int knobValue) {
     case 1:  return ACCENT_PICKUP;
     case 2:  return ACCENT_HALF;
     case 3:  return ACCENT_QUARTER;
-    case 4:  return ACCENT_EIGHTH;
+    case 4:  return ACCENT_EIGHTH_DOWN;
     case 5:  return ACCENT_EIGHTH_UP;
-    case 6:  return ACCENT_PATTERN_1;
-    case 7:  return ACCENT_PATTERN_2;
-    case 8:  return ACCENT_PATTERN_3;
-    case 9:  return ACCENT_PATTERN_4;
-    case 10: return ACCENT_PATTERN_5;
-    case 11: return ACCENT_PATTERN_6;
-    case 12: return ACCENT_PATTERN_7;
-    case 13: return ACCENT_PATTERN_8;
-    case 14: return ACCENT_PATTERN_9;
-    default: return ACCENT_PATTERN_9;
+    case 6:  return ACCENT_BOSSA;
+    case 7:  return ACCENT_OFFBEAT;
+    case 8:  return ACCENT_CLAVE;
+    case 9:  return ACCENT_THREE_TWO;
+    case 10: return ACCENT_PAIRS;
+    case 11: return ACCENT_TRIPLET;
+    case 12: return ACCENT_DOTTED_EIGHTH;
+    case 13: return ACCENT_BACK_HALF;
+    case 14: return ACCENT_CASCADE;
+    default: return ACCENT_CASCADE;
   }
 }
 
@@ -1782,7 +1782,13 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 22:  // D3 Accent Pattern
       {
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 ACCENT");
-        displayParameter2[0] = 0;
+        uint8_t mode = accentModeFromKnob(knobValue);
+        static const char* accentNames[] = {
+          "OFF", "PICKUP", "HALF", "QUARTER", "8TH DN", "8TH UP",
+          "BOSSA", "OFFBEAT", "CLAVE", "3-2", "PAIRS",
+          "TRIPLET", "DOT 8TH", "BACK 1/2", "CASCADE"
+        };
+        snprintf(displayParameter2, sizeof(displayParameter2), "%s", accentNames[mode]);
         break;
       }
 
@@ -1810,9 +1816,32 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 25:  // Wavefold Frequency
       {
-        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+        float norm = normalizeKnob(knobValue);
+        float freeFreq = 40.0f * powf(25.0f, norm);
+        // Snap toward tempo-synced subdivisions
+        float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
+        float stepsPerSec = (activeBpm / 60.0f) * STEPS_PER_BEAT;
+        static const float subdivMults[] = { 0.25f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
+        float logFree = logf(freeFreq);
+        float bestDist = 999.0f;
+        float bestLogTarget = logFree;
+        for (uint8_t i = 0; i < 7; i++) {
+          float target = stepsPerSec * subdivMults[i];
+          if (target < 30.0f || target > 1200.0f) continue;
+          float logTarget = logf(target);
+          float dist = fabsf(logFree - logTarget);
+          if (dist < bestDist) { bestDist = dist; bestLogTarget = logTarget; }
+        }
+        const float WELL_WIDTH = 0.25f;
+        const float WELL_DEPTH = 0.55f;
+        float baseFreq = freeFreq;
+        if (bestDist < WELL_WIDTH) {
+          float pull = WELL_DEPTH * 0.5f * (1.0f + cosf(bestDist / WELL_WIDTH * M_PI));
+          baseFreq = expf(logFree + pull * (bestLogTarget - logFree));
+        }
+        int freqHz = (int)(baseFreq + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d HZ", freqHz);
         break;
       }
 
@@ -2488,24 +2517,43 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 25:  // Wavefold Frequency
       {
         float norm = normalizeKnob(knobValue);
-        float baseFreq = 40.0f + norm * (1000.0f - 40.0f);
+        // Exponential base frequency: 40–1000 Hz on a log curve
+        float freeFreq = 40.0f * powf(25.0f, norm);
 
+        // Snap toward tempo-synced subdivisions (gravity wells)
+        float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
+        float stepsPerSec = (activeBpm / 60.0f) * STEPS_PER_BEAT;
+        static const float subdivMults[] = { 0.25f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
+        float logFree = logf(freeFreq);
+        float bestDist = 999.0f;
+        float bestLogTarget = logFree;
+        for (uint8_t i = 0; i < 7; i++) {
+          float target = stepsPerSec * subdivMults[i];
+          if (target < 30.0f || target > 1200.0f) continue;
+          float logTarget = logf(target);
+          float dist = fabsf(logFree - logTarget);
+          if (dist < bestDist) { bestDist = dist; bestLogTarget = logTarget; }
+        }
+        const float WELL_WIDTH = 0.25f;
+        const float WELL_DEPTH = 0.55f;
+        float baseFreq = freeFreq;
+        if (bestDist < WELL_WIDTH) {
+          float pull = WELL_DEPTH * 0.5f * (1.0f + cosf(bestDist / WELL_WIDTH * M_PI));
+          baseFreq = expf(logFree + pull * (bestLogTarget - logFree));
+        }
+
+        // Oscillator frequency assignment: sine at full rate, saw at half
         float sineFreq, sawFreq;
-
-        if (norm <= 0.5f) {
-          // 0–50%: sine at baseFreq, saw one octave below (baseFreq / 2)
+        if (norm <= 0.30f) {
+          // Parallel zone: sine at base, saw one octave below
           sineFreq = baseFreq;
           sawFreq  = baseFreq * 0.5f;
-        } else if (norm <= 0.75f) {
-          // 50–75%: saw locks to baseFreq, sine diverges up to 2× baseFreq
-          float blend = (norm - 0.5f) / 0.25f;               // 0→1 over this zone
-          sawFreq  = baseFreq;
-          sineFreq = baseFreq * (1.0f + blend);               // 1× → 2× baseFreq
         } else {
-          // 75–100%: sine locks to baseFreq, saw diverges up to 4× baseFreq
-          float blend = (norm - 0.75f) / 0.25f;              // 0→1 over this zone
-          sineFreq = baseFreq;
-          sawFreq  = baseFreq * (1.0f + blend * 3.0f);       // 1× → 4× baseFreq
+          // Divergence zone: sine climbs via quadratic blend
+          float blend = (norm - 0.30f) / 0.70f;
+          float blendSq = blend * blend;
+          sineFreq = baseFreq * (1.0f + blendSq * 2.0f);  // 1× → 3× base
+          sawFreq  = sineFreq * 0.5f;                       // always half sine
         }
 
         masterWfOscSine.frequency(sineFreq);
@@ -2742,8 +2790,13 @@ void updateKnobs() {
 // Stamps black text at 8 offsets (4 cardinal + 4 diagonal, 2px each) then white on top.
 void drawOutlinedText(int x, int y, const char* text) {
   static const int8_t offsets[][2] = {
-    {-2, 0}, {2, 0}, {0, -2}, {0, 2},   // cardinal
-    {-2,-2}, {2,-2}, {-2, 2}, {2, 2}     // diagonal
+    {-4, 0}, {4, 0}, {0, -4}, {0, 4},         // cardinal far
+    {-3, 0}, {3, 0}, {0, -3}, {0, 3},         // cardinal mid
+    {-2, 0}, {2, 0}, {0, -2}, {0, 2},         // cardinal near
+    {-3,-3}, {3,-3}, {-3, 3}, {3, 3},         // diagonal far
+    {-2,-2}, {2,-2}, {-2, 2}, {2, 2},         // diagonal near
+    {-3,-1}, {3,-1}, {-3, 1}, {3, 1},         // off-axis
+    {-1,-3}, {1,-3}, {-1, 3}, {1, 3}          // off-axis
   };
   display.setTextColor(0);
   for (auto& o : offsets) {
