@@ -190,7 +190,7 @@ float d3DecayBase = 25.0f;
 
 // Effective decays (base + choke offset, updated by applyChokeToDecays)
 float d1EffectiveDecay = 75.0f;
-float d2ClapEffectiveDecay = 120.0f;  // Derived from d2DecayBase via normalized mapping
+float d2ClapEffectiveDecay = 60.0f;  // Derived from d2DecayBase via normalized mapping
 float d3EffectiveDecay = 25.0f;       // Includes accent boost when accent mode active
 
 // Global choke offset
@@ -513,11 +513,11 @@ void applyChokeToDecays() {
   d2Body.length(base2 * 0.25f);
   AudioInterrupts();
 
-  // D2 clap family — derive clap decay from D2 decay (40–1000ms → 120–275ms)
+  // D2 clap family — derive clap decay from D2 decay (40–1000ms → 60–200ms)
   float d2Norm = (d2DecayBase - 40.0f) / (1000.0f - 40.0f);
   if (d2Norm < 0.0f) d2Norm = 0.0f;
   if (d2Norm > 1.0f) d2Norm = 1.0f;
-  float clapDecayBase = 120.0f + d2Norm * (275.0f - 120.0f);
+  float clapDecayBase = 60.0f + d2Norm * (200.0f - 60.0f);
   d2ClapEffectiveDecay = clapDecayBase + chokeOffsetMs;
   if (d2ClapEffectiveDecay < 10.0f) d2ClapEffectiveDecay = 10.0f;
 

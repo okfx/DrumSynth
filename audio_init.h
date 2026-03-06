@@ -53,7 +53,7 @@ inline void audioInit() {
     80.0f,  // attack: dB/s
     300.0f  // decay: dB/s
   );
-  sgtl5000_1.autoVolumeEnable();
+  sgtl5000_1.autoVolumeDisable();
 
   // ============================================================================
   // D1 - KICK DRUM
@@ -393,7 +393,7 @@ inline void audioInit() {
   masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
   // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
-  finalAmp.gain(6.5f);
+  finalAmp.gain(10.0f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
