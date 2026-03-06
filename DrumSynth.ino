@@ -156,6 +156,11 @@ uint32_t lastD1TriggerUs = 0;
 uint32_t lastD2TriggerUs = 0;
 uint32_t lastD3TriggerUs = 0;
 
+// D3 ratchet — hold D3 select button for continuous 8th note triplets
+bool d3RatchetHeld = false;
+uint32_t nextRatchetUs = 0;
+uint32_t ratchetIntervalUs = 0;
+
 // ---------------------------------------------------------------------------
 // Mid-file includes: These headers define functions/ISRs that reference globals
 // declared above. Arduino IDE compiles .ino as a single translation unit, so
@@ -918,7 +923,7 @@ void playSequenceCore(uint8_t step) {
     triggerD1();
   }
   if (d2Sequence[step]) triggerD2();
-  if (d3Sequence[step]) triggerD3(step);
+  if (d3Sequence[step] && !d3RatchetHeld) triggerD3(step);
 }
 
 void triggerD1() {
@@ -996,6 +1001,22 @@ void triggerD3(uint8_t step) {
   d3FmAmpEnv.noteOn();
   d3606AmpEnv.noteOn();
   d3Perc.noteOn();
+}
+
+// Calculate ratchet interval for 8th note triplets (3 hits per beat).
+// Works in both internal and external clock modes.
+uint32_t calcRatchetIntervalUs() {
+  uint32_t stepUs;
+  if (transportState == RUN_EXT) {
+    noInterrupts();
+    uint32_t pulse = synthIntervalUs > 0 ? synthIntervalUs : extIntervalEMA;
+    interrupts();
+    uint8_t p = ppqn;
+    stepUs = (p < STEPS_PER_BEAT) ? pulse / (STEPS_PER_BEAT / p) : pulse;
+  } else {
+    stepUs = (uint32_t)(60000000.0f / (STEPS_PER_BEAT * bpm));
+  }
+  return stepUs * 4 / 3;
 }
 
 // ============================================================================
@@ -1164,12 +1185,26 @@ void updateOtherButtons() {
         }
       }
 
-      // Buttons 0 and 7 handled separately — see press/release and continuous-hold blocks
-      if (btnState[i] && i != 7 && i != 0) {
+      // Button 2 (D3 SEQ SELECT) — hold for ratchet (8th note triplet fill).
+      if (i == 2) {
+        if (btnState[2]) {
+          // Press — select track and start ratchet
+          selectTrack(TRACK_D3);
+          d3RatchetHeld = true;
+          triggerD3(currentStep);
+          ratchetIntervalUs = calcRatchetIntervalUs();
+          nextRatchetUs = micros() + ratchetIntervalUs;
+        } else {
+          // Release — stop ratchet
+          d3RatchetHeld = false;
+        }
+      }
+
+      // Buttons 0, 2, and 7 handled separately
+      if (btnState[i] && i != 7 && i != 0 && i != 2) {
         switch (i) {
 
           case 1: selectTrack(TRACK_D2); break;
-          case 2: selectTrack(TRACK_D3); break;
 
           // cases 3, 4, 5: hardware-present but unassigned
 
@@ -2840,6 +2875,12 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
     }
   }
 
+  // D3 ratchet hit due within 25ms — protect triplet timing
+  if (d3RatchetHeld) {
+    int32_t remaining = (int32_t)(nextRatchetUs - micros());
+    if (remaining > 0 && remaining < 25000) return false;
+  }
+
   return true;
 }
 
@@ -3063,6 +3104,13 @@ void updateDisplay() {
   // blocking SPI transfer adds another 15-25ms of latency.
   if (sequencePlaying) {
     playSequence();
+  }
+
+  // D3 ratchet — fire next triplet hit if due
+  if (d3RatchetHeld && micros() >= nextRatchetUs) {
+    triggerD3(currentStep);
+    ratchetIntervalUs = calcRatchetIntervalUs();
+    nextRatchetUs += ratchetIntervalUs;
   }
 
   if (isSafeToPushOled(nowMs)) {
