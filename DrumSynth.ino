@@ -554,6 +554,55 @@ void setup() {
   if (displayOk) {
     display.clearDisplay();
 
+    // ========================================================================
+    // FACTORY RESET — hold MEM button on power-up for 5 seconds
+    // ========================================================================
+
+    otherButtonsMux.channel(7);
+    delayMicroseconds(10);
+    if (!otherButtonsMux.read()) {  // MEM held (active-low)
+      display.setTextColor(1);
+      display.setTextWrap(false);
+      display.setFont(NULL);
+      display.setTextSize(2);
+      display.setCursor(22, 0);
+      display.print("FACTORY");
+      display.setCursor(34, 20);
+      display.print("RESET");
+      display.display();
+
+      bool held = true;
+      for (int s = 5; s > 0 && held; s--) {
+        display.fillRect(0, 48, 128, 16, 0);
+        display.setCursor(58, 48);
+        display.print(s);
+        display.display();
+
+        for (int i = 0; i < 10 && held; i++) {
+          delay(100);
+          otherButtonsMux.channel(7);
+          delayMicroseconds(10);
+          if (otherButtonsMux.read()) held = false;
+        }
+      }
+
+      if (held) {
+        display.clearDisplay();
+        display.setCursor(28, 8);
+        display.print("EEPROM");
+        display.setCursor(22, 28);
+        display.print("CLEARED");
+        display.display();
+        for (int i = 0; i < (int)EEPROM.length(); i++) {
+          EEPROM.update(i, 0xFF);
+        }
+        delay(2000);
+      }
+
+      display.clearDisplay();
+      display.display();
+    }
+
     // Startup splash screen
     display.setTextColor(1);
     display.setTextWrap(false);
