@@ -5,7 +5,6 @@
 #include <ResponsiveAnalogRead.h>
 #include <ShiftRegister74HC595.h>
 #include <Adafruit_GFX.h>
-#include <Fonts/picopixel.h>
 #include <Adafruit_SH110X.h>
 #include <EEPROM.h>
 
@@ -411,7 +410,7 @@ void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 
 // Accent pattern bitmask — single source of truth for all 15 accent modes (OFF + 14 patterns).
-// Bit 15 = step 0, bit 0 = step 15.  Used by isAccent() and LED preview.
+// Bit 15 = step 0, bit 0 = step 15.  Used by triggerD3() and LED preview.
 static inline uint16_t accentMaskFromMode(uint8_t mode) {
   switch (mode) {
     case ACCENT_PICKUP:    return 0b0000000000000010;  // step 14 only
