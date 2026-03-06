@@ -1816,32 +1816,9 @@ void updateParameterDisplay(byte idx, int knobValue) {
 
     case 25:  // Wavefold Frequency
       {
-        float norm = normalizeKnob(knobValue);
-        float freeFreq = 40.0f * powf(25.0f, norm);
-        // Snap toward tempo-synced subdivisions
-        float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
-        float stepsPerSec = (activeBpm / 60.0f) * STEPS_PER_BEAT;
-        static const float subdivMults[] = { 0.25f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
-        float logFree = logf(freeFreq);
-        float bestDist = 999.0f;
-        float bestLogTarget = logFree;
-        for (uint8_t i = 0; i < 7; i++) {
-          float target = stepsPerSec * subdivMults[i];
-          if (target < 30.0f || target > 1200.0f) continue;
-          float logTarget = logf(target);
-          float dist = fabsf(logFree - logTarget);
-          if (dist < bestDist) { bestDist = dist; bestLogTarget = logTarget; }
-        }
-        const float WELL_WIDTH = 0.25f;
-        const float WELL_DEPTH = 0.55f;
-        float baseFreq = freeFreq;
-        if (bestDist < WELL_WIDTH) {
-          float pull = WELL_DEPTH * 0.5f * (1.0f + cosf(bestDist / WELL_WIDTH * M_PI));
-          baseFreq = expf(logFree + pull * (bestLogTarget - logFree));
-        }
-        int freqHz = (int)(baseFreq + 0.5f);
+        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d HZ", freqHz);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
       }
 
@@ -2517,43 +2494,24 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 25:  // Wavefold Frequency
       {
         float norm = normalizeKnob(knobValue);
-        // Exponential base frequency: 40–1000 Hz on a log curve
-        float freeFreq = 40.0f * powf(25.0f, norm);
+        float baseFreq = 40.0f + norm * (1000.0f - 40.0f);
 
-        // Snap toward tempo-synced subdivisions (gravity wells)
-        float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
-        float stepsPerSec = (activeBpm / 60.0f) * STEPS_PER_BEAT;
-        static const float subdivMults[] = { 0.25f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f };
-        float logFree = logf(freeFreq);
-        float bestDist = 999.0f;
-        float bestLogTarget = logFree;
-        for (uint8_t i = 0; i < 7; i++) {
-          float target = stepsPerSec * subdivMults[i];
-          if (target < 30.0f || target > 1200.0f) continue;
-          float logTarget = logf(target);
-          float dist = fabsf(logFree - logTarget);
-          if (dist < bestDist) { bestDist = dist; bestLogTarget = logTarget; }
-        }
-        const float WELL_WIDTH = 0.25f;
-        const float WELL_DEPTH = 0.55f;
-        float baseFreq = freeFreq;
-        if (bestDist < WELL_WIDTH) {
-          float pull = WELL_DEPTH * 0.5f * (1.0f + cosf(bestDist / WELL_WIDTH * M_PI));
-          baseFreq = expf(logFree + pull * (bestLogTarget - logFree));
-        }
-
-        // Oscillator frequency assignment: sine at full rate, saw at half
         float sineFreq, sawFreq;
-        if (norm <= 0.30f) {
-          // Parallel zone: sine at base, saw one octave below
+
+        if (norm <= 0.5f) {
+          // 0–50%: sine at baseFreq, saw one octave below (baseFreq / 2)
           sineFreq = baseFreq;
           sawFreq  = baseFreq * 0.5f;
+        } else if (norm <= 0.75f) {
+          // 50–75%: saw locks to baseFreq, sine diverges up to 2× baseFreq
+          float blend = (norm - 0.5f) / 0.25f;               // 0→1 over this zone
+          sawFreq  = baseFreq;
+          sineFreq = baseFreq * (1.0f + blend);               // 1× → 2× baseFreq
         } else {
-          // Divergence zone: sine climbs via quadratic blend
-          float blend = (norm - 0.30f) / 0.70f;
-          float blendSq = blend * blend;
-          sineFreq = baseFreq * (1.0f + blendSq * 2.0f);  // 1× → 3× base
-          sawFreq  = sineFreq * 0.5f;                       // always half sine
+          // 75–100%: sine locks to baseFreq, saw diverges up to 4× baseFreq
+          float blend = (norm - 0.75f) / 0.25f;              // 0→1 over this zone
+          sineFreq = baseFreq;
+          sawFreq  = baseFreq * (1.0f + blend * 3.0f);       // 1× → 4× baseFreq
         }
 
         masterWfOscSine.frequency(sineFreq);

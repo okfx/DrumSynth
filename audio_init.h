@@ -24,15 +24,15 @@ inline void audioInit() {
   sgtl5000_1.enable();
 
   // Analog output staging
-  sgtl5000_1.volume(0.60f);     // Headphone amp gain
-  sgtl5000_1.lineOutLevel(29);  // Line out voltage swing (Teensy default)
+  sgtl5000_1.volume(0.75f);     // Headphone amp gain
+  sgtl5000_1.lineOutLevel(13);  // Line out max voltage swing (3.16 Vpp)
 
   // Enable DAP (required for EQ / AVC on output)
   sgtl5000_1.audioPostProcessorEnable();
 
   // Digital trim before DAC (useful if you ever need extra headroom)
   sgtl5000_1.dacVolumeRamp();  // Smooth dacVolume changes
-  sgtl5000_1.dacVolume(0.95f);  // Slight headroom below unity
+  sgtl5000_1.dacVolume(0.98f);  // Near-unity, slight headroom
 
   // 5-band graphic EQ: 115Hz, 330Hz, 990Hz, 3kHz, 9.9kHz
   // Range: 1.00 ~= +12 dB, -1.00 ~= -11.75 dB
@@ -49,7 +49,7 @@ inline void audioInit() {
     0,      // maxGain: 0 dB
     2,      // response: 50 ms integration
     1,      // hardLimit: limiter mode
-    -6.0f,  // threshold: dBFS
+    -1.5f,  // threshold: dBFS
     80.0f,  // attack: dB/s
     300.0f  // decay: dB/s
   );
@@ -393,7 +393,7 @@ inline void audioInit() {
   masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
   // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
-  finalAmp.gain(5.51f);
+  finalAmp.gain(6.5f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
