@@ -161,6 +161,11 @@ bool d3RatchetHeld = false;
 uint32_t nextRatchetUs = 0;
 uint32_t ratchetIntervalUs = 0;
 
+// D2 accelerating roll — hold D2 select button for 8th→32nd note roll over 1 bar
+bool d2RollHeld = false;
+uint32_t nextRollUs = 0;
+uint32_t rollStartUs = 0;
+
 // ---------------------------------------------------------------------------
 // Mid-file includes: These headers define functions/ISRs that reference globals
 // declared above. Arduino IDE compiles .ino as a single translation unit, so
@@ -922,7 +927,7 @@ void playSequenceCore(uint8_t step) {
     }
     triggerD1();
   }
-  if (d2Sequence[step]) triggerD2();
+  if (d2Sequence[step] && !d2RollHeld) triggerD2();
   if (d3Sequence[step] && !d3RatchetHeld) triggerD3(step);
 }
 
@@ -1003,20 +1008,22 @@ void triggerD3(uint8_t step) {
   d3Perc.noteOn();
 }
 
-// Calculate ratchet interval for 8th note triplets (3 hits per beat).
+// Step interval in microseconds — shared by D3 ratchet and D2 roll.
 // Works in both internal and external clock modes.
-uint32_t calcRatchetIntervalUs() {
-  uint32_t stepUs;
+uint32_t calcStepIntervalUs() {
   if (transportState == RUN_EXT) {
     noInterrupts();
     uint32_t pulse = synthIntervalUs > 0 ? synthIntervalUs : extIntervalEMA;
     interrupts();
     uint8_t p = ppqn;
-    stepUs = (p < STEPS_PER_BEAT) ? pulse / (STEPS_PER_BEAT / p) : pulse;
-  } else {
-    stepUs = (uint32_t)(60000000.0f / (STEPS_PER_BEAT * bpm));
+    return (p < STEPS_PER_BEAT) ? pulse / (STEPS_PER_BEAT / p) : pulse;
   }
-  return stepUs * 4 / 3;
+  return (uint32_t)(60000000.0f / (STEPS_PER_BEAT * bpm));
+}
+
+// D3 ratchet: 8th note triplet interval (3 hits per beat)
+uint32_t calcRatchetIntervalUs() {
+  return calcStepIntervalUs() * 4 / 3;
 }
 
 // ============================================================================
@@ -1185,6 +1192,21 @@ void updateOtherButtons() {
         }
       }
 
+      // Button 1 (D2 SEQ SELECT) — hold for accelerating roll (8th→32nd over 1 bar).
+      if (i == 1) {
+        if (btnState[1]) {
+          // Press — select track and start roll
+          selectTrack(TRACK_D2);
+          d2RollHeld = true;
+          rollStartUs = micros();
+          triggerD2();
+          nextRollUs = rollStartUs + calcStepIntervalUs() * 2;  // first gap = 8th note
+        } else {
+          // Release — stop roll
+          d2RollHeld = false;
+        }
+      }
+
       // Button 2 (D3 SEQ SELECT) — hold for ratchet (8th note triplet fill).
       if (i == 2) {
         if (btnState[2]) {
@@ -1200,11 +1222,9 @@ void updateOtherButtons() {
         }
       }
 
-      // Buttons 0, 2, and 7 handled separately
-      if (btnState[i] && i != 7 && i != 0 && i != 2) {
+      // Buttons 0, 1, 2, and 7 handled separately
+      if (btnState[i] && i != 7 && i != 0 && i != 1 && i != 2) {
         switch (i) {
-
-          case 1: selectTrack(TRACK_D2); break;
 
           // cases 3, 4, 5: hardware-present but unassigned
 
@@ -2881,6 +2901,12 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
     if (remaining > 0 && remaining < 25000) return false;
   }
 
+  // D2 roll hit due within 25ms — protect roll timing
+  if (d2RollHeld) {
+    int32_t remaining = (int32_t)(nextRollUs - micros());
+    if (remaining > 0 && remaining < 25000) return false;
+  }
+
   return true;
 }
 
@@ -3111,6 +3137,18 @@ void updateDisplay() {
     triggerD3(currentStep);
     ratchetIntervalUs = calcRatchetIntervalUs();
     nextRatchetUs += ratchetIntervalUs;
+  }
+
+  // D2 accelerating roll — 8th notes → 32nd notes over 1 bar
+  if (d2RollHeld && micros() >= nextRollUs) {
+    triggerD2();
+    uint32_t stepUs = calcStepIntervalUs();
+    uint32_t barUs = stepUs * 16;
+    uint32_t elapsed = micros() - rollStartUs;
+    float t = (float)elapsed / (float)barUs;
+    if (t > 1.0f) t = 1.0f;
+    uint32_t interval = (uint32_t)((float)(stepUs * 2) * powf(0.25f, t));
+    nextRollUs += interval;
   }
 
   if (isSafeToPushOled(nowMs)) {
