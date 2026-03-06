@@ -79,7 +79,6 @@ bool bassLineModeActive = false;
 static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
-bool bassLineKnobPickedUp = false;  // Soft-pickup: ignore knob until it matches stored note
 
 // Per-step MIDI note for bass line (A1=33 to A4=69, 36 semitones)
 // Default C2 = MIDI 36
@@ -263,9 +262,8 @@ static constexpr const char* ratioLabels[] = {
 
 static constexpr int NUM_RATIOS = sizeof(quantizeRatios) / sizeof(quantizeRatios[0]);
 
-// master gain and wavefolder compensation
+// master gain
 float masterNominalGain = 1.0f;
-float masterWavefoldComp = 1.0f;
 
 // drum levels
 float d1Volume = 0.75f;
@@ -407,12 +405,12 @@ void triggerD2();
 void triggerD3(uint8_t step);
 int readKnobRaw(byte idx);
 void updateParameterDisplay(byte idx, int knobValue);
-inline void applyKnobToEngine(byte idx, int knobValue);
+void applyKnobToEngine(byte idx, int knobValue);
 void updateKnobs();
 void setTransport(TransportState s);
-inline void updateDrumDelayGains();
+void updateDrumDelayGains();
 void initKnobsFromHardware();
-inline void applyMasterGainFromState();
+void applyMasterGain();
 void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 
@@ -456,11 +454,11 @@ void sysTickISR() {
 //  Audio Helpers
 // ============================================================================
 
-inline void updateDrumDelayGains() {
+void updateDrumDelayGains() {
   // Decouple delay sends from the drum output levels.
   // This keeps delay tails and throws consistent even if a drum is turned down or muted.
 
-  float s1 = d1DelaySend * 0.6f;   // D1 tapped post-amp (0.7×) — scale down to match D2 level
+  float s1 = d1DelaySend * 0.6f;   // D1 tapped post-amp — scale down to match D2 level
   float s2 = d2DelaySend;          // D2 tapped at snareClapMixer — reference level
   float s3 = d3DelaySend * 1.75f;  // D3 tapped post-filter (quieter than D2) — 1.75× compensates for filter attenuation
 
@@ -482,10 +480,8 @@ inline void updateDrumDelayGains() {
   AudioInterrupts();
 }
 
-inline void applyMasterGainFromState() {
-  // always honor masterNominalGain and masterWavefoldComp, even when stopped
-  float g = masterNominalGain * masterWavefoldComp;
-  masterAmp.gain(g);
+void applyMasterGain() {
+  masterAmp.gain(masterNominalGain);
 }
 
 // Recompute cached D1 hold time. Attack is fixed at 0.5ms (808-style
@@ -646,7 +642,7 @@ void setup() {
   initKnobsFromHardware();
   loadStateFromEEPROM(activeSaveSlot);
   rearmStepTimer();
-  applyMasterGainFromState();
+  applyMasterGain();
 }
 
 void loop() {
@@ -1076,6 +1072,8 @@ void updateOtherButtons() {
               // PLAY = ARM. No step fires here. The next external pulse (or
               // internal tick for RUN_INT) fires step 0.
               subdivTimer.end();
+              // Wide critical section — all ISR-shared state must be initialized
+              // before setTransport() arms the timer that creates the ISR source.
               noInterrupts();
               pendingStepCount = 0;
               extStepAcc = 0;
@@ -1121,21 +1119,17 @@ void updateOtherButtons() {
               // Preserves pulse timing state (extPulseCount, lastPulseMicros,
               // extIntervalEMA, prevAcceptedInterval) so ext clock is detected
               // immediately on the next PLAY press.
-              // Clears step-generation state (armed, subdivision, pending steps)
-              // to prevent stray steps from sounding after STOP.
+              // setTransport(STOPPED) handles subdivision + timer cleanup;
+              // remaining ISR-shared state cleared here under noInterrupts.
               sequencePlaying = false;
               setTransport(STOPPED);
-              subdivTimer.end();
               noInterrupts();
               armed = false;
               armPulseCountdown = 0;
               pendingStepCount = 0;
-              extStepAcc = 0;
-              subdivStepsRemaining = 0;
-              subdivTimerDueUs = 0;
               wantSwitchToExt = false;
               interrupts();
-              applyMasterGainFromState();
+              applyMasterGain();
             }
             break;
 
@@ -1209,7 +1203,7 @@ void updateOtherButtons() {
             sequencePlaying = false;
             setTransport(STOPPED);
             resetExternalClockState();
-            applyMasterGainFromState();
+            applyMasterGain();
           }
           ppqnModeActive = true;
           ppqnModeLastActivityTick = nowTick;
@@ -1325,7 +1319,6 @@ void updateStepButtons() {
           if (bassLineHeldStep == i) {
             // Was in note-select — just clear, no toggle
             bassLineHeldStep = -1;
-            bassLineKnobPickedUp = false;
           } else {
             // Short press on a different step — toggle it
             seq[i] ^= 1;
@@ -1348,7 +1341,6 @@ void updateStepButtons() {
       } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
         // Just crossed the hold threshold — enter note-select for this step
         bassLineHeldStep = i;
-        bassLineKnobPickedUp = false;
       }
     }
 
@@ -1568,17 +1560,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
         if (bassLineModeActive) {
           if (bassLineHeldStep >= 0) {
             uint8_t note = bassLineKnobToNote(knobValue);
-            // Soft-pickup: ignore knob until it matches the stored note,
-            // then track normally. Prevents note jump on first touch.
-            if (!bassLineKnobPickedUp) {
-              if (note == bassLineNote[bassLineHeldStep]) {
-                bassLineKnobPickedUp = true;
-              }
-              note = bassLineNote[bassLineHeldStep];  // show stored note until pickup
-            }
-            if (bassLineKnobPickedUp) {
-              bassLineNote[bassLineHeldStep] = note;
-            }
+            bassLineNote[bassLineHeldStep] = note;
             char noteName[5];
             formatBassNote(note, noteName);
             snprintf(displayParameter1, sizeof(displayParameter1),
@@ -1836,7 +1818,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 30:  // Wavefold (master wavefolder drive)
       {
         float norm = normalizeKnob(knobValue);
-        const float DEADBAND = 0.02f;
+        const float DEADBAND = 0.03f;  // matches engine deadband in applyKnobToEngine case 30
         float active = (norm <= DEADBAND) ? 0.0f
                      : (norm - DEADBAND) / (1.0f - DEADBAND);
         if (active > 1.0f) active = 1.0f;
@@ -1878,7 +1860,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 // IMPORTANT: This switch and updateParameterDisplay() above use the same case
 // numbers (0–31). When adding/changing a knob, update BOTH functions.
 // Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
-inline void applyKnobToEngine(byte idx, int knobValue) {
+void applyKnobToEngine(byte idx, int knobValue) {
   switch (idx) {
 
       // ========================================================================
@@ -1887,7 +1869,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 0:  // D1 Drive/Distortion
       {
-        if (knobValue < 10) {
+        if (knobValue < 31) {
           AudioNoInterrupts();
           d1WfDrive.amplitude(0.0f);
           d1VoiceMixer.gain(3, 0.0f);   // wavefolder return off
@@ -1957,16 +1939,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         if (bassLineModeActive) {
           if (bassLineHeldStep >= 0) {
             uint8_t note = bassLineKnobToNote(knobValue);
-            // Soft-pickup: ignore knob until it matches stored note
-            if (!bassLineKnobPickedUp) {
-              if (note == bassLineNote[bassLineHeldStep]) {
-                bassLineKnobPickedUp = true;
-              }
-            }
-            if (bassLineKnobPickedUp) {
-              bassLineNote[bassLineHeldStep] = note;
-              patternDirty = true;
-            }
+            bassLineNote[bassLineHeldStep] = note;
+            patternDirty = true;
             // Don't change d1BaseFreq — frequency set at playback time
           }
           break;
@@ -2013,12 +1987,12 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
         float notchFreq0 = 200.0f + 200.0f * blend;
         float notchFreq1 = notchFreq0 * (1.15f + 0.05f * norm);
-        float shelfGain = 1.25f * blend;
+        float shelfSlope = 1.25f * blend;
 
         AudioNoInterrupts();
         d1EQ.setNotch(0, notchFreq0, 3);
         d1EQ.setNotch(1, notchFreq1, 1);
-        d1EQ.setHighShelf(2, 3500.0f, shelfGain, 0.9f);
+        d1EQ.setHighShelf(2, 3500.0f, shelfSlope, 0.9f);
         AudioInterrupts();
         break;
       }
@@ -2067,7 +2041,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 11:  // D2 Wavefolder Drive
       {
         float norm = normalizeKnob(knobValue);
-        bool offZone = (knobValue < 10);
+        bool offZone = (knobValue < 31);
 
         // Default values (off state)
         float driveGain = 0.8f;
@@ -2157,16 +2131,15 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
     case 14:  // D2 Noise
       {
         if (knobValue >= 10) {
-          float decayMs = (knobValue < 512)
-                            ? mapFloat(knobValue, 10, 511, 30.0f, 70.0f)
-                            : mapFloat(knobValue, 512, 1023, 70.0f, 200.0f);
-
-          float filterFreqHz = 3000.0f + 10.0f * decayMs;
           float norm = normalizeKnob(knobValue);
-          float noiseGain = 0.045f + 0.22f * norm;
+          float holdMs = 7.0f + norm * 68.0f;     // 7ms → 75ms
+          float decayMs = 30.0f + norm * 20.0f;   // 30ms → 50ms
+          float filterFreqHz = 3000.0f + 2000.0f * norm;
+          float normCapped = (norm > 0.5f) ? 0.5f : norm;
+          float noiseGain = 0.045f + 0.22f * normCapped;  // gain caps at 50% knob travel
 
           AudioNoInterrupts();
-          d2NoiseEnv.hold(decayMs * 0.5f);
+          d2NoiseEnv.hold(holdMs);
           d2NoiseEnv.decay(decayMs);
           d2NoiseFilter.frequency(filterFreqHz);
           d2VoiceMixer.gain(2, noiseGain);
@@ -2323,8 +2296,7 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 19:  // D3 Distort (sine-driven wavefolder)
       {
-        // True OFF in the first tiny region
-        if (knobValue < 5) {
+        if (knobValue < 31) {
           d3WfOsc.amplitude(0.0f);
           AudioNoInterrupts();
           d3MasterMixer.gain(0, 0.70f);  // dry at default (parity with D1/D2)
@@ -2508,11 +2480,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
 
     case 28:  // Master Volume
       {
-        float norm = normalizeKnob(knobValue);
-        float volume = norm * 2.0f;
-
-        masterNominalGain = volume * 5.0f;
-        applyMasterGainFromState();
+        masterNominalGain = normalizeKnob(knobValue) * 10.0f;  // 0–10× range
+        applyMasterGain();
         break;
       }
 
@@ -2532,20 +2501,17 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normalizeKnob(knobValue);
 
-        // Deadband at bottom 2% — wavefolder fully off
-        const float DEADBAND = 0.02f;
+        // Deadband at bottom 3% — wavefolder fully off
+        const float DEADBAND = 0.03f;
         if (norm <= DEADBAND) {
           AudioNoInterrupts();
           masterWfInputMixer.gain(0, 0.0f);
           masterWfInputMixer.gain(1, 0.0f);
           masterWfInputMixer.gain(2, 0.0f);  // kick env off
           masterWfInputMixer.gain(3, 0.0f);  // snare/clap env off
-          masterWavefoldComp = 1.0f;
           masterMixer.gain(0, 1.0f);  // dry at unity
           masterMixer.gain(1, 0.0f);  // wavefolder return off
           AudioInterrupts();
-
-          applyMasterGainFromState();
           break;
         }
 
@@ -2579,18 +2545,14 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         // Drum envelope gains: transient bursts need higher gain than
         // continuous oscillators to audibly affect wavefolding.
         // Scales with active (not oscSq) so envelopes stay present at high drive.
-        const float ENV_RATIO = 0.80f;
+        const float ENV_RATIO = 1.60f;
         float envGain = active * 0.55f * ENV_RATIO;
 
-        // Loudness compensation — account for oscillator drive, envelope
-        // transients, and the harmonic energy the wavefolder generates.
-        // Include envelope contribution in the sum (×0.5 because transient,
-        // not continuous — approximate average vs peak).
-        // Uses active² for the extra reduction so it bites harder past noon.
+        // Loudness compensation — apply to wavefolder return level so it
+        // manages its own gain into the mix without ducking masterAmp.
         float sum = dryLevel + wfReturn + envGain * 0.5f;
         float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
         comp *= 1.0f - 0.45f * active * active;
-        masterWavefoldComp = comp;
 
         AudioNoInterrupts();
         masterWfInputMixer.gain(0, sineGain);
@@ -2598,10 +2560,8 @@ inline void applyKnobToEngine(byte idx, int knobValue) {
         masterWfInputMixer.gain(2, envGain);   // kick envelope
         masterWfInputMixer.gain(3, envGain);   // snare/clap envelope
         masterMixer.gain(0, dryLevel);
-        masterMixer.gain(1, wfReturn);
+        masterMixer.gain(1, wfReturn * comp);
         AudioInterrupts();
-
-        applyMasterGainFromState();
         break;
       }
 

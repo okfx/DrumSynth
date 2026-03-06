@@ -28,15 +28,11 @@ uint8_t scopeBufferWriteIndex = 0;
 float scopePeakRange = 0.05f;  // starts at noise floor
 float scopeMidpoint = 0.0f;    // smoothed vertical center
 
-// External dependencies
-extern AudioRecordQueue scopeQueue;            // from audiotool.h
-extern Adafruit_SH1106G display;               // from hw_setup.h
-
 // ============================================================================
 //  updateScopeData() — call from main loop to consume audio samples
 // ============================================================================
 
-static inline void updateScopeData() {
+void updateScopeData() {
   static uint8_t blockSkipCounter = 0;
   const uint8_t BLOCKS_TO_SKIP = 12;   // Process every 12th block (skip 11, keep 1)
   const int SAMPLE_DECIMATION = 16;
@@ -65,7 +61,7 @@ static inline void updateScopeData() {
 //  drawScopeWaveform() — render waveform into display buffer
 // ============================================================================
 
-static inline void drawScopeWaveform(int x, int y, int h) {
+void drawScopeWaveform(int x, int y, int h) {
   // Snapshot write index before any reads. Both updateScopeData() and this
   // function run sequentially in loop(), so the index can't change mid-call,
   // but snapshotting makes that assumption explicit and safe against refactoring.

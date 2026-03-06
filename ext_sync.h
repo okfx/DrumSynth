@@ -35,7 +35,7 @@ extern IntervalTimer stepTimer;
 
 // Transport control (defined in main .ino)
 extern void setTransport(TransportState s);
-extern void applyMasterGainFromState();
+extern void applyMasterGain();
 extern volatile uint8_t currentStep;
 
 // ============================================================================
@@ -372,7 +372,7 @@ void rearmStepTimer() {
 // Called from checkExtClockTimeout() (clock lost) and PPQN mode entry.
 // NOT called from STOP — STOP does a partial reset preserving pulse timing
 // so the PLAY handler detects ext clock immediately on the next press.
-static inline void resetExternalClockState() {
+void resetExternalClockState() {
   subdivTimer.end();
   noInterrupts();
   extPulseCount = 0;
@@ -428,7 +428,7 @@ void checkExtClockTimeout() {
         setTransport(RUN_INT);
       } else {
         setTransport(STOPPED);
-        applyMasterGainFromState();
+        applyMasterGain();
       }
       resetExternalClockState();
     }

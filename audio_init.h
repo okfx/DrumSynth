@@ -24,7 +24,7 @@ inline void audioInit() {
   sgtl5000_1.enable();
 
   // Analog output staging
-  sgtl5000_1.volume(0.75f);     // Headphone amp gain (0.8 is ~max clean; 0.75 gives margin)
+  sgtl5000_1.volume(0.45f);     // Lower headphone amp gain reduces SGTL5000 noise floor contribution
   sgtl5000_1.lineOutLevel(29);  // Line out voltage swing (Teensy default)
 
   // Enable DAP (required for EQ / AVC on output)
@@ -32,7 +32,7 @@ inline void audioInit() {
 
   // Digital trim before DAC (useful if you ever need extra headroom)
   sgtl5000_1.dacVolumeRamp();  // Smooth dacVolume changes
-  sgtl5000_1.dacVolume(1.0f);  // Unity gain
+  sgtl5000_1.dacVolume(0.95f);  // Slight headroom below unity
 
   // 5-band graphic EQ: 115Hz, 330Hz, 990Hz, 3kHz, 9.9kHz
   // Range: 1.00 ~= +12 dB, -1.00 ~= -11.75 dB
@@ -101,10 +101,10 @@ inline void audioInit() {
   d1VoiceMixer.gain(0, 0.3f);   // d1LowPass (dry osc)
   d1VoiceMixer.gain(1, 0.9f);   // d1SnapAmp (transient)
   d1VoiceMixer.gain(2, 0.0f);   // unconnected
-  d1VoiceMixer.gain(3, 0.25f);  // d1Wavefolder (wet)
+  d1VoiceMixer.gain(3, 0.0f);   // d1Wavefolder (wet) — off at boot, knob 0 enables
 
   // D1 filters
-  d1LowPass.frequency(2200.0f);
+  d1LowPass.frequency(1800.0f);
   d1LowPass.resonance(1.5f);
 
   d1HighPass.frequency(85.0f);
@@ -137,17 +137,18 @@ inline void audioInit() {
   d2ClickTransient.pitchMod(0.6f);
 
   d2ClickFilter.frequency(2000.0f);
-  d2ClickFilter.resonance(4.0f);
+  d2ClickFilter.resonance(1.5f);
 
   // D2 noise layer
   d2Noise.amplitude(0.75f);
 
-  d2NoiseEnv.attack(10.0f);
-  d2NoiseEnv.decay(100.0f);
+  d2NoiseEnv.attack(0.5f);
+  d2NoiseEnv.hold(7.0f);
+  d2NoiseEnv.decay(70.0f);
   d2NoiseEnv.sustain(0.0f);
 
   d2NoiseFilter.frequency(5000.0f);
-  d2NoiseFilter.resonance(2.0f);
+  d2NoiseFilter.resonance(0.707f);
 
   // D2 body transient
   d2Body.frequency(200.0f);
@@ -184,10 +185,10 @@ inline void audioInit() {
   clapNoise2.amplitude(0.75f);
 
   // Clap filters
-  clapFilter1.frequency(1100.0f);
+  clapFilter1.frequency(2500.0f);
   clapFilter1.resonance(1.8f);
 
-  clapFilter2.frequency(900.0f);
+  clapFilter2.frequency(1800.0f);
   clapFilter2.resonance(1.8f);
 
   // Clap envelopes
@@ -203,14 +204,14 @@ inline void audioInit() {
 
   // Clap delay lines
   clapDelay1.delay(0, 0);
-  clapDelay1.delay(1, 18);
-  clapDelay1.delay(2, 36);
-  clapDelay1.delay(3, 62);
+  clapDelay1.delay(1, 180);
+  clapDelay1.delay(2, 360);
+  clapDelay1.delay(3, 620);
 
-  clapDelay2.delay(0, 7);
-  clapDelay2.delay(1, 25);
-  clapDelay2.delay(2, 48);
-  clapDelay2.delay(3, 70);
+  clapDelay2.delay(0, 70);
+  clapDelay2.delay(1, 250);
+  clapDelay2.delay(2, 480);
+  clapDelay2.delay(3, 700);
 
   // Clap delay mixers (tapering gains — first hits louder)
   clapMixer1.gain(0, 0.30f);
@@ -227,7 +228,7 @@ inline void audioInit() {
   clapBusMixer.gain(1, 1.0f);
 
   // Clap master filter and envelope
-  clapMasterFilter.frequency(1250.0f);
+  clapMasterFilter.frequency(650.0f);
   clapMasterFilter.resonance(1.8f);
 
   clapMasterEnv.attack(0.5f);
@@ -235,7 +236,7 @@ inline void audioInit() {
   clapMasterEnv.decay(200.0f);
   clapMasterEnv.sustain(0.0f);
 
-  clapAmp.gain(1.5f);
+  clapAmp.gain(1.0f);
 
   // --- D2 output mixing ---
 
@@ -385,11 +386,11 @@ inline void audioInit() {
 
   masterWfInputMixer.gain(0, 0.0f);          // sine channel — knob 30 controls mix
   masterWfInputMixer.gain(1, 0.0f);          // saw channel
-  masterWfInputMixer.gain(2, 0.0f);
-  masterWfInputMixer.gain(3, 0.0f);
+  masterWfInputMixer.gain(2, 0.0f);          // kick envelope
+  masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
-  // Final output amplifier — 3× makeup gain compensates for master filter chain attenuation
-  finalAmp.gain(3.0f);
+  // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
+  finalAmp.gain(5.25f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
@@ -421,9 +422,11 @@ inline void audioInit() {
   masterBandPass.frequency(1000.0f);  // 1kHz bandpass — intentional coloring of master output
   masterBandPass.resonance(1.0f);
 
-  // Smiley-face master EQ — boosted lows + highs = relative mid scoop
-  finalFilter.setLowShelf(0, 150.0f, 0.7f, 3.0f);    // +3dB warmth below 150Hz
-  finalFilter.setHighShelf(1, 5000.0f, 0.7f, 2.5f);   // +2.5dB air above 5kHz (gentler than old +5dB to reduce hiss)
+  // Smiley-face master EQ — boosted lows, two mid cuts, bright highs
+  finalFilter.setLowShelf(0, 150.0f, 0.7f, 2.0f);    // +2dB warmth below 150Hz
+  finalFilter.setNotch(1, 350.0f, 1.7f);              // moderate cut around 350Hz
+  finalFilter.setNotch(2, 2000.0f, 3.0f);             // narrow mild cut around 2kHz
+  finalFilter.setHighShelf(3, 4500.0f, 0.7f, 3.5f);   // +3.5dB air above 4.5kHz
 }
 
 #endif
