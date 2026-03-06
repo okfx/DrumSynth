@@ -41,8 +41,9 @@ static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
 static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
 static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-#define FIRMWARE_VERSION_FMT "%02d.%02d.%02d-%02d:%02d"
-#define FIRMWARE_VERSION_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
+#define FIRMWARE_VERSION "1.0"
+#define FIRMWARE_DATE_FMT "%02d.%02d.%02d - %02d:%02d"
+#define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -562,12 +563,14 @@ void setup() {
     display.setTextWrap(false);
     display.setFont(NULL);
     display.setTextSize(1);
-    display.setCursor(40, 20);
+    display.setCursor(43, 16);
     display.print("VERSION");
-    display.setCursor(19, 36);
-    char versionBuf[20];
-    snprintf(versionBuf, sizeof(versionBuf), FIRMWARE_VERSION_FMT, FIRMWARE_VERSION_ARGS);
-    display.print(versionBuf);
+    display.setCursor(55, 28);
+    display.print(FIRMWARE_VERSION);
+    display.setCursor(10, 40);
+    char dateBuf[20];
+    snprintf(dateBuf, sizeof(dateBuf), FIRMWARE_DATE_FMT, FIRMWARE_DATE_ARGS);
+    display.print(dateBuf);
     display.display();
     delay(1250);
 
@@ -1186,12 +1189,7 @@ void updateOtherButtons() {
           ppqn = ppqnModeSelection;
           savePpqnToEEPROM(ppqn);
           ppqnModeActive = false;
-          switch (ppqn) {
-            case 2:  snprintf(displayParameter1, sizeof(displayParameter1), "PPQN 2 (VOLCA)"); break;
-            case 4:  snprintf(displayParameter1, sizeof(displayParameter1), "PPQN 4 (VOLCA ALT)"); break;
-            case 24: snprintf(displayParameter1, sizeof(displayParameter1), "PPQN 24 (ROLAND)"); break;
-            default: snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn); break;
-          }
+          snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
           snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
           parameterOverlayStartTick = nowTick;
           activeRail = RAIL_NONE;
@@ -2863,25 +2861,22 @@ void updateDisplay() {
     display.setTextColor(1);
     display.setTextWrap(false);
 
-    display.setTextSize(1);
-    display.setCursor(16, 0);
+    display.setTextSize(2);
+    display.setCursor(0, 0);
     display.print("PPQN SELECT");
 
-    display.setCursor(4, 16);
-    display.print("TAP:CYCLE HOLD:SAVE");
+    display.setTextSize(1);
+    display.setCursor(28, 20);
+    display.print("TAP TO CYCLE");
+    display.setCursor(28, 32);
+    display.print("HOLD TO SAVE");
 
     display.setTextSize(2);
-    display.setCursor(16, 34);
-    display.print("PPQN:");
-    display.print(ppqnModeSelection);
-
-    // Device label below the PPQN value
-    display.setTextSize(1);
-    display.setCursor(16, 54);
-    switch (ppqnModeSelection) {
-      case 2:  display.print("VOLCA"); break;
-      case 4:  display.print("VOLCA ALT"); break;
-      case 24: display.print("ROLAND"); break;
+    {
+      char ppqnBuf[4];
+      snprintf(ppqnBuf, sizeof(ppqnBuf), "%d", ppqnModeSelection);
+      display.setCursor(65 - (int)strlen(ppqnBuf) * 6, 48);
+      display.print(ppqnBuf);
     }
 
     if (isSafeToPushOled(nowMs)) {
