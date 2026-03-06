@@ -3094,8 +3094,10 @@ void updateDisplay() {
     display.print(memBuf);
   }
 
-  // Play/Stop icon
-  if (playingSnap) {
+  // Transport / mode icon
+  if (bassLineModeActive) {
+    display.drawBitmap(118, 4, image_bassclef_bits, 10, 10, 1);
+  } else if (playingSnap) {
     display.drawBitmap(118, 4, image_play_bits, 10, 10, 1);
   } else {
     display.drawBitmap(118, 4, image_stop_bits, 10, 10, 1);
