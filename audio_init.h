@@ -397,8 +397,8 @@ inline void audioInit() {
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
-  masterMixer.gain(1, 1.0f);  // master wavefolder
-  masterMixer.gain(2, 1.0f);  // delay return
+  masterMixer.gain(1, 0.0f);  // master wavefolder — off at boot, case 30 enables
+  masterMixer.gain(2, 0.0f);  // delay return — off at boot, case 31 enables
   masterMixer.gain(3, 0.0f);  // unconnected
 
   // Master delay
@@ -407,7 +407,7 @@ inline void audioInit() {
   delayFilter.frequency(4000.0f);
   delayFilter.resonance(2.5f);
 
-  delayAmp.gain(0.79f);  // matches PEAK_LEVEL in delay amount knob handler
+  delayAmp.gain(0.73f);  // matches PEAK_LEVEL in delay amount knob handler (case 31)
 
   // Delay mixer and feedback
   delaySendMixer.gain(0, 0.0f);  // D1 send

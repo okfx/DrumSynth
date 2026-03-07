@@ -416,10 +416,11 @@ void checkExtClockLockIn() {
 // Detect external clock timeout — fall back to internal or stop
 void checkExtClockTimeout() {
   if (transportState == RUN_EXT) {
-    uint32_t now = micros();
+    uint32_t now;
     uint32_t lastPulseCopy;
 
     noInterrupts();
+    now = micros();
     lastPulseCopy = lastPulseMicros;
     interrupts();
 

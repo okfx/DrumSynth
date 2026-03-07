@@ -56,6 +56,7 @@ static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
+static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3% — used by display + engine case 30
 
 // D3 accent LED preview state — Main-loop only, no ISR access
 bool accentPreviewActive = false;
@@ -196,9 +197,9 @@ float d3EffectiveDecay = 25.0f;       // Includes accent boost when accent mode 
 int chokeOffsetMs = 0;
 int chokeDisplayPercent = 0;  // -100 to +100, for top bar and overlay display
 
-// D1 cached envelope params (updated on knob change / choke change)
-float d1CachedAttackMs = 0.5f;
-float d1CachedHoldMs = 56.25f;   // defaults; see updateD1HoldCache()
+// D1 envelope params
+static constexpr float D1_ATTACK_MS = 0.5f;  // 808-style instant punch — fixed, not knob-controlled
+float d1CachedHoldMs = 56.25f;               // scales with decay; see updateD1HoldCache()
 
 // ============================================================================
 //  Display State — Main-loop only, no ISR access
@@ -479,10 +480,9 @@ void applyMasterGain() {
   masterAmp.gain(masterNominalGain);
 }
 
-// Recompute cached D1 hold time. Attack is fixed at 0.5ms (808-style
-// instant punch); hold scales with decay. Call on choke or decay change.
+// Recompute cached D1 hold time (scales with decay).
+// Call on choke or decay change.
 static inline void updateD1HoldCache() {
-  d1CachedAttackMs = 0.5f;
   d1CachedHoldMs = d1EffectiveDecay * 0.75f;
 }
 
@@ -938,9 +938,8 @@ void triggerD1() {
   bool skipNoteOff = (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
   lastD1TriggerUs = now;
 
-  // Use pre-computed envelope params (updated by applyChokeToDecays / attack knob)
   AudioNoInterrupts();
-  d1AmpEnv.attack(d1CachedAttackMs);
+  d1AmpEnv.attack(D1_ATTACK_MS);
   d1AmpEnv.hold(d1CachedHoldMs);
   d1AmpEnv.decay(d1EffectiveDecay);
   AudioInterrupts();
@@ -1869,9 +1868,8 @@ void updateParameterDisplay(byte idx, int knobValue) {
     case 30:  // Wavefold (master wavefolder drive)
       {
         float norm = normalizeKnob(knobValue);
-        const float DEADBAND = 0.03f;  // matches engine deadband in applyKnobToEngine case 30
-        float active = (norm <= DEADBAND) ? 0.0f
-                     : (norm - DEADBAND) / (1.0f - DEADBAND);
+        float active = (norm <= WF_DEADBAND) ? 0.0f
+                     : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
         if (active > 1.0f) active = 1.0f;
 
         // Perceived intensity follows drive² curve
@@ -2568,8 +2566,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
         float norm = normalizeKnob(knobValue);
 
         // Deadband at bottom 3% — wavefolder fully off
-        const float DEADBAND = 0.03f;
-        if (norm <= DEADBAND) {
+        if (norm <= WF_DEADBAND) {
           AudioNoInterrupts();
           masterWfInputMixer.gain(0, 0.0f);
           masterWfInputMixer.gain(1, 0.0f);
@@ -2582,7 +2579,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
         }
 
         // Remap past deadband to 0–1
-        float active = (norm - DEADBAND) / (1.0f - DEADBAND);
+        float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
         if (active > 1.0f) active = 1.0f;
 
         // Both sine and saw rise together, quadratic ramp.
@@ -2748,13 +2745,8 @@ void updateKnobs() {
 // Stamps black text at 8 offsets (4 cardinal + 4 diagonal, 2px each) then white on top.
 void drawOutlinedText(int x, int y, const char* text) {
   static const int8_t offsets[][2] = {
-    {-4, 0}, {4, 0}, {0, -4}, {0, 4},         // cardinal far
-    {-3, 0}, {3, 0}, {0, -3}, {0, 3},         // cardinal mid
-    {-2, 0}, {2, 0}, {0, -2}, {0, 2},         // cardinal near
-    {-3,-3}, {3,-3}, {-3, 3}, {3, 3},         // diagonal far
-    {-2,-2}, {2,-2}, {-2, 2}, {2, 2},         // diagonal near
-    {-3,-1}, {3,-1}, {-3, 1}, {3, 1},         // off-axis
-    {-1,-3}, {1,-3}, {-1, 3}, {1, 3}          // off-axis
+    {-2, 0}, {2, 0}, {0, -2}, {0, 2},   // cardinal 2px
+    {-2,-2}, {2,-2}, {-2, 2}, {2, 2}     // diagonal 2px
   };
   display.setTextColor(0);
   for (auto& o : offsets) {
