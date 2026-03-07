@@ -40,7 +40,7 @@ static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
 static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
 static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-#define FIRMWARE_VERSION "1.0"
+#define FIRMWARE_VERSION "1.01"
 #define FIRMWARE_DATE_FMT "%02d.%02d.%02d - %02d:%02d"
 #define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
 
@@ -77,6 +77,8 @@ constexpr uint8_t PPQN_OPTION_COUNT = 7;
 
 // Bass Line mode state — main-loop only
 bool bassLineModeActive = false;
+bool d2ReverbSlamPending = false;  // button 1 held: waiting for next D2 trigger
+bool d2ReverbSlammed = false;      // reverb is currently maxed by button hold
 static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
@@ -987,6 +989,15 @@ void triggerD2() {
     clapMasterEnv.noteOff();
     d2NoiseEnv.noteOff();
   }
+  // Momentary reverb slam — armed by button 1 hold, fires on first trigger
+  if (d2ReverbSlamPending) {
+    d2Reverb.roomsize(0.75f);
+    d2Reverb.damping(0.5f);
+    d2MasterMixer.gain(1, 1.0f);
+    d2ReverbSlamPending = false;
+    d2ReverbSlammed = true;
+  }
+
   d2AmpEnv.noteOn();
   clapAmpEnv1.noteOn();
   clapAmpEnv2.noteOn();
@@ -1122,6 +1133,9 @@ void updateOtherButtons() {
   static uint32_t btnD1PressTick = 0;
   static bool btnD1EnteredBassLine = false;
 
+  // Button 1 (D2) hold state — momentary reverb max (on next D2 trigger)
+  static uint32_t btnD2PressTick = 0;
+
   uint32_t nowTick;
   noInterrupts();
   nowTick = sysTickMs;
@@ -1192,9 +1206,22 @@ void updateOtherButtons() {
         }
       }
 
-      // Button 1 (D2 SEQ SELECT) — simple track select
-      if (i == 1 && btnState[1]) {
-        selectTrack(TRACK_D2);
+      // Button 1 (D2 SEQ SELECT) — short press selects track, hold = momentary max reverb on next trigger
+      if (i == 1) {
+        if (btnState[1]) {
+          btnD2PressTick = nowTick;
+          d2ReverbSlamPending = false;
+          d2ReverbSlammed = false;
+        } else {
+          // Release — restore reverb if slammed, otherwise select track
+          if (d2ReverbSlammed || d2ReverbSlamPending) {
+            applyKnobToEngine(13, analog[13]->getValue());
+            d2ReverbSlammed = false;
+            d2ReverbSlamPending = false;
+          } else {
+            selectTrack(TRACK_D2);
+          }
+        }
       }
 
       // Button 2 (D3 SEQ SELECT) — simple track select
@@ -1300,6 +1327,13 @@ void updateOtherButtons() {
                  bassLineModeActive ? "BASSLINE MODE" : "EXITING BASSLINE");
         displayParameter2[0] = 0;
         parameterOverlayStartTick = nowTick;
+      }
+    }
+
+    // Button 1 (D2) continuous hold check — arm reverb slam after 200ms
+    if (i == 1 && btnState[1] && !d2ReverbSlamPending && !d2ReverbSlammed) {
+      if ((uint32_t)(nowTick - btnD2PressTick) >= 200) {
+        d2ReverbSlamPending = true;
       }
     }
 
@@ -2589,57 +2623,31 @@ void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normalizeKnob(knobValue);
 
-        // Deadband at bottom 3% — wavefolder fully off
         if (norm <= WF_DEADBAND) {
           AudioNoInterrupts();
           masterWfInputMixer.gain(0, 0.0f);
           masterWfInputMixer.gain(1, 0.0f);
-          masterWfInputMixer.gain(2, 0.0f);  // unused
-          masterWfInputMixer.gain(3, 0.0f);  // unused
-          masterMixer.gain(0, 1.0f);  // dry at unity
-          masterMixer.gain(1, 0.0f);  // wavefolder return off
+          masterMixer.gain(0, 1.0f);
+          masterMixer.gain(1, 0.0f);
           AudioInterrupts();
           break;
         }
 
-        // Remap past deadband to 0–1
         float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
         if (active > 1.0f) active = 1.0f;
+        active *= 0.5f;  // full knob = old 50%
 
-        // Both sine and saw rise together, quadratic ramp.
-        // Plateau after 60% — cap the oscillator drive level.
-        float activeSq = active * active;
-        float oscActive = (active <= 0.6f) ? active : 0.6f;
-        float oscSq = oscActive * oscActive;
-        float sineGain = oscSq * 0.55f;
-        float sawGain  = oscSq * 0.55f;
-
-        // Drive fraction for compensation (0→1)
-        float drive = activeSq;
-
-        // Dry bus: gentle pull-down up to 50%, then roll off harder to 40% of normal
-        float dryBase = 1.0f - 0.12f * drive;
-        if (active > 0.50f) {
-          float rolloff = (active - 0.50f) / (1.0f - 0.50f);  // 0→1 over 50%–100%
-          dryBase *= 1.0f - 0.6f * rolloff;                    // down to 40%
-        }
-        float dryLevel = dryBase;
-
-        // Wavefolder return: ramp up then plateau (0.30 → 0.58)
-        // Tamed at high drive to prevent loudness overshoot
-        float wfReturn = 0.30f + 0.28f * drive;
-
-        // Loudness compensation — apply to wavefolder return level so it
-        // manages its own gain into the mix without ducking masterVolume.
-        float sum = dryLevel + wfReturn;
-        float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
-        comp *= 1.0f - 0.45f * active * active;
+        float sq      = active * active;
+        float oscGain = sq * 0.55f;
+        float dry     = 1.0f - 0.12f * sq;
+        float wet     = 0.30f + 0.28f * sq;
+        float comp    = (1.0f / (dry + wet)) * (1.0f - 0.45f * sq);
 
         AudioNoInterrupts();
-        masterWfInputMixer.gain(0, sineGain);
-        masterWfInputMixer.gain(1, sawGain);
-        masterMixer.gain(0, dryLevel);
-        masterMixer.gain(1, wfReturn * comp);
+        masterWfInputMixer.gain(0, oscGain);
+        masterWfInputMixer.gain(1, oscGain);
+        masterMixer.gain(0, dry);
+        masterMixer.gain(1, wet * comp);
         AudioInterrupts();
         break;
       }
