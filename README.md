@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.0.
+A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.01.
 
 ## Voices
 
@@ -14,6 +14,15 @@ A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.0
 | D3 606 Hats | Analog-style hats | 400–6000 Hz |
 | D3 FM Hats | FM carriers | 440–3520 Hz (A4–A7) |
 | D3 Noise Hat | Noise hat | 220–1760 Hz (A3–A6) |
+| Master Wavefolder | Sine + saw fold drive | 65.41–1046.50 Hz (C2–C6) |
+
+## Master Wavefolder
+
+Knob 25 sweeps the fold oscillator frequency exponentially from C2 to C6 (4 octaves — every 25% of knob travel = one octave). Knob 30 controls drive intensity with a halved range and loudness compensation. Sine and saw oscillators diverge across three zones: 0–50% (saw one octave below sine), 50–75% (sine diverges up to 2×), 75–100% (saw diverges up to 4×).
+
+## D2 Momentary Reverb
+
+Hold button 1 (D2 track select) for 200ms to arm a reverb slam. The reverb maxes out on the next D2 trigger (roomsize 0.75, damping 0.5, full wet) and stays maxed until the button is released. Short press still selects the D2 track.
 
 ## Bass Line Mode
 
