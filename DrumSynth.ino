@@ -2594,8 +2594,8 @@ void applyKnobToEngine(byte idx, int knobValue) {
           AudioNoInterrupts();
           masterWfInputMixer.gain(0, 0.0f);
           masterWfInputMixer.gain(1, 0.0f);
-          masterWfInputMixer.gain(2, 0.0f);  // kick env off
-          masterWfInputMixer.gain(3, 0.0f);  // snare/clap env off
+          masterWfInputMixer.gain(2, 0.0f);  // unused
+          masterWfInputMixer.gain(3, 0.0f);  // unused
           masterMixer.gain(0, 1.0f);  // dry at unity
           masterMixer.gain(1, 0.0f);  // wavefolder return off
           AudioInterrupts();
@@ -2629,23 +2629,15 @@ void applyKnobToEngine(byte idx, int knobValue) {
         // Tamed at high drive to prevent loudness overshoot
         float wfReturn = 0.30f + 0.28f * drive;
 
-        // Drum envelope gains: transient bursts need higher gain than
-        // continuous oscillators to audibly affect wavefolding.
-        // Scales with active (not oscSq) so envelopes stay present at high drive.
-        const float ENV_RATIO = 1.60f;
-        float envGain = active * 0.55f * ENV_RATIO;
-
         // Loudness compensation — apply to wavefolder return level so it
         // manages its own gain into the mix without ducking masterVolume.
-        float sum = dryLevel + wfReturn + envGain * 0.5f;
+        float sum = dryLevel + wfReturn;
         float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
         comp *= 1.0f - 0.45f * active * active;
 
         AudioNoInterrupts();
         masterWfInputMixer.gain(0, sineGain);
         masterWfInputMixer.gain(1, sawGain);
-        masterWfInputMixer.gain(2, envGain);   // kick envelope
-        masterWfInputMixer.gain(3, envGain);   // snare/clap envelope
         masterMixer.gain(0, dryLevel);
         masterMixer.gain(1, wfReturn * comp);
         AudioInterrupts();
