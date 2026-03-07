@@ -481,7 +481,7 @@ void updateDrumDelayGains() {
 }
 
 void applyMasterGain() {
-  masterVolume.gain(masterNominalGain);
+  masterAmp.gain(masterNominalGain);
 }
 
 // Recompute cached D1 hold time (scales with decay).
