@@ -133,7 +133,6 @@ AudioConnection          patchCord31(d3FmBandPass, 1, d3FmHighPass, 0);
 AudioConnection          patchCord32(d1OscMixer, d1AmpEnv);
 AudioConnection          patchCord33(d2Osc, d2AmpEnv);
 AudioConnection          patchCord34(d2NoiseEnv, 0, d2NoiseFilter, 0);
-AudioConnection          patchCord35(d2NoiseEnv, 0, d2NoiseFilter, 1);
 AudioConnection          patchCord36(d3606BandPass, 1, d3606AmpEnv, 0);
 AudioConnection          patchCord37(clapDelay1, 0, clapMixer1, 0);
 AudioConnection          patchCord38(clapDelay1, 1, clapMixer1, 1);
