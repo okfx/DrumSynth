@@ -2550,24 +2550,25 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 25:  // Wavefold Frequency
       {
         float norm = normalizeKnob(knobValue);
-        float baseFreq = 40.0f + norm * (1000.0f - 40.0f);
+        // C2→C6 exponential: 4 octaves, every 25% = one octave
+        float baseFreq = 65.41f * powf(2.0f, norm * 4.0f);
 
         float sineFreq, sawFreq;
 
         if (norm <= 0.5f) {
-          // 0–50%: sine at baseFreq, saw one octave below (baseFreq / 2)
+          // 0–50%: sine at baseFreq, saw one octave below
           sineFreq = baseFreq;
           sawFreq  = baseFreq * 0.5f;
         } else if (norm <= 0.75f) {
           // 50–75%: saw locks to baseFreq, sine diverges up to 2× baseFreq
-          float blend = (norm - 0.5f) / 0.25f;               // 0→1 over this zone
+          float blend = (norm - 0.5f) / 0.25f;
           sawFreq  = baseFreq;
-          sineFreq = baseFreq * (1.0f + blend);               // 1× → 2× baseFreq
+          sineFreq = baseFreq * (1.0f + blend);
         } else {
           // 75–100%: sine locks to baseFreq, saw diverges up to 4× baseFreq
-          float blend = (norm - 0.75f) / 0.25f;              // 0→1 over this zone
+          float blend = (norm - 0.75f) / 0.25f;
           sineFreq = baseFreq;
-          sawFreq  = baseFreq * (1.0f + blend * 3.0f);       // 1× → 4× baseFreq
+          sawFreq  = baseFreq * (1.0f + blend * 3.0f);
         }
 
         masterWfOscSine.frequency(sineFreq);
