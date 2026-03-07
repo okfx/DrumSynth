@@ -95,7 +95,7 @@ AudioEffectDelay         masterDelay;    //xy=2900,1540
 AudioFilterLadder        masterLowPass;  //xy=3100,1340
 AudioFilterStateVariable delayFilter;    //xy=3100,1540
 AudioFilterStateVariable masterBandPass; //xy=3300,1340
-AudioAmplifier           masterAmp;      //xy=3500,1340
+AudioAmplifier           masterVolume;      //xy=3500,1340
 AudioFilterBiquad        finalFilter;    //xy=3700,1340
 AudioAmplifier           finalAmp;       //xy=3900,1340
 AudioOutputI2S           i2s1;           //xy=4100,1340
@@ -205,8 +205,8 @@ AudioConnection          patchCord103(delaySendMixer, masterDelay);
 AudioConnection          patchCord104(delayFilter, 0, delayAmp, 0);
 AudioConnection          patchCord105(masterHighPass, 2, masterLowPass, 0);
 AudioConnection          patchCord106(masterLowPass, 0, masterBandPass, 0);
-AudioConnection          patchCord107(masterBandPass, 1, masterAmp, 0);
-AudioConnection          patchCord108(masterAmp, finalFilter);
+AudioConnection          patchCord107(masterBandPass, 1, masterVolume, 0);
+AudioConnection          patchCord108(masterVolume, finalFilter);
 AudioConnection          patchCord109(finalFilter, finalAmp);
 AudioConnection          patchCord110(finalAmp, 0, i2s1, 0);
 AudioConnection          patchCord111(finalAmp, 0, i2s1, 1);

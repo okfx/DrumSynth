@@ -185,7 +185,8 @@ uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (m
 
 // Base decay values (raw knob position, before choke offset)
 float d1DecayBase = 75.0f;
-float d2DecayBase = 75.0f;
+float d2DecayBase = 93.0f;
+float d2DecayNorm = 0.0f;  // 0–1 knob position, used by clap curves
 float d3DecayBase = 25.0f;
 
 // Effective decays (base + choke offset, updated by applyChokeToDecays)
@@ -407,6 +408,9 @@ void updateDrumDelayGains();
 void initKnobsFromHardware();
 void applyMasterGain();
 void handlePlayStop();
+void applyD1Decay();
+void applyD2Decay();
+void applyD3Decay();
 void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 
@@ -477,7 +481,7 @@ void updateDrumDelayGains() {
 }
 
 void applyMasterGain() {
-  masterAmp.gain(masterNominalGain);
+  masterVolume.gain(masterNominalGain);
 }
 
 // Recompute cached D1 hold time (scales with decay).
@@ -488,20 +492,18 @@ static inline void updateD1HoldCache() {
 
 // choke application on all relevant decays
 
-void applyChokeToDecays() {
-  // D1: floor at 17 ms
+void applyD1Decay() {
   float decay = d1DecayBase + chokeOffsetMs;
   if (decay < 17.0f) decay = 17.0f;
   d1EffectiveDecay = decay;
-
-  // Update D1 hold cache
   updateD1HoldCache();
-
   AudioNoInterrupts();
   d1AmpEnv.hold(d1CachedHoldMs);
   d1AmpEnv.decay(d1EffectiveDecay);
   AudioInterrupts();
+}
 
+void applyD2Decay() {
   // D2 main decay (choke applied, clamped to 15–1000ms)
   float base2 = d2DecayBase + chokeOffsetMs;
   if (base2 < 15.0f) base2 = 15.0f;
@@ -512,32 +514,49 @@ void applyChokeToDecays() {
   d2Body.length(base2 * 0.25f);
   AudioInterrupts();
 
-  // D2 clap family — derive clap decay from D2 decay (40–1000ms → 60–200ms)
-  float d2Norm = (d2DecayBase - 40.0f) / (1000.0f - 40.0f);
-  if (d2Norm < 0.0f) d2Norm = 0.0f;
-  if (d2Norm > 1.0f) d2Norm = 1.0f;
-  float clapDecayBase = 60.0f + d2Norm * (200.0f - 60.0f);
+  // D2 clap family — use knob position directly for clap curves
+  float d2Norm = d2DecayNorm;
+  // Flat 93ms below 50%, then accelerating curve → 130ms at 75%, 225ms at 100%
+  float clapDecayBase;
+  if (d2Norm <= 0.5f) {
+    clapDecayBase = 93.0f;
+  } else {
+    float t = (d2Norm - 0.5f) * 2.0f;  // 0→1 over upper half
+    clapDecayBase = 93.0f + 16.0f * t + 116.0f * t * t;
+  }
   d2ClapEffectiveDecay = clapDecayBase + chokeOffsetMs;
   if (d2ClapEffectiveDecay < 10.0f) d2ClapEffectiveDecay = 10.0f;
 
-  // Cache D3 effective decay for use in triggerD3()
-  d3EffectiveDecay = computeD3Decay();
-
-  // Per-burst envelopes: scale with D2 decay knob + choke (93–120ms range)
-  // d2Norm is already 0→1 across the decay knob range
-  float burstBase = 93.0f + d2Norm * 27.0f;  // 93ms at min, 120ms at max
+  // Per-burst envelopes: current behavior to 65%, then open up to match clap tail
+  float burstBase;
+  if (d2Norm <= 0.65f) {
+    burstBase = 93.0f + d2Norm * 27.0f;       // 93ms at min, ~111ms at 65%
+  } else {
+    float t = (d2Norm - 0.65f) / 0.35f;       // 0→1 over upper 35%
+    burstBase = 111.0f + t * 114.0f;           // 111ms at 65%, 225ms at 100%
+  }
   float burstDecay1 = burstBase + chokeOffsetMs * 0.15f;
   float burstDecay2 = (burstBase + 2.0f) + chokeOffsetMs * 0.15f;
   if (burstDecay1 < 80.0f) burstDecay1 = 80.0f;
-  if (burstDecay1 > 130.0f) burstDecay1 = 130.0f;
+  if (burstDecay1 > 225.0f) burstDecay1 = 225.0f;
   if (burstDecay2 < 80.0f) burstDecay2 = 80.0f;
-  if (burstDecay2 > 130.0f) burstDecay2 = 130.0f;
+  if (burstDecay2 > 225.0f) burstDecay2 = 225.0f;
 
   AudioNoInterrupts();
   clapAmpEnv1.decay(burstDecay1);
   clapAmpEnv2.decay(burstDecay2);
   clapMasterEnv.decay(d2ClapEffectiveDecay);
   AudioInterrupts();
+}
+
+void applyD3Decay() {
+  d3EffectiveDecay = computeD3Decay();
+}
+
+void applyChokeToDecays() {
+  applyD1Decay();
+  applyD2Decay();
+  applyD3Decay();
 }
 
 void setup() {
@@ -1486,13 +1505,17 @@ static inline uint8_t bassLineKnobToNote(int knobValue) {
   return (uint8_t)(note + 33);  // A1 = MIDI 33
 }
 
-// D2 Decay curve: piecewise 40–200 ms (low half) then 200–1000 ms (high half)
+// D2 Decay curve: flat 93ms to 50%, quadratic 93–130ms at 50–75%, linear 130–500ms at 75–100%
 static inline float d2DecayCurve(int knobValue) {
   float norm = normalizeKnob(knobValue);
   if (norm <= 0.5f) {
-    return 40.0f + (200.0f - 40.0f) * (norm / 0.5f);
+    return 93.0f;
+  } else if (norm <= 0.75f) {
+    float t = (norm - 0.5f) * 2.0f;  // 0→0.5 over this segment
+    return 93.0f + 16.0f * t + 116.0f * t * t;
   } else {
-    return 200.0f + (1000.0f - 200.0f) * ((norm - 0.5f) / 0.5f);
+    float t = (norm - 0.75f) / 0.25f;  // 0→1 over upper quarter
+    return 130.0f + t * 370.0f;
   }
 }
 
@@ -1979,7 +2002,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 2:  // D1 Decay
       {
         d1DecayBase = d1DecayCurve(knobValue);
-        applyChokeToDecays();
+        applyD1Decay();
         break;
       }
 
@@ -2069,7 +2092,8 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 9:  // D2 Decay
       {
         d2DecayBase = d2DecayCurve(knobValue);
-        applyChokeToDecays();
+        d2DecayNorm = normalizeKnob(knobValue);
+        applyD2Decay();
         break;
       }
 
@@ -2081,8 +2105,8 @@ void applyKnobToEngine(byte idx, int knobValue) {
         float gainClap = 1.0f - norm;
 
         AudioNoInterrupts();
-        snareClapMixer.gain(0, gainSnare * 1.05f);
-        snareClapMixer.gain(1, gainClap * 0.875f);
+        snareClapMixer.gain(0, gainSnare);
+        snareClapMixer.gain(1, gainClap);
         AudioInterrupts();
         break;
       }
@@ -2310,7 +2334,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
       {
         float decayMs = mapFloat(knobValue, 0, 1023, 10.0f, 250.0f);
         d3DecayBase = decayMs;
-        applyChokeToDecays();
+        applyD3Decay();
         break;
       }
 
@@ -2544,7 +2568,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
 
     case 28:  // Master Volume
       {
-        masterNominalGain = normalizeKnob(knobValue) * 10.5f;  // 0–10.5× range
+        masterNominalGain = normalizeKnob(knobValue) * 7.0f;  // 0–7× range
         applyMasterGain();
         break;
       }
@@ -2612,7 +2636,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
         float envGain = active * 0.55f * ENV_RATIO;
 
         // Loudness compensation — apply to wavefolder return level so it
-        // manages its own gain into the mix without ducking masterAmp.
+        // manages its own gain into the mix without ducking masterVolume.
         float sum = dryLevel + wfReturn + envGain * 0.5f;
         float comp = (sum > 1.0f) ? 1.0f / sum : 1.0f;
         comp *= 1.0f - 0.45f * active * active;

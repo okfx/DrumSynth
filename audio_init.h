@@ -44,16 +44,16 @@ inline void audioInit() {
     0.05f    // 9.9 kHz: sparkle
   );
 
-  // Auto Volume Control — soft compressor safety net (no makeup gain)
+  // Auto Volume Control used as a safety limiter (no makeup gain)
   sgtl5000_1.autoVolumeControl(
-    0,      // maxGain: 0 dB (no boost)
-    3,      // response: 100 ms integration (slow, won't pump on transients)
-    0,      // hardLimit: off — soft knee compressor
-    -1.5f,  // threshold: dBFS (highest allowed, only catches peaks)
-    30.0f,  // attack: dB/s (slow, lets drum transients punch through)
-    100.0f  // decay: dB/s (moderate recovery)
+    0,      // maxGain: 0 dB
+    2,      // response: 50 ms integration
+    1,      // hardLimit: limiter mode
+    -1.5f,  // threshold: dBFS
+    80.0f,  // attack: dB/s
+    300.0f  // decay: dB/s
   );
-  sgtl5000_1.autoVolumeEnable();
+  sgtl5000_1.autoVolumeDisable();
 
   // ============================================================================
   // D1 - KICK DRUM
@@ -393,7 +393,7 @@ inline void audioInit() {
   masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
   // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
-  finalAmp.gain(10.0f);
+  finalAmp.gain(5.0f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
