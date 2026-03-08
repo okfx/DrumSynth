@@ -82,6 +82,10 @@ bool d2ReverbSlammed = false;      // reverb is currently maxed by button hold
 // Bass Line mode state — main-loop only
 bool bassLineModeActive = false;
 static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
+
+// D3 harmonic mode — latching toggle via D3 button hold
+bool d3HarmonicMode = false;
+static constexpr uint32_t D3_HARMONIC_LONG_PRESS_MS = 2000;
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
 
@@ -1152,6 +1156,10 @@ void updateOtherButtons() {
   // Button 1 (D2) hold state — momentary reverb max (on next D2 trigger)
   static uint32_t btnD2PressTick = 0;
 
+  // Button 2 (D3) long-hold state — press/release below, continuous hold check at end of loop
+  static uint32_t btnD3PressTick = 0;
+  static bool btnD3EnteredHarmonic = false;
+
   uint32_t nowTick;
   noInterrupts();
   nowTick = sysTickMs;
@@ -1240,9 +1248,19 @@ void updateOtherButtons() {
         }
       }
 
-      // Button 2 (D3 SEQ SELECT) — simple track select
-      if (i == 2 && btnState[2]) {
-        selectTrack(TRACK_D3);
+      // Button 2 (D3 SEQ SELECT) — short press selects track, hold = toggle harmonic mode
+      if (i == 2) {
+        if (btnState[2]) {
+          btnD3PressTick = nowTick;
+          btnD3EnteredHarmonic = false;
+        } else {
+          if (btnD3EnteredHarmonic) {
+            // Long-press toggled harmonic mode — suppress selectTrack
+          } else {
+            selectTrack(TRACK_D3);
+          }
+          btnD3EnteredHarmonic = false;
+        }
       }
 
       // Buttons 0, 1, 2, and 7 handled separately
@@ -1346,6 +1364,22 @@ void updateOtherButtons() {
     if (i == 1 && btnState[1] && !d2ReverbSlamPending && !d2ReverbSlammed) {
       if ((uint32_t)(nowTick - btnD2PressTick) >= 200) {
         d2ReverbSlamPending = true;
+      }
+    }
+
+    // Button 2 (D3) continuous hold check — toggle harmonic mode after 2s
+    if (i == 2 && btnState[2] && !btnD3EnteredHarmonic) {
+      if ((uint32_t)(nowTick - btnD3PressTick) >= D3_HARMONIC_LONG_PRESS_MS) {
+        d3HarmonicMode = !d3HarmonicMode;
+        btnD3EnteredHarmonic = true;
+
+        // Immediately reapply pitch using current knob value
+        applyKnobToEngine(16, analog[16]->getValue());
+
+        snprintf(displayParameter1, sizeof(displayParameter1),
+                 d3HarmonicMode ? "HARMONIC MODE" : "NORMAL MODE");
+        displayParameter2[0] = 0;
+        parameterOverlayStartTick = nowTick;
       }
     }
 
@@ -1807,11 +1841,30 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
       // D3 - HI-HAT (Knobs 16-23)
       // ========================================================================
 
-    case 16:  // D3 Pitch (displayed as generic "tune")
+    case 16:  // D3 Pitch
       {
-        int tune = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
+        if (d3HarmonicMode) {
+          // Show quantized note name — reuse pitchBend curve from engine
+          float norm = normalizeKnob(knobValue);
+          const float BEND_START = 0.25f;
+          float pitchBend;
+          if (norm <= BEND_START) {
+            pitchBend = 0.60f * (norm / BEND_START);
+          } else {
+            float blend = (norm - BEND_START) / (1.0f - BEND_START);
+            pitchBend = 0.60f + 0.40f * (blend * blend);
+          }
+          float semi = pitchBend * 36.0f;  // C3(48) to C6(84)
+          uint8_t midiNote = (uint8_t)constrain((int)(semi + 0.5f) + 48, 48, 84);
+          char noteName[5];
+          formatBassNote(midiNote, noteName);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D3 HARMONIC");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        } else {
+          int tune = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+          snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
+        }
         break;
       }
 
@@ -2319,7 +2372,7 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
       {
         float norm = normalizeKnob(knobValue);
 
-        // --- Shared pitch bend curve (both voices use the same shape) ---
+        // --- Shared pitch bend curve (all voices use the same shape) ---
         const float BEND_START = 0.25f;
         float pitchBend;
 
@@ -2331,64 +2384,98 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           pitchBend = 0.60f + 0.40f * (blend * blend);
         }
 
-        // --- 606 voice tuning ---
-        // Precomputed log of constant ratio — expf(x*log) is ~2x faster than powf on Cortex-M7
-        static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
-
-        const float hatCurve = pitchBend * pitchBend;
-        const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
-
-        // Gentle filter tracking (keeps volume steadier)
+        // Gentle filter tracking — shared by both modes (keeps volume steadier)
         const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
         const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
-
-        // --- FM voice tuning — reuses pitchBend from above ---
-        // Carriers scale together; irrational ratios stay fixed (changing
-        // ratios changes timbre, not pitch — we only want pitch shift here).
-        // Range: 500→3000 Hz (c1) and 1050→6300 Hz (c2) — ~2.5 octaves
-        static const float LOG_FM_C1_RATIO = logf(3000.0f / 500.0f);  // 500→3000 Hz
-        static const float LOG_FM_C2_RATIO = logf(6300.0f / 1050.0f); // 1050→6300 Hz
-
-        const float carrier1Hz = 500.0f * expf(pitchBend * LOG_FM_C1_RATIO);
-        const float carrier2Hz = 1050.0f * expf(pitchBend * LOG_FM_C2_RATIO);
-        const float modulator1Hz = carrier1Hz * 2.236f;  // √5 fixed ratio
-        const float modulator2Hz = carrier2Hz * 1.414f;  // √2 fixed ratio
-
-        // FM depth: increases with pitch to maintain brightness at high end
-        const float depth1 = 0.45f + 0.35f * pitchBend;
-        const float depth2 = 0.35f + 0.30f * pitchBend;
-
-        // FM shaping filters track pitch (gentle, keeps volume steady)
         const float fmBpfHz = 4000.0f + 4000.0f * pitchBend;   // 4000→8000 Hz
         const float fmHpfHz = 1500.0f + 1500.0f * pitchBend;   // 1500→3000 Hz
 
-        AudioNoInterrupts();
+        if (d3HarmonicMode) {
+          // --- HARMONIC MODE: power chord spacing, tonal FM ---
+          // Chromatic quantization: C3 (MIDI 48) to C6 (MIDI 84), 36 semitones
+          static constexpr uint8_t HARM_MIDI_MIN = 48;  // C3
+          static constexpr uint8_t HARM_MIDI_MAX = 84;  // C6
+          float semi = pitchBend * (float)(HARM_MIDI_MAX - HARM_MIDI_MIN);
+          uint8_t midiNote = (uint8_t)constrain((int)(semi + 0.5f) + HARM_MIDI_MIN,
+                                                 HARM_MIDI_MIN, HARM_MIDI_MAX);
+          float baseHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
 
-        // FM voice
-        d3FmCarrier1.frequency(carrier1Hz);
-        d3FmCarrier2.frequency(carrier2Hz);
-        d3FmMod1.frequency(modulator1Hz);
-        d3FmMod2.frequency(modulator2Hz);
-        d3FmMod1.amplitude(depth1);
-        d3FmMod2.amplitude(depth2);
-        d3FmBandPass.frequency(fmBpfHz);
-        d3FmHighPass.frequency(fmHpfHz);
+          AudioNoInterrupts();
 
-        // 606 voice oscillator bank
-        d3606Osc1.frequency(hatBaseHz * 1.00f);
-        d3606Osc2.frequency(hatBaseHz * 1.08f);
-        d3606Osc3.frequency(hatBaseHz * 1.17f);
-        d3606Osc4.frequency(hatBaseHz * 1.26f);
-        d3606Osc5.frequency(hatBaseHz * 1.36f);
-        d3606Osc6.frequency(hatBaseHz * 1.48f);
-        d3606HighPass.frequency(hpfHz);
-        d3606BandPass.frequency(bpfHz);
+          // 606 bank: power chord spacing
+          d3606Osc1.frequency(baseHz * 1.0f);   // root
+          d3606Osc2.frequency(baseHz * 1.5f);   // fifth
+          d3606Osc3.frequency(baseHz * 2.0f);   // octave
+          d3606Osc4.frequency(baseHz * 3.0f);   // fifth + octave
+          d3606Osc5.frequency(baseHz * 4.0f);   // two octaves
+          d3606Osc6.frequency(baseHz * 6.0f);   // fifth + two octaves
+          d3606HighPass.frequency(hpfHz);
+          d3606BandPass.frequency(bpfHz);
 
-        // PERC voice — A3(220) → A6(1760), independent of FM carriers
-        static const float LOG_NOISE_RATIO = logf(1760.0f / 220.0f);  // A3→A6
-        d3Perc.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
+          // FM voice: octave-spaced carrier-modulator pairs (2:1 ratios)
+          d3FmCarrier1.frequency(baseHz * 2.0f);   // C, one octave up
+          d3FmMod1.frequency(baseHz * 4.0f);       // C, two octaves up — 2:1 to carrier 1
+          d3FmMod1.amplitude(0.35f);               // reduced depth for clean sidebands
+          d3FmCarrier2.frequency(baseHz * 3.0f);   // G
+          d3FmMod2.frequency(baseHz * 6.0f);       // G, one octave up — 2:1 to carrier 2
+          d3FmMod2.amplitude(0.30f);               // reduced depth for clean sidebands
+          d3FmBandPass.frequency(fmBpfHz);
+          d3FmHighPass.frequency(fmHpfHz);
 
-        AudioInterrupts();
+          // Perc: C3 to C6 (same base range)
+          d3Perc.frequency(baseHz);
+
+          AudioInterrupts();
+
+        } else {
+          // --- NORMAL MODE: inharmonic 606, irrational FM ---
+          // Precomputed log of constant ratio — expf(x*log) is ~2x faster than powf on Cortex-M7
+          static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
+
+          const float hatCurve = pitchBend * pitchBend;
+          const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
+
+          // FM carriers and irrational ratios
+          static const float LOG_FM_C1_RATIO = logf(3000.0f / 500.0f);  // 500→3000 Hz
+          static const float LOG_FM_C2_RATIO = logf(6300.0f / 1050.0f); // 1050→6300 Hz
+
+          const float carrier1Hz = 500.0f * expf(pitchBend * LOG_FM_C1_RATIO);
+          const float carrier2Hz = 1050.0f * expf(pitchBend * LOG_FM_C2_RATIO);
+          const float modulator1Hz = carrier1Hz * 2.236f;  // √5 fixed ratio
+          const float modulator2Hz = carrier2Hz * 1.414f;  // √2 fixed ratio
+
+          // FM depth: increases with pitch to maintain brightness at high end
+          const float depth1 = 0.45f + 0.35f * pitchBend;
+          const float depth2 = 0.35f + 0.30f * pitchBend;
+
+          AudioNoInterrupts();
+
+          // FM voice
+          d3FmCarrier1.frequency(carrier1Hz);
+          d3FmCarrier2.frequency(carrier2Hz);
+          d3FmMod1.frequency(modulator1Hz);
+          d3FmMod2.frequency(modulator2Hz);
+          d3FmMod1.amplitude(depth1);
+          d3FmMod2.amplitude(depth2);
+          d3FmBandPass.frequency(fmBpfHz);
+          d3FmHighPass.frequency(fmHpfHz);
+
+          // 606 voice oscillator bank
+          d3606Osc1.frequency(hatBaseHz * 1.00f);
+          d3606Osc2.frequency(hatBaseHz * 1.08f);
+          d3606Osc3.frequency(hatBaseHz * 1.17f);
+          d3606Osc4.frequency(hatBaseHz * 1.26f);
+          d3606Osc5.frequency(hatBaseHz * 1.36f);
+          d3606Osc6.frequency(hatBaseHz * 1.48f);
+          d3606HighPass.frequency(hpfHz);
+          d3606BandPass.frequency(bpfHz);
+
+          // PERC voice — A3(220) → A6(1760), independent of FM carriers
+          static const float LOG_NOISE_RATIO = logf(1760.0f / 220.0f);  // A3→A6
+          d3Perc.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
+
+          AudioInterrupts();
+        }
         break;
       }
 
