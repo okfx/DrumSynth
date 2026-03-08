@@ -37,12 +37,10 @@ Adafruit_SH1106G display(128, 64, OLED_MOSI, OLED_CLK, OLED_DC, OLED_RST, OLED_C
 ShiftRegister74HC595<2> ledShiftReg(LED_DATA, LED_CLOCK, LED_LATCH);
 
 // Analog/digital multiplexers (4-bit address → 16 channels each)
-using namespace admux;
-
-Mux knobMux1      = Mux(Pin(14, INPUT, PinType::Analog),  Pinset(0, 1, 2, 3));  // Knobs 0-15
-Mux knobMux2      = Mux(Pin(16, INPUT, PinType::Analog),  Pinset(0, 1, 2, 3));  // Knobs 16-31
-Mux stepButtonsMux  = Mux(Pin(17, INPUT, PinType::Digital), Pinset(0, 1, 2, 3));  // Step buttons 0-15
-Mux otherButtonsMux = Mux(Pin(22, INPUT, PinType::Digital), Pinset(0, 1, 2, 3));  // Control buttons 0-9
+admux::Mux knobMux1      = admux::Mux(admux::Pin(14, INPUT, admux::PinType::Analog),  admux::Pinset(0, 1, 2, 3));  // Knobs 0-15
+admux::Mux knobMux2      = admux::Mux(admux::Pin(16, INPUT, admux::PinType::Analog),  admux::Pinset(0, 1, 2, 3));  // Knobs 16-31
+admux::Mux stepButtonsMux  = admux::Mux(admux::Pin(17, INPUT, admux::PinType::Digital), admux::Pinset(0, 1, 2, 3));  // Step buttons 0-15
+admux::Mux otherButtonsMux = admux::Mux(admux::Pin(22, INPUT, admux::PinType::Digital), admux::Pinset(0, 1, 2, 3));  // Control buttons 0-9
 
 // Hardware counts
 static constexpr int knobCount         = 32;  // 2 muxes × 16 channels

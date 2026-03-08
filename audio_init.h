@@ -44,7 +44,8 @@ inline void audioInit() {
     0.05f    // 9.9 kHz: sparkle
   );
 
-  // Auto Volume Control used as a safety limiter (no makeup gain)
+  // Auto Volume Control — configured as a safety limiter but currently disabled.
+  // Kept so the parameters are ready if re-enabled (call autoVolumeEnable()).
   sgtl5000_1.autoVolumeControl(
     0,      // maxGain: 0 dB
     2,      // response: 50 ms integration
@@ -86,7 +87,7 @@ inline void audioInit() {
   d1PitchEnv.sustain(0.0f);
 
   // D1 amplitude envelope
-  d1AmpEnv.attack(1.5f);     // Library default — overridden per-trigger by cached params (see updateD1HoldCache)
+  d1AmpEnv.attack(1.5f);     // Library default — overridden in setup() after audioInit() with D1_ATTACK_MS
   d1AmpEnv.hold(2.5f);       // Library default — overridden per-trigger by cached params (see updateD1HoldCache)
   d1AmpEnv.decay(100.0f);
   d1AmpEnv.sustain(0.0f);
@@ -246,7 +247,7 @@ inline void audioInit() {
   // Snare / clap mixer (feeds D2 FX and delay)
   // in0: snare body (from d2VoiceHighPass)
   // in1: clap envelope (from clapMasterEnv)
-  // in2 / in3: spare or extra tone if you want later
+  // in2 / in3: unconnected
   snareClapMixer.gain(0, 0.8f);
   snareClapMixer.gain(1, 0.8f);
   snareClapMixer.gain(2, 0.0f);

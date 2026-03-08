@@ -381,6 +381,7 @@ void resetExternalClockState() {
   extIntervalEMA = 0;
   synthIntervalUs = 0;
   prevAcceptedInterval = 0;
+  extStepAcc = 0;
   pendingStepCount = 0;
   subdivStepsRemaining = 0;
   subdivTimerDueUs = 0;

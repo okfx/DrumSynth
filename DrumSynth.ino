@@ -56,7 +56,7 @@ static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
-static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3% — used by display + engine case 30
+static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3% — used by all wavefolder cases (11, 19, 30)
 
 // D3 accent LED preview state — Main-loop only, no ISR access
 bool accentPreviewActive = false;
@@ -72,13 +72,15 @@ static constexpr uint32_t PPQN_MODE_TIMEOUT_MS = 5000;
 static constexpr uint32_t PPQN_LONG_PRESS_MS = 2000;
 
 // PPQN options table
-const uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
-constexpr uint8_t PPQN_OPTION_COUNT = 7;
+static constexpr uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
+static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_OPTIONS[0]);
+
+// D2 momentary reverb slam — button 1 hold, main-loop only
+bool d2ReverbSlamPending = false;  // button 1 held: waiting for next D2 trigger
+bool d2ReverbSlammed = false;      // reverb is currently maxed by button hold
 
 // Bass Line mode state — main-loop only
 bool bassLineModeActive = false;
-bool d2ReverbSlamPending = false;  // button 1 held: waiting for next D2 trigger
-bool d2ReverbSlammed = false;      // reverb is currently maxed by button hold
 static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
@@ -93,21 +95,21 @@ uint8_t bassLineNote[numSteps] = {
 //  Sequences
 // ============================================================================
 
-byte d1Sequence[numSteps] = {
+uint8_t d1Sequence[numSteps] = {
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0
 };
 
-byte d2Sequence[numSteps] = {
+uint8_t d2Sequence[numSteps] = {
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0
 };
 
-byte d3Sequence[numSteps] = {
+uint8_t d3Sequence[numSteps] = {
   0, 0, 0, 0,
   0, 0, 0, 0,
   0, 0, 0, 0,
@@ -176,7 +178,7 @@ static constexpr uint32_t OLED_FRAME_INTERVAL_MS = 42;        // ~24 fps
 static constexpr uint32_t OLED_FRAME_INTERVAL_EXT_MS = 100;   // ~10 fps (ext sync — reduces SPI blocking)
 static constexpr uint32_t OLED_SUBDIV_GUARD_US = 30000;      // Skip OLED frame if subdivision due within 30ms
 volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main loop
-uint32_t displayBlockedUntilMs = 0;       // Suppress OLED push after drop-in (main-loop only)
+uint32_t displayBlockedUntilTick = 0;       // Suppress OLED push after drop-in (main-loop only)
 
 // Oscilloscope — scope buffer, updateScopeData(), drawScopeWaveform()
 #include "oscilloscope.h"
@@ -265,6 +267,8 @@ static constexpr const char* ratioLabels[] = {
 };
 
 static constexpr int NUM_RATIOS = sizeof(quantizeRatios) / sizeof(quantizeRatios[0]);
+static_assert(sizeof(ratioLabels) / sizeof(ratioLabels[0]) == NUM_RATIOS,
+              "ratioLabels must match quantizeRatios count");
 
 // master gain
 float masterNominalGain = 1.0f;
@@ -297,6 +301,14 @@ enum AccentMode : uint8_t {
   ACCENT_BACK_HALF,
   ACCENT_CASCADE
 };
+
+static constexpr const char* accentNames[] = {
+  "OFF", "PICKUP", "HALF", "QUARTER", "8TH DN", "8TH UP",
+  "BOSSA", "OFFBEAT", "CLAVE", "3-2", "PAIRS",
+  "TRIPLET", "DOT 8TH", "BACK 1/2", "CASCADE"
+};
+static_assert(sizeof(accentNames) / sizeof(accentNames[0]) == ACCENT_CASCADE + 1,
+              "accentNames must match AccentMode enum count");
 
 uint8_t d3AccentMode = ACCENT_OFF;
 uint16_t d3AccentMask = 0;  // Cached: accentMaskFromMode(d3AccentMode), updated on accent knob change
@@ -352,7 +364,7 @@ static inline int chokeOffsetFromKnob(int knobVal) {
   const int MAX_NEG = -40;
   const int MAX_POS = 150;
 
-  // Deadband: center ±50 ADC counts → offset 0ms
+  // Deadband: center ±80 ADC counts → offset 0ms
   if (knobVal >= CENTER - DEADBAND && knobVal <= CENTER + DEADBAND) {
     return 0;
   }
@@ -381,7 +393,7 @@ static inline float computeD3Decay() {
 
 
 // sequence routing
-inline byte* sequenceForTrack(Track t) {
+inline uint8_t* sequenceForTrack(Track t) {
   switch (t) {
     case TRACK_D1: return d1Sequence;
     case TRACK_D2: return d2Sequence;
@@ -401,9 +413,9 @@ void playSequenceCore(uint8_t step);
 void triggerD1();
 void triggerD2();
 void triggerD3(uint8_t step);
-int readKnobRaw(byte idx);
-void updateParameterDisplay(byte idx, int knobValue);
-void applyKnobToEngine(byte idx, int knobValue);
+int readKnobRaw(uint8_t idx);
+void updateParameterDisplay(uint8_t idx, int knobValue);
+void applyKnobToEngine(uint8_t idx, int knobValue);
 void updateKnobs();
 void setTransport(TransportState s);
 void updateDrumDelayGains();
@@ -425,13 +437,13 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
     case ACCENT_QUARTER:   return 0b1000100010001000;  // steps 0, 4, 8, 12
     case ACCENT_EIGHTH_DOWN:   return 0b1010101010101010;  // even steps (downbeat eighths)
     case ACCENT_EIGHTH_UP:     return 0b0101010101010101;  // odd steps (upbeat eighths)
-    case ACCENT_BOSSA:         return 0b1001001010010100;  // steps 0, 3, 6, 10, 13
+    case ACCENT_BOSSA:         return 0b1001001000100100;  // steps 0, 3, 6, 10, 13
     case ACCENT_OFFBEAT:       return 0b0010001000100010;  // offbeat quarter (steps 2, 6, 10, 14)
     case ACCENT_CLAVE:         return 0b1001001000101000;  // steps 0, 3, 6, 10, 12
     case ACCENT_THREE_TWO:     return 0b1001001010010010;  // steps 0, 3, 6, 8, 11, 14
     case ACCENT_PAIRS:         return 0b0011001100110011;  // pairs (steps 2-3, 6-7, 10-11, 14-15)
     case ACCENT_TRIPLET:       return 0b0010010010010010;  // 3-step grouping (steps 2, 5, 8, 11, 14)
-    case ACCENT_DOTTED_EIGHTH: return 0b1001001001001001;  // dotted quarter (steps 0, 3, 6, 9, 12, 15)
+    case ACCENT_DOTTED_EIGHTH: return 0b1001001001001001;  // dotted eighth (steps 0, 3, 6, 9, 12, 15)
     case ACCENT_BACK_HALF:     return 0b0000111100001111;  // back halves (steps 4-7, 12-15)
     case ACCENT_CASCADE:       return 0b1010010010100101;  // steps 0, 2, 5, 8, 10, 13, 15
     default: return 0;
@@ -553,6 +565,11 @@ void applyD2Decay() {
 
 void applyD3Decay() {
   d3EffectiveDecay = computeD3Decay();
+  AudioNoInterrupts();
+  d3FmAmpEnv.decay(d3EffectiveDecay);
+  d3606AmpEnv.decay(d3EffectiveDecay);
+  d3Perc.length(d3EffectiveDecay);
+  AudioInterrupts();
 }
 
 void applyChokeToDecays() {
@@ -661,6 +678,7 @@ void setup() {
   AudioMemory(1200);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
   sysTickTimer.begin(sysTickISR, 1000);
   audioInit();
+  d1AmpEnv.attack(D1_ATTACK_MS);  // permanent value — not set in audioInit (D1_ATTACK_MS not yet visible there)
   scopeQueue.begin();
 
   // ============================================================================
@@ -691,7 +709,7 @@ void setup() {
   analogReadAveraging(KNOB_HW_AVG);
 
   // Initialize knob smoothing filters
-  for (byte i = 0; i < knobCount; i++) {
+  for (uint8_t i = 0; i < knobCount; i++) {
     analog[i] = new ResponsiveAnalogRead(0, true);
     analog[i]->setActivityThreshold(KNOB_ACTIVITY_THRESH);
     analog[i]->setSnapMultiplier(KNOB_SNAP_MULTI);
@@ -730,14 +748,15 @@ void loop() {
   // ACCENT PREVIEW TIMEOUT
   // ============================================================================
 
+  // Single stable timebase for top-of-loop checks
+  uint32_t loopNowTick;
+  noInterrupts();
+  loopNowTick = sysTickMs;  // sysTickMs is ISR-written, needs guard
+  interrupts();
+
   // Expire accent preview and restore normal LEDs
   if (accentPreviewActive) {
-    uint32_t nowTick;
-    noInterrupts();
-    nowTick = sysTickMs;  // sysTickMs is ISR-written, needs guard
-    interrupts();
-
-    if ((int32_t)(nowTick - accentPreviewUntilTick) >= 0) {
+    if ((int32_t)(loopNowTick - accentPreviewUntilTick) >= 0) {
       accentPreviewActive = false;  // Main-loop only — no guard needed
       updateLEDs();
     }
@@ -745,11 +764,7 @@ void loop() {
 
   // PPQN mode timeout — auto-exit without saving after 5s inactivity
   if (ppqnModeActive) {
-    uint32_t nowTick;
-    noInterrupts();
-    nowTick = sysTickMs;
-    interrupts();
-    if ((uint32_t)(nowTick - ppqnModeLastActivityTick) >= PPQN_MODE_TIMEOUT_MS) {
+    if ((uint32_t)(loopNowTick - ppqnModeLastActivityTick) >= PPQN_MODE_TIMEOUT_MS) {
       ppqnModeActive = false;
       // No save — just exit silently. Normal display resumes automatically.
     }
@@ -960,11 +975,8 @@ void triggerD1() {
   lastD1TriggerUs = now;
 
   AudioNoInterrupts();
-  d1AmpEnv.attack(D1_ATTACK_MS);
   d1AmpEnv.hold(d1CachedHoldMs);
   d1AmpEnv.decay(d1EffectiveDecay);
-  AudioInterrupts();
-
   if (!skipNoteOff) {
     d1AmpEnv.noteOff();
     d1PitchEnv.noteOff();
@@ -972,6 +984,7 @@ void triggerD1() {
   d1AmpEnv.noteOn();
   d1PitchEnv.noteOn();
   d1Snap.noteOn();
+  AudioInterrupts();
 }
 
 // Trigger D2 (snare/clap) — called from main loop via playSequenceCore().
@@ -982,6 +995,7 @@ void triggerD2() {
   bool skipNoteOff = (now - lastD2TriggerUs) < MIN_RETRIGGER_US;
   lastD2TriggerUs = now;
 
+  AudioNoInterrupts();
   if (!skipNoteOff) {
     d2AmpEnv.noteOff();
     clapAmpEnv1.noteOff();
@@ -997,7 +1011,6 @@ void triggerD2() {
     d2ReverbSlamPending = false;
     d2ReverbSlammed = true;
   }
-
   d2AmpEnv.noteOn();
   clapAmpEnv1.noteOn();
   clapAmpEnv2.noteOn();
@@ -1005,6 +1018,7 @@ void triggerD2() {
   d2Body.noteOn();
   d2ClickTransient.noteOn();
   d2NoiseEnv.noteOn();
+  AudioInterrupts();
 }
 
 // Trigger D3 (hi-hat) — called from main loop via playSequenceCore().
@@ -1018,7 +1032,7 @@ void triggerD3(uint8_t step) {
   float applyDecay = d3EffectiveDecay;
 
   // step is always 0–15 (uint8_t from currentStep % numSteps)
-  if (d3AccentMask && ((d3AccentMask >> (15 - step)) & 1)) {
+  if (d3AccentMask && ((d3AccentMask >> ((numSteps - 1) - step)) & 1)) {
     applyDecay *= D3_ACCENT_FACTOR;
   }
 
@@ -1026,8 +1040,6 @@ void triggerD3(uint8_t step) {
   d3FmAmpEnv.decay(applyDecay);
   d3606AmpEnv.decay(applyDecay);
   d3Perc.length(applyDecay);
-  AudioInterrupts();
-
   if (!skipNoteOff) {
     d3FmAmpEnv.noteOff();
     d3606AmpEnv.noteOff();
@@ -1035,6 +1047,7 @@ void triggerD3(uint8_t step) {
   d3FmAmpEnv.noteOn();
   d3606AmpEnv.noteOn();
   d3Perc.noteOn();
+  AudioInterrupts();
 }
 
 // ============================================================================
@@ -1093,15 +1106,15 @@ void handlePlayStop() {
       sequencePlaying = true;
       setTransport(RUN_INT);
     }
-    displayBlockedUntilMs = sysTickMs + 500;  // suppress OLED push during drop-in
+    displayBlockedUntilTick = sysTickMs + 500;  // suppress OLED push during drop-in
     interrupts();
   } else {
     // STOP — also aborts armed count-in if active.
     // Preserves pulse timing state so ext clock is detected
     // immediately on the next PLAY press.
+    noInterrupts();
     sequencePlaying = false;
     setTransport(STOPPED);
-    noInterrupts();
     armed = false;
     armPulseCountdown = 0;
     pendingStepCount = 0;
@@ -1264,14 +1277,11 @@ void updateOtherButtons() {
 
               if (patternDirty) {
                 saveStateToEEPROM(activeSaveSlot);
-                snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
-                snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
               } else {
                 snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
                 snprintf(displayParameter2, sizeof(displayParameter2), "CLEAN");
+                parameterOverlayStartTick = nowTick;
               }
-
-              parameterOverlayStartTick = nowTick;
               break;
             }
 
@@ -1354,14 +1364,14 @@ void updateLEDs() {
   // Accent preview mode (temporary display)
   if (preview) {
     for (int i = 0; i < numSteps; i++) {
-      bool on = (mask >> (15 - i)) & 1;
+      bool on = (mask >> ((numSteps - 1) - i)) & 1;
       ledShiftReg.set(i, on);
     }
     return;
   }
 
   // Normal pattern display with optional current step indicator
-  byte* seq = sequenceForTrack(activeTrack);
+  uint8_t* seq = sequenceForTrack(activeTrack);
 
   // Snapshot play state — both volatile (ISR-written)
   uint8_t currentStepSnap;
@@ -1389,7 +1399,7 @@ void updateStepButtons() {
   static bool btnLastState[stepButtonCount] = { false };
   static uint32_t stepPressTick[stepButtonCount] = { 0 };
 
-  byte* seq = sequenceForTrack(activeTrack);
+  uint8_t* seq = sequenceForTrack(activeTrack);
 
   // single stable timebase for this whole scan
   uint32_t nowTick;
@@ -1455,7 +1465,7 @@ void updateStepButtons() {
   }
 }
 
-int readKnobRaw(byte idx) {
+int readKnobRaw(uint8_t idx) {
   Mux& mux = (idx < 16) ? knobMux1 : knobMux2;
   mux.channel(idx < 16 ? idx : idx - 16);
   delayMicroseconds(KNOB_MUX_SETTLE_US);
@@ -1534,12 +1544,12 @@ static inline void formatBassNote(uint8_t midiNote, char* outName) {
 
 // Maps knob 0–1023 to MIDI note in A1(33)–A4(69) range, quantized.
 static inline uint8_t bassLineKnobToNote(int knobValue) {
-  float semi = (knobValue / 1023.0f) * 36.0f;
-  int note = constrain((int)(semi + 0.5f), 0, 36);
-  return (uint8_t)(note + 33);  // A1 = MIDI 33
+  float semi = (knobValue / 1023.0f) * (float)(BASS_NOTE_MAX - BASS_NOTE_MIN);
+  int note = constrain((int)(semi + 0.5f), 0, BASS_NOTE_MAX - BASS_NOTE_MIN);
+  return (uint8_t)(note + BASS_NOTE_MIN);
 }
 
-// D2 Decay curve: flat 93ms to 50%, quadratic 93–130ms at 50–75%, linear 130–500ms at 75–100%
+// D2 Decay curve: flat 93ms to 50%, curved 93–130ms at 50–75%, linear 130–500ms at 75–100%
 static inline float d2DecayCurve(int knobValue) {
   float norm = normalizeKnob(knobValue);
   if (norm <= 0.5f) {
@@ -1619,7 +1629,7 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
 // numbers (0–31). When adding/changing a knob, update BOTH functions.
 // Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
 
-void updateParameterDisplay(byte idx, int knobValue) {
+void updateParameterDisplay(uint8_t idx, int knobValue) {
   noInterrupts();
   parameterOverlayStartTick = sysTickMs;
   interrupts();
@@ -1839,11 +1849,6 @@ void updateParameterDisplay(byte idx, int knobValue) {
       {
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 ACCENT");
         uint8_t mode = accentModeFromKnob(knobValue);
-        static const char* accentNames[] = {
-          "OFF", "PICKUP", "HALF", "QUARTER", "8TH DN", "8TH UP",
-          "BOSSA", "OFFBEAT", "CLAVE", "3-2", "PAIRS",
-          "TRIPLET", "DOT 8TH", "BACK 1/2", "CASCADE"
-        };
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", accentNames[mode]);
         break;
       }
@@ -1966,7 +1971,7 @@ void updateParameterDisplay(byte idx, int knobValue) {
 // IMPORTANT: This switch and updateParameterDisplay() above use the same case
 // numbers (0–31). When adding/changing a knob, update BOTH functions.
 // Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
-void applyKnobToEngine(byte idx, int knobValue) {
+void applyKnobToEngine(uint8_t idx, int knobValue) {
   switch (idx) {
 
       // ========================================================================
@@ -1975,14 +1980,14 @@ void applyKnobToEngine(byte idx, int knobValue) {
 
     case 0:  // D1 Drive/Distortion
       {
-        if (knobValue < 31) {
+        float norm = normalizeKnob(knobValue);
+        if (norm <= WF_DEADBAND) {
           AudioNoInterrupts();
           d1WfDrive.amplitude(0.0f);
           d1VoiceMixer.gain(3, 0.0f);   // wavefolder return off
           AudioInterrupts();
           break;
         }
-        float norm = normalizeKnob(knobValue);
         float wavefolderAmp = 0.1f + norm * 1.023f;
 
         AudioNoInterrupts();
@@ -2148,7 +2153,6 @@ void applyKnobToEngine(byte idx, int knobValue) {
     case 11:  // D2 Wavefolder Drive
       {
         float norm = normalizeKnob(knobValue);
-        bool offZone = (knobValue < 31);
 
         // Default values (off state)
         float driveGain = 0.8f;
@@ -2157,7 +2161,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
         float gainDry = 1.0f;
         float gainWet = 0.0f;
 
-        if (!offZone) {
+        if (norm > WF_DEADBAND) {
           driveGain = 0.75f + 0.15f * norm;
           freqHz = 27.5f + norm * 852.5f;  // A0(27.5) → A5(880)
 
@@ -2418,45 +2422,44 @@ void applyKnobToEngine(byte idx, int knobValue) {
 
     case 19:  // D3 Distort (sine-driven wavefolder)
       {
-        if (knobValue < 31) {
-          d3WfOsc.amplitude(0.0f);
+        float norm = normalizeKnob(knobValue);
+        if (norm <= WF_DEADBAND) {
           AudioNoInterrupts();
+          d3WfOsc.amplitude(0.0f);
           d3MasterMixer.gain(0, 0.70f);  // dry at default (parity with D1/D2)
           d3MasterMixer.gain(1, 0.0f);   // wavefolder return off
           AudioInterrupts();
           break;
         }
-
-        float norm = normalizeKnob(knobValue);
         // Both ramps use full knob range — no plateau, no dead zone at either end
         float ampActive = norm;
         float freqActive = norm;
 
-        // Amplitude: 0.05 → 0.50 (caps at 1:00, stays flat after)
-        float drive = 0.05f + 0.45f * ampActive;
-        d3WfOsc.amplitude(drive);
+        // Amplitude: 0.05 → 0.50 (linear ramp, full range)
+        float drive = 0.05f + 0.45f * norm;
 
         // Frequency: 50 → 440 Hz (exponential, full knob range)
-        float freqHz = 50.0f * expf(freqActive * 2.17f);  // ln(8.74) ≈ 2.17
-        d3WfOsc.frequency(freqHz);
+        float freqHz = 50.0f * expf(norm * 2.17f);  // ln(8.74) ≈ 2.17
 
         // Dry pulls down slightly as drive rises (0.70 → 0.62, before loudness comp)
-        float dryGain = 0.70f - 0.08f * ampActive;
+        float dryGain = 0.70f - 0.08f * norm;
         // Wet return ramps up with drive (0.0 → 0.35)
-        float wetGain = ampActive * 0.35f;
+        float wetGain = norm * 0.35f;
         // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
         float comp;
-        if (ampActive <= 0.55f) {
-          comp = 1.0f - 0.12f * ampActive;
+        if (norm <= 0.55f) {
+          comp = 1.0f - 0.12f * norm;
         } else {
           float base = 1.0f - 0.12f * 0.55f;  // 0.934
-          float extra = (ampActive - 0.55f) / 0.45f; // 0→1 over 55%–100%
+          float extra = (norm - 0.55f) / 0.45f; // 0→1 over 55%–100%
           comp = base - 0.25f * extra;
         }
         dryGain *= comp;
         wetGain *= comp;
 
         AudioNoInterrupts();
+        d3WfOsc.amplitude(drive);
+        d3WfOsc.frequency(freqHz);
         d3MasterMixer.gain(0, dryGain);  // dry
         d3MasterMixer.gain(1, wetGain);  // wavefolder return
         AudioInterrupts();
@@ -2497,12 +2500,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
 
         // Only recompute decay + preview when mode actually changes
         if (d3AccentMode != prevMode) {
-          d3EffectiveDecay = computeD3Decay();
-          AudioNoInterrupts();
-          d3FmAmpEnv.decay(d3EffectiveDecay);
-          d3606AmpEnv.decay(d3EffectiveDecay);
-          d3Perc.length(d3EffectiveDecay);
-          AudioInterrupts();
+          applyD3Decay();
 
           // Show the new pattern briefly on step LEDs
           accentPreviewMask = d3AccentMask;  // already computed above
@@ -2551,7 +2549,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
       {
         float norm = normalizeKnob(knobValue);
         // C2→C6 exponential: 4 octaves, every 25% = one octave
-        float baseFreq = 65.41f * powf(2.0f, norm * 4.0f);
+        float baseFreq = 65.41f * expf(norm * 2.7725887f);
 
         float sineFreq, sawFreq;
 
@@ -2711,7 +2709,7 @@ void applyKnobToEngine(byte idx, int knobValue) {
 void initKnobsFromHardware() {
   // Read all knobs, settle filters, apply to engine, and store boot values.
   // Boot-lock prevents ADC drift from changing params until the user moves a knob.
-  for (byte idx = 0; idx < knobCount; idx++) {
+  for (uint8_t idx = 0; idx < knobCount; idx++) {
     int rawValue = readKnobRaw(idx);
 
     // Update filter multiple times to settle it
@@ -2735,10 +2733,10 @@ void initKnobsFromHardware() {
 // instead of all 32, reducing per-loop delayMicroseconds overhead by 4x
 void updateKnobs() {
   static uint8_t knobScanGroup = 0;
-  byte start = knobScanGroup * 8;
-  byte end = start + 8;
+  uint8_t start = knobScanGroup * 8;
+  uint8_t end = start + 8;
 
-  for (byte idx = start; idx < end; idx++) {
+  for (uint8_t idx = start; idx < end; idx++) {
     int rawValue = readKnobRaw(idx);
     analog[idx]->update(rawValue);
 
@@ -2859,11 +2857,11 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
   if (pendingStepCount > 0) return false;
 
   // Drop-in display block (suppress push for 500ms after PLAY press)
-  if (displayBlockedUntilMs > 0) {
-    if ((int32_t)(displayBlockedUntilMs - nowMs) > 0) {
+  if (displayBlockedUntilTick > 0) {
+    if ((int32_t)(displayBlockedUntilTick - nowMs) > 0) {
       return false;
     } else {
-      displayBlockedUntilMs = 0;
+      displayBlockedUntilTick = 0;
     }
   }
 
@@ -3114,7 +3112,7 @@ void updateDisplay() {
 
   // Fire any steps queued during framebuffer drawing, before the
   // blocking SPI transfer adds another 15-25ms of latency.
-  if (sequencePlaying) {
+  if (playingSnap) {
     playSequence();
   }
 

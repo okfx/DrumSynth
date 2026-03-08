@@ -32,15 +32,14 @@ static uint8_t crc8(const uint8_t* data, size_t len) {
 // ============================================================================
 
 // Sequence data
-extern byte d1Sequence[];
-extern byte d2Sequence[];
-extern byte d3Sequence[];
+extern uint8_t d1Sequence[];
+extern uint8_t d2Sequence[];
+extern uint8_t d3Sequence[];
 extern uint8_t bassLineNote[];
 
-// PPQN
+// PPQN (ppqn is extern; PPQN_OPTIONS, PPQN_OPTION_COUNT, PPQN_DEFAULT are
+// constexpr in .ino — visible because this header is included after them)
 extern volatile uint8_t ppqn;
-extern const uint8_t PPQN_OPTIONS[];
-// PPQN_OPTION_COUNT is constexpr in .ino — visible before this header is included
 
 // UI overlay feedback (for "PATTERN LOADED" / "SAVED" messages)
 extern RailMode activeRail;
@@ -57,10 +56,10 @@ extern void updateLEDs();
 // ============================================================================
 
 struct PatternStore {
-  byte drum1[numSteps];
-  byte drum2[numSteps];
-  byte drum3[numSteps];
-  byte bassLine[numSteps];   // Per-step MIDI note for bass line mode
+  uint8_t drum1[numSteps];
+  uint8_t drum2[numSteps];
+  uint8_t drum3[numSteps];
+  uint8_t bassLine[numSteps];   // Per-step MIDI note for bass line mode
 };
 
 struct EepromSlot {
@@ -110,17 +109,13 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   uint8_t expected = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
   if (slot.crc != expected) return false;
 
-  // Load pattern data with interrupts disabled as a safety measure.
-  // Sequences are currently main-loop only (see concurrency contract in
-  // ext_sync.h), so this guard is belt-and-suspenders — not strictly needed.
-  noInterrupts();
+  // Sequences are main-loop only (see concurrency contract in ext_sync.h)
   for (int step = 0; step < numSteps; step++) {
     d1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
     d2Sequence[step] = slot.patterns.drum2[step] ? 1 : 0;
     d3Sequence[step] = slot.patterns.drum3[step] ? 1 : 0;
     bassLineNote[step] = constrain(slot.patterns.bassLine[step], 33, 69);  // A1–A4
   }
-  interrupts();
 
   // Refresh step LEDs so they reflect the loaded pattern
   updateLEDs();
@@ -145,7 +140,6 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   return true;
 }
 
-// NOTE: Caller handles the "SAVED" overlay text (unlike loadStateFromEEPROM which sets its own).
 void saveStateToEEPROM(uint8_t slotIndex) {
   if (slotIndex >= SAVE_SLOT_COUNT) return;
 
@@ -159,17 +153,13 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   slot.magic = EEPROM_MAGIC;
   slot.seq = eepromSeq;
 
-  // Copy arrays with interrupts disabled as a safety measure.
-  // Sequences are currently main-loop only (see concurrency contract in
-  // ext_sync.h), so this guard is belt-and-suspenders — not strictly needed.
-  noInterrupts();
+  // Sequences are main-loop only (see concurrency contract in ext_sync.h)
   for (int step = 0; step < numSteps; step++) {
     slot.patterns.drum1[step] = d1Sequence[step];
     slot.patterns.drum2[step] = d2Sequence[step];
     slot.patterns.drum3[step] = d3Sequence[step];
     slot.patterns.bassLine[step] = bassLineNote[step];
   }
-  interrupts();
 
   // CRC8 over pattern data — detects partial writes on load
   slot.crc = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
@@ -177,6 +167,14 @@ void saveStateToEEPROM(uint8_t slotIndex) {
   EEPROM.put((int)addr, slot);  // Cast to int here for EEPROM.put()
 
   patternDirty = false;
+
+  // Show "PATTERN SAVED" overlay message
+  activeRail = RAIL_NONE;
+  snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
+  snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
+  noInterrupts();
+  parameterOverlayStartTick = sysTickMs;
+  interrupts();
 }
 
 void loadPpqnFromEEPROM() {
