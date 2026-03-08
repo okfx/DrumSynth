@@ -2411,7 +2411,7 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
         const float MIX_SCALE = 0.9f;
 
         // Voice level trims (matched so each voice solos at similar perceived level)
-        const float TRIM_606  = 3.25f;
+        const float TRIM_606  = 3.5f;
         const float TRIM_FM   = 2.5f;
         const float TRIM_PERC = 0.35f;
 
