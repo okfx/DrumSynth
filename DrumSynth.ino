@@ -578,20 +578,115 @@ void applyChokeToDecays() {
   applyD3Decay();
 }
 
+// Animated waveform morph splash screen
+void splashAnimation() {
+  static constexpr int FRAME_MS    = 42;   // ~24 fps
+  static constexpr int TOTAL_FRAMES = 50;
+  static constexpr int X_MIN       = 4;
+  static constexpr int X_MAX       = 124;
+  static constexpr int X_CENTER    = 64;
+  static constexpr int Y_CENTER    = 32;
+  static constexpr float PI2       = 6.2831853f;
+
+  for (int frame = 0; frame < TOTAL_FRAMES; frame++) {
+    unsigned long t0 = millis();
+    display.clearDisplay();
+
+    if (frame <= 5) {
+      // PHASE 1 — flat line grows from center
+      float progress = (float)frame / 5.0f;
+      int half = (int)(progress * (X_MAX - X_CENTER));
+      int xL = X_CENTER - half;
+      int xR = X_CENTER + half;
+      if (xL < X_MIN) xL = X_MIN;
+      if (xR > X_MAX) xR = X_MAX;
+      display.drawLine(xL, Y_CENTER, xR, Y_CENTER, 1);
+
+    } else if (frame <= 18) {
+      // PHASE 2 — sine wave emerges
+      float progress = (float)(frame - 6) / 12.0f;
+      float amplitude = progress * 18.0f;
+      float freq = 1.0f + progress * 0.5f;
+
+      int prevY = Y_CENTER;
+      for (int x = X_MIN; x <= X_MAX; x++) {
+        float t = (float)(x - X_MIN) / (float)(X_MAX - X_MIN);
+        float sine = sinf(t * PI2 * freq);
+        int y = Y_CENTER - (int)(sine * amplitude);
+        if (y < 1) y = 1;
+        if (y > 62) y = 62;
+        if (x == X_MIN) {
+          display.drawPixel(x, y, 1);
+        } else {
+          display.drawLine(x - 1, prevY, x, y, 1);
+        }
+        prevY = y;
+      }
+
+    } else if (frame <= 40) {
+      // PHASE 3 — wavefolding intensifies
+      float progress = (float)(frame - 19) / 21.0f;
+      float foldAmount = 1.0f + progress * 5.0f;
+      float amplitude = 18.0f + progress * 6.0f;
+      float freq = 1.5f + progress * 0.5f;
+      float drift = sinf(frame * 0.3f) * 0.2f;
+
+      int prevY = Y_CENTER;
+      for (int x = X_MIN; x <= X_MAX; x++) {
+        float t = (float)(x - X_MIN) / (float)(X_MAX - X_MIN);
+        float sine = sinf(t * PI2 * freq + drift);
+        // Remap [-1,1] to [0,1]
+        float value = (sine + 1.0f) * 0.5f;
+        // Wavefold transfer function
+        float v = value * foldAmount;
+        v = v - floorf(v);
+        if ((int)(value * foldAmount) % 2 == 1) v = 1.0f - v;
+        float folded = v * 2.0f - 1.0f;
+
+        int y = Y_CENTER - (int)(folded * amplitude);
+        if (y < 1) y = 1;
+        if (y > 62) y = 62;
+        if (x == X_MIN) {
+          display.drawPixel(x, y, 1);
+        } else {
+          display.drawLine(x - 1, prevY, x, y, 1);
+        }
+        prevY = y;
+      }
+
+    } else {
+      // PHASE 4 — version info
+      display.setTextColor(1);
+      display.setTextWrap(false);
+      display.setFont(NULL);
+      display.setTextSize(1);
+      display.setCursor(43, 16);
+      display.print("VERSION");
+      display.setCursor(55, 28);
+      display.print(FIRMWARE_VERSION);
+      display.setCursor(10, 40);
+      char dateBuf[20];
+      snprintf(dateBuf, sizeof(dateBuf), FIRMWARE_DATE_FMT, FIRMWARE_DATE_ARGS);
+      display.print(dateBuf);
+    }
+
+    display.display();
+
+    // Maintain frame rate
+    unsigned long elapsed = millis() - t0;
+    if (elapsed < (unsigned long)FRAME_MS) {
+      delay(FRAME_MS - elapsed);
+    }
+  }
+
+  // Hold version text
+  delay(800);
+  display.clearDisplay();
+  display.display();
+}
+
 void setup() {
   delay(200);
-
-  // ============================================================================
-  // STARTUP LED BLINK (3x flash)
-  // ============================================================================
-
-  pinMode(LED_BUILTIN, OUTPUT);
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(150);
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(150);
-  }
 
   // ============================================================================
   // OLED DISPLAY INITIALIZATION
@@ -651,24 +746,8 @@ void setup() {
       display.display();
     }
 
-    // Startup splash screen
-    display.setTextColor(1);
-    display.setTextWrap(false);
-    display.setFont(NULL);
-    display.setTextSize(1);
-    display.setCursor(43, 16);
-    display.print("VERSION");
-    display.setCursor(55, 28);
-    display.print(FIRMWARE_VERSION);
-    display.setCursor(10, 40);
-    char dateBuf[20];
-    snprintf(dateBuf, sizeof(dateBuf), FIRMWARE_DATE_FMT, FIRMWARE_DATE_ARGS);
-    display.print(dateBuf);
-    display.display();
-    delay(1250);
-
-    display.clearDisplay();
-    display.display();
+    // Animated splash screen
+    splashAnimation();
   }
 
   // ============================================================================
