@@ -98,7 +98,9 @@ AudioFilterStateVariable masterBandPass; //xy=3300,1340
 AudioAmplifier           masterAmp;      //xy=3500,1340
 AudioFilterBiquad        finalFilter;    //xy=3700,1340
 AudioAmplifier           finalAmp;       //xy=3900,1340
+AudioAmplifier           usbTrim;           //xy=4020,1270
 AudioOutputI2S           i2s1;           //xy=4100,1340
+AudioOutputUSB           usb1;           //xy=4100,1270
 AudioConnection          patchCord1(d3FmMod1, 0, d3FmCarrier1, 0);
 AudioConnection          patchCord2(d3FmMod2, 0, d3FmCarrier2, 0);
 AudioConnection          patchCord3(d3606Osc1, 0, d3606OscMixer1, 0);
@@ -210,6 +212,9 @@ AudioConnection          patchCord109(masterAmp, finalFilter);
 AudioConnection          patchCord110(finalFilter, finalAmp);
 AudioConnection          patchCord111(finalAmp, 0, i2s1, 0);
 AudioConnection          patchCord112(finalAmp, 0, i2s1, 1);
+AudioConnection          patchCord113(finalAmp, usbTrim);
+AudioConnection          patchCord114(usbTrim, 0, usb1, 0);
+AudioConnection          patchCord115(usbTrim, 0, usb1, 1);
 AudioControlSGTL5000     sgtl5000_1;     //xy=4100,1430
 // GUItool: end automatically generated code
 
