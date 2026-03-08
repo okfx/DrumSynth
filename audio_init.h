@@ -395,6 +395,7 @@ inline void audioInit() {
 
   // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
   finalAmp.gain(5.0f);
+  usbTrim.gain(0.5f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
