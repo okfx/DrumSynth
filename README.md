@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.01.
+A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.02.
 
 ## Voices
 
@@ -31,7 +31,7 @@ Long-press (2s) the track-select button on D1 to toggle bass line mode. Each ste
 ## Hardware
 
 - **MCU:** Teensy 4.1 (ARM Cortex-M7 @ 600MHz)
-- **Audio:** Teensy Audio Library → SGTL5000 codec (headphone + line out)
+- **Audio:** Teensy Audio Library → SGTL5000 codec (headphone + line out) + USB audio output
 - **Display:** 128x64 SH1106 OLED (software SPI) with oscilloscope waveform view
 - **Controls:** 32 knobs (2x 16-ch analog mux), 16 step buttons, 10 control buttons
 - **LEDs:** 16 step LEDs (74HC595 shift register)
