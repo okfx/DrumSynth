@@ -88,11 +88,18 @@ bool d3HarmonicMode = false;
 static constexpr uint32_t D3_HARMONIC_LONG_PRESS_MS = 2000;
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
+int8_t d3HarmonicHeldStep = -1;  // Which step is in D3 harmonic note-select (-1 = none)
 
 // Per-step MIDI note for bass line (A1=33 to A4=69, 36 semitones)
 // Default C2 = MIDI 36
 uint8_t bassLineNote[numSteps] = {
   36,36,36,36, 36,36,36,36, 36,36,36,36, 36,36,36,36
+};
+
+// Per-step MIDI note for D3 harmonic mode (C3=48 to C6=84, 36 semitones)
+// Default C3 = MIDI 48
+uint8_t d3HarmonicNote[numSteps] = {
+  48,48,48,48, 48,48,48,48, 48,48,48,48, 48,48,48,48
 };
 
 // ============================================================================
@@ -971,7 +978,12 @@ void playSequenceCore(uint8_t step) {
     triggerD1();
   }
   if (d2Sequence[step]) triggerD2();
-  if (d3Sequence[step]) triggerD3(step);
+  if (d3Sequence[step]) {
+    if (d3HarmonicMode) {
+      applyD3HarmonicFreq(d3HarmonicNote[step]);
+    }
+    triggerD3(step);
+  }
 }
 
 void triggerD1() {
@@ -1280,6 +1292,7 @@ void updateOtherButtons() {
                 d2Sequence[step] = 0;
                 d3Sequence[step] = 0;
                 bassLineNote[step] = 36;  // C2 default
+                d3HarmonicNote[step] = 48;  // C3 default
               }
               updateLEDs();
               patternDirty = false;
@@ -1460,6 +1473,9 @@ void updateStepButtons() {
         if (bassLineModeActive && activeTrack == TRACK_D1) {
           // Bass line mode — defer toggle to release (to distinguish from hold)
           stepPressTick[i] = nowTick;
+        } else if (d3HarmonicMode && activeTrack == TRACK_D3) {
+          // D3 harmonic mode — defer toggle to release (to distinguish from hold)
+          stepPressTick[i] = nowTick;
         } else {
           // Normal mode — toggle step immediately
           seq[i] ^= 1;
@@ -1472,6 +1488,16 @@ void updateStepButtons() {
           if (bassLineHeldStep == i) {
             // Was in note-select — just clear, no toggle
             bassLineHeldStep = -1;
+          } else {
+            // Short press on a different step — toggle it
+            seq[i] ^= 1;
+            ledShiftReg.set(i, seq[i]);
+            patternDirty = true;
+          }
+        } else if (d3HarmonicMode && activeTrack == TRACK_D3) {
+          if (d3HarmonicHeldStep == i) {
+            // Was in note-select — just clear, no toggle
+            d3HarmonicHeldStep = -1;
           } else {
             // Short press on a different step — toggle it
             seq[i] ^= 1;
@@ -1494,6 +1520,21 @@ void updateStepButtons() {
       } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
         // Just crossed the hold threshold — enter note-select for this step
         bassLineHeldStep = i;
+      }
+    }
+
+    // D3 harmonic mode: after holding a step button for 300ms, enter note-select
+    if (d3HarmonicMode && activeTrack == TRACK_D3 && btnState[i]) {
+      if (d3HarmonicHeldStep == i) {
+        // Already in note-select — keep overlay alive
+        char noteName[5];
+        formatBassNote(d3HarmonicNote[i], noteName);
+        snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        parameterOverlayStartTick = nowTick;
+      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
+        // Just crossed the hold threshold — enter note-select for this step
+        d3HarmonicHeldStep = i;
       }
     }
 
@@ -1586,6 +1627,52 @@ static inline uint8_t bassLineKnobToNote(int knobValue) {
   float semi = (knobValue / 1023.0f) * (float)(BASS_NOTE_MAX - BASS_NOTE_MIN);
   int note = constrain((int)(semi + 0.5f), 0, BASS_NOTE_MAX - BASS_NOTE_MIN);
   return (uint8_t)(note + BASS_NOTE_MIN);
+}
+
+// D3 harmonic mode constants
+static constexpr uint8_t D3_HARM_NOTE_MIN = 48;  // C3
+static constexpr uint8_t D3_HARM_NOTE_MAX = 84;  // C6
+
+// Maps knob 0–1023 to MIDI note in C3(48)–C6(84) range using the same
+// pitchBend curve as the D3 harmonic engine (BEND_START breakpoint at 0.25).
+static inline uint8_t d3HarmonicKnobToNote(int knobValue) {
+  float norm = knobValue / 1023.0f;
+  const float BEND_START = 0.25f;
+  float pitchBend;
+  if (norm <= BEND_START) {
+    pitchBend = 0.60f * (norm / BEND_START);
+  } else {
+    float blend = (norm - BEND_START) / (1.0f - BEND_START);
+    pitchBend = 0.60f + 0.40f * (blend * blend);
+  }
+  float semi = pitchBend * (float)(D3_HARM_NOTE_MAX - D3_HARM_NOTE_MIN);
+  return (uint8_t)constrain((int)(semi + 0.5f) + D3_HARM_NOTE_MIN,
+                             D3_HARM_NOTE_MIN, D3_HARM_NOTE_MAX);
+}
+
+// Sets all D3 oscillators (606 bank, FM, perc) to harmonic ratios for a given
+// MIDI note.  Called per-step during playback when harmonic mode is active.
+// Filter tracking is handled separately by the knob handler — not per-step.
+inline void applyD3HarmonicFreq(uint8_t midiNote) {
+  float baseHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
+  AudioNoInterrupts();
+  // 606 bank: power chord spacing
+  d3606Osc1.frequency(baseHz * 1.0f);   // root
+  d3606Osc2.frequency(baseHz * 1.5f);   // fifth
+  d3606Osc3.frequency(baseHz * 2.0f);   // octave
+  d3606Osc4.frequency(baseHz * 3.0f);   // fifth + octave
+  d3606Osc5.frequency(baseHz * 4.0f);   // two octaves
+  d3606Osc6.frequency(baseHz * 6.0f);   // fifth + two octaves
+  // FM voice: octave-spaced carrier-modulator pairs (2:1 ratios)
+  d3FmCarrier1.frequency(baseHz * 2.0f);
+  d3FmMod1.frequency(baseHz * 4.0f);
+  d3FmMod1.amplitude(0.35f);
+  d3FmCarrier2.frequency(baseHz * 3.0f);
+  d3FmMod2.frequency(baseHz * 6.0f);
+  d3FmMod2.amplitude(0.30f);
+  // Perc: same base pitch
+  d3Perc.frequency(baseHz);
+  AudioInterrupts();
 }
 
 // D2 Decay curve: flat 93ms to 50%, curved 93–130ms at 50–75%, linear 130–500ms at 75–100%
@@ -1844,27 +1931,24 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 16:  // D3 Pitch
       {
         if (d3HarmonicMode) {
-          // Show quantized note name — reuse pitchBend curve from engine
-          float norm = normalizeKnob(knobValue);
-          const float BEND_START = 0.25f;
-          float pitchBend;
-          if (norm <= BEND_START) {
-            pitchBend = 0.60f * (norm / BEND_START);
+          if (d3HarmonicHeldStep >= 0) {
+            // Step held — show note being set
+            uint8_t note = d3HarmonicKnobToNote(knobValue);
+            char noteName[5];
+            formatBassNote(note, noteName);
+            snprintf(displayParameter1, sizeof(displayParameter1),
+                     "STEP %d", d3HarmonicHeldStep + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
           } else {
-            float blend = (norm - BEND_START) / (1.0f - BEND_START);
-            pitchBend = 0.60f + 0.40f * (blend * blend);
+            // No step held — knob locked
+            snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
+            snprintf(displayParameter2, sizeof(displayParameter2), "HARMONIC");
           }
-          float semi = pitchBend * 36.0f;  // C3(48) to C6(84)
-          uint8_t midiNote = (uint8_t)constrain((int)(semi + 0.5f) + 48, 48, 84);
-          char noteName[5];
-          formatBassNote(midiNote, noteName);
-          snprintf(displayParameter1, sizeof(displayParameter1), "D3 HARMONIC");
-          snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
-        } else {
-          int tune = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-          snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
-          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
+          break;
         }
+        int tune = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+        snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
+        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
         break;
       }
 
@@ -2391,40 +2475,20 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
         const float fmHpfHz = 1500.0f + 1500.0f * pitchBend;   // 1500→3000 Hz
 
         if (d3HarmonicMode) {
-          // --- HARMONIC MODE: power chord spacing, tonal FM ---
-          // Chromatic quantization: C3 (MIDI 48) to C6 (MIDI 84), 36 semitones
-          static constexpr uint8_t HARM_MIDI_MIN = 48;  // C3
-          static constexpr uint8_t HARM_MIDI_MAX = 84;  // C6
-          float semi = pitchBend * (float)(HARM_MIDI_MAX - HARM_MIDI_MIN);
-          uint8_t midiNote = (uint8_t)constrain((int)(semi + 0.5f) + HARM_MIDI_MIN,
-                                                 HARM_MIDI_MIN, HARM_MIDI_MAX);
-          float baseHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
-
+          // --- HARMONIC MODE: per-step note select ---
+          if (d3HarmonicHeldStep >= 0) {
+            // Step held — set that step's note from knob position
+            uint8_t note = d3HarmonicKnobToNote(knobValue);
+            d3HarmonicNote[d3HarmonicHeldStep] = note;
+            patternDirty = true;
+            // Don't set frequencies globally — applied per-step at playback time
+          }
+          // Filter tracking still applies in harmonic mode (keeps volume steadier)
           AudioNoInterrupts();
-
-          // 606 bank: power chord spacing
-          d3606Osc1.frequency(baseHz * 1.0f);   // root
-          d3606Osc2.frequency(baseHz * 1.5f);   // fifth
-          d3606Osc3.frequency(baseHz * 2.0f);   // octave
-          d3606Osc4.frequency(baseHz * 3.0f);   // fifth + octave
-          d3606Osc5.frequency(baseHz * 4.0f);   // two octaves
-          d3606Osc6.frequency(baseHz * 6.0f);   // fifth + two octaves
           d3606HighPass.frequency(hpfHz);
           d3606BandPass.frequency(bpfHz);
-
-          // FM voice: octave-spaced carrier-modulator pairs (2:1 ratios)
-          d3FmCarrier1.frequency(baseHz * 2.0f);   // C, one octave up
-          d3FmMod1.frequency(baseHz * 4.0f);       // C, two octaves up — 2:1 to carrier 1
-          d3FmMod1.amplitude(0.35f);               // reduced depth for clean sidebands
-          d3FmCarrier2.frequency(baseHz * 3.0f);   // G
-          d3FmMod2.frequency(baseHz * 6.0f);       // G, one octave up — 2:1 to carrier 2
-          d3FmMod2.amplitude(0.30f);               // reduced depth for clean sidebands
           d3FmBandPass.frequency(fmBpfHz);
           d3FmHighPass.frequency(fmHpfHz);
-
-          // Perc: C3 to C6 (same base range)
-          d3Perc.frequency(baseHz);
-
           AudioInterrupts();
 
         } else {
@@ -3189,7 +3253,12 @@ void updateDisplay() {
   }
 
   // Transport / mode icon
-  if (bassLineModeActive) {
+  if (d3HarmonicMode) {
+    // "H" indicator for D3 harmonic mode
+    display.setTextSize(1);
+    display.setCursor(121, 4);
+    display.print("H");
+  } else if (bassLineModeActive) {
     display.drawBitmap(118, 4, image_bassclef_bits, 10, 10, 1);
   } else if (playingSnap) {
     display.drawBitmap(118, 4, image_play_bits, 10, 10, 1);

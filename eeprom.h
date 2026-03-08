@@ -4,7 +4,7 @@
 //  EEPROM Persistence — eeprom.h
 //
 //  Pattern save/load across 10 slots, plus PPQN persistence.
-//  Each slot stores a 3-track + bass line × 16-step pattern with magic number validation.
+//  Each slot stores a 3-track + bass line + D3 harmonic × 16-step pattern with magic number validation.
 //  PPQN is stored separately after the pattern slots.
 //
 //  Include AFTER: hw_setup.h (numSteps), EEPROM.h, sequence arrays,
@@ -36,6 +36,7 @@ extern uint8_t d1Sequence[];
 extern uint8_t d2Sequence[];
 extern uint8_t d3Sequence[];
 extern uint8_t bassLineNote[];
+extern uint8_t d3HarmonicNote[];
 
 // PPQN (ppqn is extern; PPQN_OPTIONS, PPQN_OPTION_COUNT, PPQN_DEFAULT are
 // constexpr in .ino — visible because this header is included after them)
@@ -59,7 +60,8 @@ struct PatternStore {
   uint8_t drum1[numSteps];
   uint8_t drum2[numSteps];
   uint8_t drum3[numSteps];
-  uint8_t bassLine[numSteps];   // Per-step MIDI note for bass line mode
+  uint8_t bassLine[numSteps];     // Per-step MIDI note for bass line mode
+  uint8_t d3Harmonic[numSteps];   // Per-step MIDI note for D3 harmonic mode
 };
 
 struct EepromSlot {
@@ -73,7 +75,7 @@ struct EepromSlot {
 //  Constants
 // ============================================================================
 
-static constexpr uint16_t EEPROM_MAGIC      = 0x4244;  // Identifies valid slot (CRC8 format)
+static constexpr uint16_t EEPROM_MAGIC      = 0x4245;  // Identifies valid slot (bumped for d3Harmonic field)
 static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
 // PPQN stored after all save slots
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
@@ -115,6 +117,7 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
     d2Sequence[step] = slot.patterns.drum2[step] ? 1 : 0;
     d3Sequence[step] = slot.patterns.drum3[step] ? 1 : 0;
     bassLineNote[step] = constrain(slot.patterns.bassLine[step], 33, 69);  // A1–A4
+    d3HarmonicNote[step] = constrain(slot.patterns.d3Harmonic[step], 48, 84);  // C3–C6
   }
 
   // Refresh step LEDs so they reflect the loaded pattern
@@ -159,6 +162,7 @@ void saveStateToEEPROM(uint8_t slotIndex) {
     slot.patterns.drum2[step] = d2Sequence[step];
     slot.patterns.drum3[step] = d3Sequence[step];
     slot.patterns.bassLine[step] = bassLineNote[step];
+    slot.patterns.d3Harmonic[step] = d3HarmonicNote[step];
   }
 
   // CRC8 over pattern data — detects partial writes on load
