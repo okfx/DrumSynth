@@ -58,8 +58,8 @@ extern volatile uint8_t currentStep;
 //  Main loop writes (read by ISR):
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
 //    sequencePlaying           — bool, atomic on ARM, safe for ISR to read
-//    armed                     — bool, atomic on ARM. Main loop sets (PLAY handler), ISR clears (countdown complete → fires step 0).
-//    armPulseCountdown         — uint16_t, atomic on ARM (aligned LDRH/STRH). Main loop sets (PLAY handler), ISR decrements.
+//    armed                     — bool, atomic on ARM. Main loop sets (PLAY handler) and clears (resetExternalClockState), ISR clears (countdown complete → fires step 0).
+//    armPulseCountdown         — uint16_t, atomic on ARM (aligned LDRH/STRH). Main loop sets (PLAY handler) and clears (resetExternalClockState), ISR decrements.
 //    ppqn                      — volatile uint8_t, main loop writes (PPQN mode), ISR reads. Atomic on ARM.
 //
 //  ISR writes, main loop reads:
@@ -162,6 +162,13 @@ void subdivTimerCallback() {
 
   subdivTimer.end();  // one-shot: stop (this is the valid callback)
 
+  // Don't fire deferred steps if transport left RUN_EXT
+  if (transportState != RUN_EXT || !sequencePlaying) {
+    subdivStepsRemaining = 0;
+    subdivTimerDueUs = 0;
+    return;
+  }
+
   if (pendingStepCount < 255) {
     currentStep = (currentStep + 1) % numSteps;
     pendingStepCount++;
@@ -257,6 +264,7 @@ void externalClockISR() {
   // When it reaches 0, we fire step 0 on a pulse boundary aligned with the
   // Volca's next step 0 (assuming the user pressed PLAY near step 0).
   if (armed && transportState == RUN_EXT && sequencePlaying) {
+    if (armPulseCountdown == 0) { armed = false; return; }  // underflow guard
     armPulseCountdown--;
     if (armPulseCountdown > 0) return;  // Still counting — stay silent
 
@@ -447,11 +455,12 @@ void updateExtBpmDisplay() {
   noInterrupts();
   uint32_t emaCopy = extIntervalEMA;
   uint32_t lastPCopy = lastPulseMicros;
+  uint8_t ppqnCopy = ppqn;  // snapshot inside critical section — ppqn is volatile (main loop writes)
   interrupts();
 
   // Show ext BPM if we've received pulses recently (within timeout)
   if (lastPCopy != 0 && (micros() - lastPCopy) < EXT_TIMEOUT_US && emaCopy > 0) {
-    float rawBpm = 60000000.0f / ((float)emaCopy * (float)ppqn);
+    float rawBpm = 60000000.0f / ((float)emaCopy * (float)ppqnCopy);
     if (extBpmDisplay <= 0.0f) {
       extBpmDisplay = rawBpm;           // First reading — snap immediately
     } else {

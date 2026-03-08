@@ -60,7 +60,7 @@ static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3%
 
 // D3 accent LED preview state — Main-loop only, no ISR access
 bool accentPreviewActive = false;
-uint32_t accentPreviewUntilTick = 0;
+uint32_t accentPreviewStartTick = 0;
 uint16_t accentPreviewMask = 0;  // 16-bit mask, bit15 = step0 ... bit0 = step15
 static constexpr uint16_t ACCENT_PREVIEW_DURATION_MS = 2000;
 
@@ -756,7 +756,7 @@ void loop() {
 
   // Expire accent preview and restore normal LEDs
   if (accentPreviewActive) {
-    if ((int32_t)(loopNowTick - accentPreviewUntilTick) >= 0) {
+    if ((uint32_t)(loopNowTick - accentPreviewStartTick) >= ACCENT_PREVIEW_DURATION_MS) {
       accentPreviewActive = false;  // Main-loop only — no guard needed
       updateLEDs();
     }
@@ -886,17 +886,20 @@ void loop() {
 // Transport state machine — manages clock timer and ext sync cleanup on transitions
 void setTransport(TransportState s) {
   if (transportState == s) return;
-  transportState = s;
 
-  // When leaving RUN_EXT, clear step accumulator and stop subdivision timer
-  if (transportState != RUN_EXT) {
+  // Atomic state cleanup — ISR checks transportState to gate step generation,
+  // so all shared state must be consistent before interrupts see the new value.
+  noInterrupts();
+  transportState = s;
+  if (s != RUN_EXT) {
     extStepAcc = 0;
     subdivTimer.end();
     subdivStepsRemaining = 0;
     subdivTimerDueUs = 0;
   }
+  interrupts();
 
-  switch (transportState) {
+  switch (s) {
     case RUN_INT:
       rearmStepTimer();     // ends + restarts internal clock timer
       break;
@@ -1171,7 +1174,7 @@ void updateOtherButtons() {
       btnState[i] = rawPressed;
 
       // Button 7 (CHANGE MEMORY SLOT) — state transitions only.
-      // 5s hold detection is in continuous check below.
+      // 2s hold detection is in continuous check below.
       if (i == 7) {
         if (btnState[7]) {
           // Press down — record timestamp
@@ -1252,15 +1255,14 @@ void updateOtherButtons() {
 
           case 8:
             if (!loadStateFromEEPROM(activeSaveSlot)) {
-              // Empty slot — clear to initialized pattern (no steps programmed)
-              noInterrupts();
+              // Empty slot — clear to initialized pattern (no steps programmed).
+              // Sequences are main-loop only (see concurrency contract) — no guard needed.
               for (int step = 0; step < numSteps; step++) {
                 d1Sequence[step] = 0;
                 d2Sequence[step] = 0;
                 d3Sequence[step] = 0;
                 bassLineNote[step] = 36;  // C2 default
               }
-              interrupts();
               updateLEDs();
               patternDirty = false;
               activeRail = RAIL_NONE;
@@ -1466,7 +1468,7 @@ void updateStepButtons() {
 }
 
 int readKnobRaw(uint8_t idx) {
-  Mux& mux = (idx < 16) ? knobMux1 : knobMux2;
+  admux::Mux& mux = (idx < 16) ? knobMux1 : knobMux2;
   mux.channel(idx < 16 ? idx : idx - 16);
   delayMicroseconds(KNOB_MUX_SETTLE_US);
   int sum = 0;
@@ -1528,6 +1530,9 @@ static const float BASS_LINE_FREQ[] = {
   349.228f, 369.994f, 391.995f, 415.305f, 440.000f
 };
 
+static_assert(sizeof(BASS_LINE_FREQ) / sizeof(BASS_LINE_FREQ[0]) == (BASS_NOTE_MAX - BASS_NOTE_MIN + 1),
+              "BASS_LINE_FREQ must have one entry per MIDI note in range");
+
 inline float bassLineFreq(uint8_t midiNote) {
   uint8_t idx = constrain(midiNote, BASS_NOTE_MIN, BASS_NOTE_MAX) - BASS_NOTE_MIN;
   return BASS_LINE_FREQ[idx];
@@ -1555,7 +1560,7 @@ static inline float d2DecayCurve(int knobValue) {
   if (norm <= 0.5f) {
     return 93.0f;
   } else if (norm <= 0.75f) {
-    float t = (norm - 0.5f) * 2.0f;  // 0→0.5 over this segment
+    float t = (norm - 0.5f) * 2.0f;  // 0→0.5 over this segment (half-range so curve meets linear segment at 130ms)
     return 93.0f + 16.0f * t + 116.0f * t * t;
   } else {
     float t = (norm - 0.75f) / 0.25f;  // 0→1 over upper quarter
@@ -1630,9 +1635,9 @@ static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
 // Knob assignments: 0–7 = D1, 8–15 = D2, 16–23 = D3, 24–31 = Master.
 
 void updateParameterDisplay(uint8_t idx, int knobValue) {
-  noInterrupts();
+  // sysTickMs is a single aligned 32-bit read (atomic LDR on ARM Cortex-M7).
+  // parameterOverlayStartTick is main-loop only — no guard needed.
   parameterOverlayStartTick = sysTickMs;
-  interrupts();
   activeRail = RAIL_NONE;
 
   switch (idx) {
@@ -1643,7 +1648,11 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 0:  // D1 Drive/Distortion
       {
-        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+        float norm = normalizeKnob(knobValue);
+        float active = (norm <= WF_DEADBAND) ? 0.0f
+                     : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
+        if (active > 1.0f) active = 1.0f;
+        int percent = (int)(active * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORTION");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1752,7 +1761,11 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 11:  // D2 Wavefolder Drive
       {
-        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+        float norm = normalizeKnob(knobValue);
+        float active = (norm <= WF_DEADBAND) ? 0.0f
+                     : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
+        if (active > 1.0f) active = 1.0f;
+        int percent = (int)(active * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 DISTORTION");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1821,7 +1834,11 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 19:  // D3 Distort (sine-driven wavefolder)
       {
-        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+        float norm = normalizeKnob(knobValue);
+        float active = (norm <= WF_DEADBAND) ? 0.0f
+                     : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
+        if (active > 1.0f) active = 1.0f;
+        int percent = (int)(active * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORTION");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
         break;
@@ -1919,10 +1936,12 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 29:  // Master Choke Offset
       {
         snprintf(displayParameter1, sizeof(displayParameter1), "CHOKE");
-        if (chokeDisplayPercent == 0) {
+        float offsetMs = chokeOffsetFromKnob(knobValue);
+        if (offsetMs == 0) {
           snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
         } else {
-          snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", chokeDisplayPercent);
+          int pct = (int)((normalizeKnob(knobValue) - 0.5f) * 200.0f);
+          snprintf(displayParameter2, sizeof(displayParameter2), "%+d%%", pct);
         }
         break;
       }
@@ -2076,11 +2095,12 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 
         // Pitch snap depth increases with knob
         float pitchDepth = 0.60f + (0.40f * norm);
-        d1Snap.pitchMod(pitchDepth);
-
-        // Transient emphasis, capped at unity
         float transientGain = 0.85f + (0.15f * norm);
+
+        AudioNoInterrupts();
+        d1Snap.pitchMod(pitchDepth);
         d1VoiceMixer.gain(1, transientGain);
+        AudioInterrupts();
         break;
       }
 
@@ -2431,10 +2451,6 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           AudioInterrupts();
           break;
         }
-        // Both ramps use full knob range — no plateau, no dead zone at either end
-        float ampActive = norm;
-        float freqActive = norm;
-
         // Amplitude: 0.05 → 0.50 (linear ramp, full range)
         float drive = 0.05f + 0.45f * norm;
 
@@ -2510,7 +2526,7 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           nowTick = sysTickMs;  // sysTickMs is ISR-written
           interrupts();
 
-          accentPreviewUntilTick = nowTick + ACCENT_PREVIEW_DURATION_MS;
+          accentPreviewStartTick = nowTick;
           accentPreviewActive = true;  // Main-loop only — no guard needed
 
           updateLEDs();
@@ -2569,8 +2585,10 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           sawFreq  = baseFreq * (1.0f + blend * 3.0f);
         }
 
+        AudioNoInterrupts();
         masterWfOscSine.frequency(sineFreq);
         masterWfOscSaw.frequency(sawFreq);
+        AudioInterrupts();
         break;
       }
 
