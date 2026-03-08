@@ -1934,7 +1934,7 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 21:  // D3 Filter
       {
         float norm = normalizeKnob(knobValue);
-        float cutoffHz = 5000.0f * expf(norm * 0.405f);  // 5000–7500 Hz exponential
+        float cutoffHz = 1000.0f * expf(norm * 2.015f);  // 1000–7500 Hz exponential
 
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
@@ -2581,8 +2581,8 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
       {
         float norm = normalizeKnob(knobValue);
 
-        // Cutoff: exponential curve 5000–7500 Hz (log-spaced for natural feel)
-        float cutoffHz = 5000.0f * expf(norm * 0.405f);  // ln(7500/5000) ≈ 0.405
+        // Cutoff: exponential curve 1000–7500 Hz (log-spaced for natural feel)
+        float cutoffHz = 1000.0f * expf(norm * 2.015f);  // ln(7500/1000) ≈ 2.015
 
         // Resonance: gentle bump at low cutoffs for volume compensation, clean when open
         float resonance = 0.35f + 0.15f * (1.0f - norm);  // 0.50 → 0.35
