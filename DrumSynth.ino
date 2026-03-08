@@ -2007,11 +2007,13 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           AudioInterrupts();
           break;
         }
-        float wavefolderAmp = 0.1f + norm * 1.023f;
+        // Remap above deadband to 0→1 so the effect fades in smoothly
+        float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
+        float wavefolderAmp = 0.1f + active * 1.023f;
 
         AudioNoInterrupts();
         d1WfDrive.amplitude(wavefolderAmp);
-        d1VoiceMixer.gain(3, 0.25f);  // wavefolder return on
+        d1VoiceMixer.gain(3, active * 0.25f);  // wavefolder return ramps in
         AudioInterrupts();
         break;
       }
@@ -2182,22 +2184,24 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
         float gainWet = 0.0f;
 
         if (norm > WF_DEADBAND) {
-          driveGain = 0.75f + 0.15f * norm;
-          freqHz = 27.5f + norm * 852.5f;  // A0(27.5) → A5(880)
+          // Remap above deadband to 0→1 so all curves start from zero
+          float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
+          driveGain = 0.75f + 0.15f * active;
+          freqHz = 27.5f + active * 852.5f;  // A0(27.5) → A5(880)
 
           // Wet mix comes in gradually with quadratic curve
           const float WET_START = 0.10f;
           float wetNorm = 0.0f;
-          if (norm > WET_START) {
-            float blend = (norm - WET_START) / (1.0f - WET_START);
+          if (active > WET_START) {
+            float blend = (active - WET_START) / (1.0f - WET_START);
             wetNorm = blend * blend;
           }
 
           // LPF tracks inversely with drive
-          if (norm <= 0.4f) {
+          if (active <= 0.4f) {
             lpfFreqHz = 2500.0f;
           } else {
-            float blend = (norm - 0.4f) / 0.6f;
+            float blend = (active - 0.4f) / 0.6f;
             float blendSquared = blend * blend;
             lpfFreqHz = 2500.0f - blendSquared * (2500.0f - 1500.0f);
           }
@@ -2208,8 +2212,8 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           gainWet = wetNorm * 0.45f;
           // Loudness comp: starts at 20% knob, ramps down (1.0 → 0.65)
           float comp = 1.0f;
-          if (norm > 0.20f) {
-            float extra = (norm - 0.20f) / 0.80f; // 0→1 over 20%–100%
+          if (active > 0.20f) {
+            float extra = (active - 0.20f) / 0.80f; // 0→1 over 20%–100%
             comp = 1.0f - 0.35f * extra;
           }
           gainDry *= comp;
@@ -2406,8 +2410,8 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 
         const float MIX_SCALE = 0.9f;
 
-        // Voice level trims (matched so each voice solos at ~0.5 peak)
-        const float TRIM_606  = 3.0f;
+        // Voice level trims (matched so each voice solos at similar perceived level)
+        const float TRIM_606  = 3.25f;
         const float TRIM_FM   = 2.5f;
         const float TRIM_PERC = 0.35f;
 
@@ -2451,23 +2455,26 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           AudioInterrupts();
           break;
         }
+        // Remap above deadband to 0→1 so all curves start from zero
+        float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
+
         // Amplitude: 0.05 → 0.50 (linear ramp, full range)
-        float drive = 0.05f + 0.45f * norm;
+        float drive = 0.05f + 0.45f * active;
 
         // Frequency: 50 → 440 Hz (exponential, full knob range)
-        float freqHz = 50.0f * expf(norm * 2.17f);  // ln(8.74) ≈ 2.17
+        float freqHz = 50.0f * expf(active * 2.17f);  // ln(8.74) ≈ 2.17
 
         // Dry pulls down slightly as drive rises (0.70 → 0.62, before loudness comp)
-        float dryGain = 0.70f - 0.08f * norm;
+        float dryGain = 0.70f - 0.08f * active;
         // Wet return ramps up with drive (0.0 → 0.35)
-        float wetGain = norm * 0.35f;
+        float wetGain = active * 0.35f;
         // Loudness comp: gentle to 55%, steeper above (1.0 → 0.934 → 0.684)
         float comp;
-        if (norm <= 0.55f) {
-          comp = 1.0f - 0.12f * norm;
+        if (active <= 0.55f) {
+          comp = 1.0f - 0.12f * active;
         } else {
           float base = 1.0f - 0.12f * 0.55f;  // 0.934
-          float extra = (norm - 0.55f) / 0.45f; // 0→1 over 55%–100%
+          float extra = (active - 0.55f) / 0.45f; // 0→1 over 55%–100%
           comp = base - 0.25f * extra;
         }
         dryGain *= comp;
