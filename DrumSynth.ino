@@ -75,20 +75,43 @@ static constexpr uint32_t PPQN_LONG_PRESS_MS = 2000;
 static constexpr uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
 static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_OPTIONS[0]);
 
-// D2 momentary reverb slam — button 1 hold, main-loop only
-bool d2ReverbSlamPending = false;  // button 1 held: waiting for next D2 trigger
-bool d2ReverbSlammed = false;      // reverb is currently maxed by button hold
+// D1 chroma mode state — main-loop only
+bool d1ChromaMode = false;
+static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 2000;
 
-// Bass Line mode state — main-loop only
-bool bassLineModeActive = false;
-static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
-static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
-int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
+// D2 chroma mode — latching toggle via D2 button hold
+bool d2ChromaMode = false;
+static constexpr uint32_t D2_CHROMA_LONG_PRESS_MS = 2000;
 
-// Per-step MIDI note for bass line (A1=33 to A4=69, 36 semitones)
+// D3 chroma mode — latching toggle via D3 button hold
+bool d3ChromaMode = false;
+static constexpr uint32_t D3_CHROMA_LONG_PRESS_MS = 2000;
+
+// Wavefolder CHROMA mode — latching toggle via PLAY button hold
+bool wfChromaMode = false;
+static constexpr uint32_t WF_CHROMA_LONG_PRESS_MS = 2000;
+
+static constexpr uint32_t CHROMA_STEP_HOLD_MS = 300;  // Hold step button this long to select note
+int8_t d1ChromaHeldStep = -1;  // Which step button is held (-1 = none)
+int8_t d2ChromaHeldStep = -1;  // Which step is in D2 chromatic note-select (-1 = none)
+int8_t d3ChromaHeldStep = -1;  // Which step is in D3 harmonic note-select (-1 = none)
+
+// Per-step MIDI note for D1 chroma (A1=33 to A4=69, 36 semitones)
 // Default C2 = MIDI 36
-uint8_t bassLineNote[numSteps] = {
+uint8_t d1ChromaNote[numSteps] = {
   36,36,36,36, 36,36,36,36, 36,36,36,36, 36,36,36,36
+};
+
+// Per-step MIDI note for D2 chroma (A2=45 to A4=69, 24 semitones)
+// Default C3 = MIDI 48
+uint8_t d2ChromaNote[numSteps] = {
+  48,48,48,48, 48,48,48,48, 48,48,48,48, 48,48,48,48
+};
+
+// Per-step MIDI note for D3 chroma (C3=48 to C6=84, 36 semitones)
+// Default C3 = MIDI 48
+uint8_t d3ChromaNote[numSteps] = {
+  48,48,48,48, 48,48,48,48, 48,48,48,48, 48,48,48,48
 };
 
 // ============================================================================
@@ -347,7 +370,7 @@ static inline float normalizeKnob(int rawKnobValue) {
 
 // D1 osc and pitch
 float d1BaseFreq = 100.0f;
-float d1FreqBeforeBassLine = 100.0f;  // saved on bass line entry, restored on exit
+float d1FreqBeforeChroma = 100.0f;  // saved on D1 chroma entry, restored on exit
 
 inline void applyD1Freq() {
   AudioNoInterrupts();
@@ -1039,14 +1062,24 @@ void playSequence() {
 // Called from main loop context via playSequence().
 void playSequenceCore(uint8_t step) {
   if (d1Sequence[step]) {
-    if (bassLineModeActive) {
-      d1BaseFreq = bassLineFreq(bassLineNote[step]);
+    if (d1ChromaMode) {
+      d1BaseFreq = d1ChromaFreq(d1ChromaNote[step]);
       applyD1Freq();
     }
     triggerD1();
   }
-  if (d2Sequence[step]) triggerD2();
-  if (d3Sequence[step]) triggerD3(step);
+  if (d2Sequence[step]) {
+    if (d2ChromaMode) {
+      applyD2ChromaFreq(d2ChromaNote[step]);
+    }
+    triggerD2();
+  }
+  if (d3Sequence[step]) {
+    if (d3ChromaMode) {
+      applyD3ChromaFreq(d3ChromaNote[step]);
+    }
+    triggerD3(step);
+  }
 }
 
 void triggerD1() {
@@ -1084,14 +1117,6 @@ void triggerD2() {
     clapAmpEnv2.noteOff();
     clapMasterEnv.noteOff();
     d2NoiseEnv.noteOff();
-  }
-  // Momentary reverb slam — armed by button 1 hold, fires on first trigger
-  if (d2ReverbSlamPending) {
-    d2Reverb.roomsize(0.75f);
-    d2Reverb.damping(0.5f);
-    d2MasterMixer.gain(1, 1.0f);
-    d2ReverbSlamPending = false;
-    d2ReverbSlammed = true;
   }
   d2AmpEnv.noteOn();
   clapAmpEnv1.noteOn();
@@ -1207,7 +1232,7 @@ void handlePlayStop() {
 }
 
 // Button index → function mapping:
-//   0 = D1 SEQ SELECT   (short press: selectTrack, long hold: toggle bass line mode)
+//   0 = D1 SEQ SELECT   (short press: selectTrack, long hold: toggle D1 chroma mode)
 //   1 = D2 SEQ SELECT
 //   2 = D3 SEQ SELECT
 //   3–5 = unassigned (hardware-present)
@@ -1226,10 +1251,19 @@ void updateOtherButtons() {
 
   // Button 0 (D1) long-hold state — press/release below, continuous hold check at end of loop
   static uint32_t btnD1PressTick = 0;
-  static bool btnD1EnteredBassLine = false;
+  static bool btnD1EnteredChroma = false;
 
-  // Button 1 (D2) hold state — momentary reverb max (on next D2 trigger)
+  // Button 1 (D2) long-hold state — press/release below, continuous hold check at end of loop
   static uint32_t btnD2PressTick = 0;
+  static bool btnD2EnteredChroma = false;
+
+  // Button 2 (D3) long-hold state — press/release below, continuous hold check at end of loop
+  static uint32_t btnD3PressTick = 0;
+  static bool btnD3EnteredChroma = false;
+
+  // Button 6 (PLAY) long-hold state — press/release below, continuous hold check at end of loop
+  static uint32_t btnPlayPressTick = 0;
+  static bool btnPlayEnteredChroma = false;
 
   uint32_t nowTick;
   noInterrupts();
@@ -1283,54 +1317,72 @@ void updateOtherButtons() {
         }
       }
 
-      // Button 0 (D1 SEQ SELECT) — press/release for bass line long-hold.
+      // Button 0 (D1 SEQ SELECT) — press/release for D1 chroma long-hold.
       if (i == 0) {
         if (btnState[0]) {
           // Press down — record timestamp
           btnD1PressTick = nowTick;
-          btnD1EnteredBassLine = false;
+          btnD1EnteredChroma = false;
         } else {
           // Release
-          if (btnD1EnteredBassLine) {
-            // Long-press toggled bass line mode — suppress selectTrack
+          if (btnD1EnteredChroma) {
+            // Long-press toggled D1 chroma — suppress selectTrack
           } else {
             // Short press — normal D1 sequence select
             selectTrack(TRACK_D1);
           }
-          btnD1EnteredBassLine = false;
+          btnD1EnteredChroma = false;
         }
       }
 
-      // Button 1 (D2 SEQ SELECT) — short press selects track, hold = momentary max reverb on next trigger
+      // Button 1 (D2 SEQ SELECT) — short press selects track, hold 2s = toggle D2 chroma
       if (i == 1) {
         if (btnState[1]) {
           btnD2PressTick = nowTick;
-          d2ReverbSlamPending = false;
-          d2ReverbSlammed = false;
+          btnD2EnteredChroma = false;
         } else {
-          // Release — restore reverb if slammed, otherwise select track
-          if (d2ReverbSlammed || d2ReverbSlamPending) {
-            applyKnobToEngine(13, analog[13]->getValue());
-            d2ReverbSlammed = false;
-            d2ReverbSlamPending = false;
+          if (btnD2EnteredChroma) {
+            // Long-press toggled D2 chroma — suppress selectTrack
           } else {
             selectTrack(TRACK_D2);
           }
+          btnD2EnteredChroma = false;
         }
       }
 
-      // Button 2 (D3 SEQ SELECT) — simple track select
-      if (i == 2 && btnState[2]) {
-        selectTrack(TRACK_D3);
+      // Button 2 (D3 SEQ SELECT) — short press selects track, hold = toggle D3 chroma
+      if (i == 2) {
+        if (btnState[2]) {
+          btnD3PressTick = nowTick;
+          btnD3EnteredChroma = false;
+        } else {
+          if (btnD3EnteredChroma) {
+            // Long-press toggled D3 chroma — suppress selectTrack
+          } else {
+            selectTrack(TRACK_D3);
+          }
+          btnD3EnteredChroma = false;
+        }
       }
 
-      // Buttons 0, 1, 2, and 7 handled separately
-      if (btnState[i] && i != 7 && i != 0 && i != 1 && i != 2) {
+      // Button 6 (PLAY) — short press = play/stop, hold 2s = toggle WF chroma
+      if (i == 6) {
+        if (btnState[6]) {
+          btnPlayPressTick = nowTick;
+          btnPlayEnteredChroma = false;
+        } else {
+          if (!btnPlayEnteredChroma) {
+            handlePlayStop();
+          }
+          btnPlayEnteredChroma = false;
+        }
+      }
+
+      // Buttons 0, 1, 2, 6, and 7 handled separately
+      if (btnState[i] && i != 7 && i != 0 && i != 1 && i != 2 && i != 6) {
         switch (i) {
 
           // cases 3, 4, 5: hardware-present but unassigned
-
-          case 6: handlePlayStop(); break;
 
           case 8:
             if (!loadStateFromEEPROM(activeSaveSlot)) {
@@ -1340,7 +1392,9 @@ void updateOtherButtons() {
                 d1Sequence[step] = 0;
                 d2Sequence[step] = 0;
                 d3Sequence[step] = 0;
-                bassLineNote[step] = 36;  // C2 default
+                d1ChromaNote[step] = 36;  // C2 default
+                d2ChromaNote[step] = 48;  // C3 default
+                d3ChromaNote[step] = 48;  // C3 default
               }
               updateLEDs();
               patternDirty = false;
@@ -1404,27 +1458,64 @@ void updateOtherButtons() {
     }
 
     // Button 0 (D1) continuous hold check — pairs with press/release handling above.
-    if (i == 0 && btnState[0] && !btnD1EnteredBassLine) {
-      if ((uint32_t)(nowTick - btnD1PressTick) >= BASSLINE_LONG_PRESS_MS) {
-        bassLineModeActive = !bassLineModeActive;
-        btnD1EnteredBassLine = true;
-        if (bassLineModeActive) {
-          d1FreqBeforeBassLine = d1BaseFreq;  // save pitch on entry
+    if (i == 0 && btnState[0] && !btnD1EnteredChroma) {
+      if ((uint32_t)(nowTick - btnD1PressTick) >= D1_CHROMA_LONG_PRESS_MS) {
+        d1ChromaMode = !d1ChromaMode;
+        btnD1EnteredChroma = true;
+        if (d1ChromaMode) {
+          d1FreqBeforeChroma = d1BaseFreq;  // save pitch on entry
         } else {
-          d1BaseFreq = d1FreqBeforeBassLine;  // restore pitch on exit
+          d1BaseFreq = d1FreqBeforeChroma;  // restore pitch on exit
           applyD1Freq();
         }
         snprintf(displayParameter1, sizeof(displayParameter1),
-                 bassLineModeActive ? "BASSLINE MODE" : "EXITING BASSLINE");
+                 d1ChromaMode ? "D1 CHROMA ON" : "D1 CHROMA OFF");
         displayParameter2[0] = 0;
         parameterOverlayStartTick = nowTick;
       }
     }
 
-    // Button 1 (D2) continuous hold check — arm reverb slam after 200ms
-    if (i == 1 && btnState[1] && !d2ReverbSlamPending && !d2ReverbSlammed) {
-      if ((uint32_t)(nowTick - btnD2PressTick) >= 200) {
-        d2ReverbSlamPending = true;
+    // Button 1 (D2) continuous hold check — toggle D2 chroma after 2s
+    if (i == 1 && btnState[1] && !btnD2EnteredChroma) {
+      if ((uint32_t)(nowTick - btnD2PressTick) >= D2_CHROMA_LONG_PRESS_MS) {
+        d2ChromaMode = !d2ChromaMode;
+        btnD2EnteredChroma = true;
+
+        // Immediately reapply pitch using current knob value
+        applyKnobToEngine(8, analog[8]->getValue());
+
+        snprintf(displayParameter1, sizeof(displayParameter1),
+                 d2ChromaMode ? "D2 CHROMA ON" : "D2 CHROMA OFF");
+        displayParameter2[0] = 0;
+        parameterOverlayStartTick = nowTick;
+      }
+    }
+
+    // Button 2 (D3) continuous hold check — toggle D3 chroma after 2s
+    if (i == 2 && btnState[2] && !btnD3EnteredChroma) {
+      if ((uint32_t)(nowTick - btnD3PressTick) >= D3_CHROMA_LONG_PRESS_MS) {
+        d3ChromaMode = !d3ChromaMode;
+        btnD3EnteredChroma = true;
+
+        // Immediately reapply pitch using current knob value
+        applyKnobToEngine(16, analog[16]->getValue());
+
+        snprintf(displayParameter1, sizeof(displayParameter1),
+                 d3ChromaMode ? "D3 CHROMA ON" : "D3 CHROMA OFF");
+        displayParameter2[0] = 0;
+        parameterOverlayStartTick = nowTick;
+      }
+    }
+
+    // Button 6 (PLAY) continuous hold check — toggle WF chroma after 2s
+    if (i == 6 && btnState[6] && !btnPlayEnteredChroma) {
+      if ((uint32_t)(nowTick - btnPlayPressTick) >= WF_CHROMA_LONG_PRESS_MS) {
+        wfChromaMode = !wfChromaMode;
+        btnPlayEnteredChroma = true;
+        snprintf(displayParameter1, sizeof(displayParameter1),
+                 wfChromaMode ? "WF CHROMA ON" : "WF CHROMA OFF");
+        displayParameter2[0] = '\0';
+        parameterOverlayStartTick = nowTick;
       }
     }
 
@@ -1502,8 +1593,14 @@ void updateStepButtons() {
       btnState[i] = rawPressed;
       if (btnState[i]) {
         // Press down
-        if (bassLineModeActive && activeTrack == TRACK_D1) {
-          // Bass line mode — defer toggle to release (to distinguish from hold)
+        if (d1ChromaMode && activeTrack == TRACK_D1) {
+          // D1 chroma mode — defer toggle to release (to distinguish from hold)
+          stepPressTick[i] = nowTick;
+        } else if (d2ChromaMode && activeTrack == TRACK_D2) {
+          // D2 chroma mode — defer toggle to release (to distinguish from hold)
+          stepPressTick[i] = nowTick;
+        } else if (d3ChromaMode && activeTrack == TRACK_D3) {
+          // D3 chroma mode — defer toggle to release (to distinguish from hold)
           stepPressTick[i] = nowTick;
         } else {
           // Normal mode — toggle step immediately
@@ -1513,10 +1610,30 @@ void updateStepButtons() {
         }
       } else {
         // Release
-        if (bassLineModeActive && activeTrack == TRACK_D1) {
-          if (bassLineHeldStep == i) {
+        if (d1ChromaMode && activeTrack == TRACK_D1) {
+          if (d1ChromaHeldStep == i) {
             // Was in note-select — just clear, no toggle
-            bassLineHeldStep = -1;
+            d1ChromaHeldStep = -1;
+          } else {
+            // Short press on a different step — toggle it
+            seq[i] ^= 1;
+            ledShiftReg.set(i, seq[i]);
+            patternDirty = true;
+          }
+        } else if (d2ChromaMode && activeTrack == TRACK_D2) {
+          if (d2ChromaHeldStep == i) {
+            // Was in note-select — just clear, no toggle
+            d2ChromaHeldStep = -1;
+          } else {
+            // Short press on a different step — toggle it
+            seq[i] ^= 1;
+            ledShiftReg.set(i, seq[i]);
+            patternDirty = true;
+          }
+        } else if (d3ChromaMode && activeTrack == TRACK_D3) {
+          if (d3ChromaHeldStep == i) {
+            // Was in note-select — just clear, no toggle
+            d3ChromaHeldStep = -1;
           } else {
             // Short press on a different step — toggle it
             seq[i] ^= 1;
@@ -1527,18 +1644,48 @@ void updateStepButtons() {
       }
     }
 
-    // Bass line mode: after holding a step button for 300ms, enter note-select
-    if (bassLineModeActive && activeTrack == TRACK_D1 && btnState[i]) {
-      if (bassLineHeldStep == i) {
+    // D1 chroma mode: after holding a step button for 300ms, enter note-select
+    if (d1ChromaMode && activeTrack == TRACK_D1 && btnState[i]) {
+      if (d1ChromaHeldStep == i) {
         // Already in note-select — keep overlay alive
         char noteName[5];
-        formatBassNote(bassLineNote[i], noteName);
+        formatChromaNote(d1ChromaNote[i], noteName);
         snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
         parameterOverlayStartTick = nowTick;
-      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
+      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
         // Just crossed the hold threshold — enter note-select for this step
-        bassLineHeldStep = i;
+        d1ChromaHeldStep = i;
+      }
+    }
+
+    // D2 chroma mode: after holding a step button for 300ms, enter note-select
+    if (d2ChromaMode && activeTrack == TRACK_D2 && btnState[i]) {
+      if (d2ChromaHeldStep == i) {
+        // Already in note-select — keep overlay alive
+        char noteName[5];
+        formatChromaNote(d2ChromaNote[i], noteName);
+        snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        parameterOverlayStartTick = nowTick;
+      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
+        // Just crossed the hold threshold — enter note-select for this step
+        d2ChromaHeldStep = i;
+      }
+    }
+
+    // D3 chroma mode: after holding a step button for 300ms, enter note-select
+    if (d3ChromaMode && activeTrack == TRACK_D3 && btnState[i]) {
+      if (d3ChromaHeldStep == i) {
+        // Already in note-select — keep overlay alive
+        char noteName[5];
+        formatChromaNote(d3ChromaNote[i], noteName);
+        snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        parameterOverlayStartTick = nowTick;
+      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
+        // Just crossed the hold threshold — enter note-select for this step
+        d3ChromaHeldStep = i;
       }
     }
 
@@ -1590,13 +1737,13 @@ static inline float d1PitchCurve(int knobValue) {
   }
 }
 
-// Bass line note range (MIDI 33=A1 through 69=A4)
-static constexpr uint8_t BASS_NOTE_MIN = 33;
-static constexpr uint8_t BASS_NOTE_MAX = 69;
+// D1 chroma note range (MIDI 33=A1 through 69=A4)
+static constexpr uint8_t D1_CHROMA_NOTE_MIN = 33;
+static constexpr uint8_t D1_CHROMA_NOTE_MAX = 69;
 
-// Bass line frequency: maps MIDI note (33–69) to Hz via lookup table.
+// D1 chroma frequency: maps MIDI note (33–69) to Hz via lookup table.
 // Pre-computed A1(33)=55Hz through A4(69)=440Hz.
-static const float BASS_LINE_FREQ[] = {
+static const float D1_CHROMA_FREQ[] = {
   // MIDI 33  34       35       36       37       38       39       40
   55.000f, 58.270f, 61.735f, 65.406f, 69.296f, 73.416f, 77.782f, 82.407f,
   // MIDI 41  42       43       44       45       46       47       48
@@ -1609,17 +1756,17 @@ static const float BASS_LINE_FREQ[] = {
   349.228f, 369.994f, 391.995f, 415.305f, 440.000f
 };
 
-static_assert(sizeof(BASS_LINE_FREQ) / sizeof(BASS_LINE_FREQ[0]) == (BASS_NOTE_MAX - BASS_NOTE_MIN + 1),
-              "BASS_LINE_FREQ must have one entry per MIDI note in range");
+static_assert(sizeof(D1_CHROMA_FREQ) / sizeof(D1_CHROMA_FREQ[0]) == (D1_CHROMA_NOTE_MAX - D1_CHROMA_NOTE_MIN + 1),
+              "D1_CHROMA_FREQ must have one entry per MIDI note in range");
 
-inline float bassLineFreq(uint8_t midiNote) {
-  uint8_t idx = constrain(midiNote, BASS_NOTE_MIN, BASS_NOTE_MAX) - BASS_NOTE_MIN;
-  return BASS_LINE_FREQ[idx];
+inline float d1ChromaFreq(uint8_t midiNote) {
+  uint8_t idx = constrain(midiNote, D1_CHROMA_NOTE_MIN, D1_CHROMA_NOTE_MAX) - D1_CHROMA_NOTE_MIN;
+  return D1_CHROMA_FREQ[idx];
 }
 
-// Bass line pitch: writes note name string for display.
+// Chroma pitch: writes note name string for display.
 // outName must be >= 5 chars.
-static inline void formatBassNote(uint8_t midiNote, char* outName) {
+static inline void formatChromaNote(uint8_t midiNote, char* outName) {
   static const char* NOTE_NAMES[] = {
     "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
   };
@@ -1627,10 +1774,74 @@ static inline void formatBassNote(uint8_t midiNote, char* outName) {
 }
 
 // Maps knob 0–1023 to MIDI note in A1(33)–A4(69) range, quantized.
-static inline uint8_t bassLineKnobToNote(int knobValue) {
-  float semi = (knobValue / 1023.0f) * (float)(BASS_NOTE_MAX - BASS_NOTE_MIN);
-  int note = constrain((int)(semi + 0.5f), 0, BASS_NOTE_MAX - BASS_NOTE_MIN);
-  return (uint8_t)(note + BASS_NOTE_MIN);
+static inline uint8_t d1ChromaKnobToNote(int knobValue) {
+  float semi = (knobValue / 1023.0f) * (float)(D1_CHROMA_NOTE_MAX - D1_CHROMA_NOTE_MIN);
+  int note = constrain((int)(semi + 0.5f), 0, D1_CHROMA_NOTE_MAX - D1_CHROMA_NOTE_MIN);
+  return (uint8_t)(note + D1_CHROMA_NOTE_MIN);
+}
+
+// D2 chroma mode constants
+static constexpr uint8_t D2_CHROM_NOTE_MIN = 45;  // A2
+static constexpr uint8_t D2_CHROM_NOTE_MAX = 69;  // A4
+
+// Maps knob 0–1023 linearly to MIDI note in A2(45)–A4(69) range, quantized.
+static inline uint8_t d2ChromaKnobToNote(int knobValue) {
+  float semi = (knobValue / 1023.0f) * (float)(D2_CHROM_NOTE_MAX - D2_CHROM_NOTE_MIN);
+  return (uint8_t)constrain((int)(semi + 0.5f) + D2_CHROM_NOTE_MIN,
+                             D2_CHROM_NOTE_MIN, D2_CHROM_NOTE_MAX);
+}
+
+// Sets d2Osc frequency from MIDI note. Called per-step during playback
+// when D2 chroma mode is active. Only d2Osc is pitched — d2Body stays fixed.
+inline void applyD2ChromaFreq(uint8_t midiNote) {
+  float freqHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
+  d2Osc.frequency(freqHz);
+}
+
+// D3 chroma mode constants
+static constexpr uint8_t D3_HARM_NOTE_MIN = 48;  // C3
+static constexpr uint8_t D3_HARM_NOTE_MAX = 84;  // C6
+
+// Maps knob 0–1023 to MIDI note in C3(48)–C6(84) range using the same
+// pitchBend curve as the D3 harmonic engine (BEND_START breakpoint at 0.25).
+static inline uint8_t d3ChromaKnobToNote(int knobValue) {
+  float norm = knobValue / 1023.0f;
+  const float BEND_START = 0.25f;
+  float pitchBend;
+  if (norm <= BEND_START) {
+    pitchBend = 0.60f * (norm / BEND_START);
+  } else {
+    float blend = (norm - BEND_START) / (1.0f - BEND_START);
+    pitchBend = 0.60f + 0.40f * (blend * blend);
+  }
+  float semi = pitchBend * (float)(D3_HARM_NOTE_MAX - D3_HARM_NOTE_MIN);
+  return (uint8_t)constrain((int)(semi + 0.5f) + D3_HARM_NOTE_MIN,
+                             D3_HARM_NOTE_MIN, D3_HARM_NOTE_MAX);
+}
+
+// Sets all D3 oscillators (606 bank, FM, perc) to harmonic ratios for a given
+// MIDI note.  Called per-step during playback when D3 chroma mode is active.
+// Filter tracking is handled separately by the knob handler — not per-step.
+inline void applyD3ChromaFreq(uint8_t midiNote) {
+  float baseHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
+  AudioNoInterrupts();
+  // 606 bank: power chord spacing
+  d3606Osc1.frequency(baseHz * 1.0f);   // root
+  d3606Osc2.frequency(baseHz * 1.5f);   // fifth
+  d3606Osc3.frequency(baseHz * 2.0f);   // octave
+  d3606Osc4.frequency(baseHz * 3.0f);   // fifth + octave
+  d3606Osc5.frequency(baseHz * 4.0f);   // two octaves
+  d3606Osc6.frequency(baseHz * 6.0f);   // fifth + two octaves
+  // FM voice: octave-spaced carrier-modulator pairs (2:1 ratios)
+  d3FmCarrier1.frequency(baseHz * 2.0f);
+  d3FmMod1.frequency(baseHz * 4.0f);
+  d3FmMod1.amplitude(0.35f);
+  d3FmCarrier2.frequency(baseHz * 3.0f);
+  d3FmMod2.frequency(baseHz * 6.0f);
+  d3FmMod2.amplitude(0.30f);
+  // Perc: same base pitch
+  d3Perc.frequency(baseHz);
+  AudioInterrupts();
 }
 
 // D2 Decay curve: flat 93ms to 50%, curved 93–130ms at 50–75%, linear 130–500ms at 75–100%
@@ -1756,18 +1967,18 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
-        if (bassLineModeActive) {
-          if (bassLineHeldStep >= 0) {
-            uint8_t note = bassLineKnobToNote(knobValue);
-            bassLineNote[bassLineHeldStep] = note;
+        if (d1ChromaMode) {
+          if (d1ChromaHeldStep >= 0) {
+            uint8_t note = d1ChromaKnobToNote(knobValue);
+            d1ChromaNote[d1ChromaHeldStep] = note;
             char noteName[5];
-            formatBassNote(note, noteName);
+            formatChromaNote(note, noteName);
             snprintf(displayParameter1, sizeof(displayParameter1),
-                     "STEP %d", bassLineHeldStep + 1);
+                     "STEP %d", d1ChromaHeldStep + 1);
             snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
           } else {
             snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
-            snprintf(displayParameter2, sizeof(displayParameter2), "BASS LINE");
+            snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
           }
           break;
         }
@@ -1815,6 +2026,22 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
+        if (d2ChromaMode) {
+          if (d2ChromaHeldStep >= 0) {
+            // Step held — show note being set
+            uint8_t note = d2ChromaKnobToNote(knobValue);
+            char noteName[5];
+            formatChromaNote(note, noteName);
+            snprintf(displayParameter1, sizeof(displayParameter1),
+                     "STEP %d", d2ChromaHeldStep + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+          } else {
+            // No step held — knob locked
+            snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
+            snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+          }
+          break;
+        }
         float freqHz = mapFloat(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE FREQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
@@ -1886,8 +2113,24 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
       // D3 - HI-HAT (Knobs 16-23)
       // ========================================================================
 
-    case 16:  // D3 Pitch (displayed as generic "tune")
+    case 16:  // D3 Pitch
       {
+        if (d3ChromaMode) {
+          if (d3ChromaHeldStep >= 0) {
+            // Step held — show note being set
+            uint8_t note = d3ChromaKnobToNote(knobValue);
+            char noteName[5];
+            formatChromaNote(note, noteName);
+            snprintf(displayParameter1, sizeof(displayParameter1),
+                     "STEP %d", d3ChromaHeldStep + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+          } else {
+            // No step held — knob locked
+            snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
+            snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+          }
+          break;
+        }
         int tune = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
         snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
@@ -1973,9 +2216,17 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 25:  // Wavefold Frequency
       {
-        int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (wfChromaMode) {
+          uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
+          char noteName[8];
+          formatChromaNote(midiNote, noteName);
+          snprintf(displayParameter1, sizeof(displayParameter1), "WF %s", noteName);
+          snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+        } else {
+          int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+          snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
@@ -2147,10 +2398,10 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
-        if (bassLineModeActive) {
-          if (bassLineHeldStep >= 0) {
-            uint8_t note = bassLineKnobToNote(knobValue);
-            bassLineNote[bassLineHeldStep] = note;
+        if (d1ChromaMode) {
+          if (d1ChromaHeldStep >= 0) {
+            uint8_t note = d1ChromaKnobToNote(knobValue);
+            d1ChromaNote[d1ChromaHeldStep] = note;
             patternDirty = true;
             // Don't change d1BaseFreq — frequency set at playback time
           }
@@ -2224,6 +2475,15 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
+        if (d2ChromaMode) {
+          if (d2ChromaHeldStep >= 0) {
+            uint8_t note = d2ChromaKnobToNote(knobValue);
+            d2ChromaNote[d2ChromaHeldStep] = note;
+            patternDirty = true;
+            // Don't set frequency globally — applied per-step at playback time
+          }
+          break;
+        }
         float freqHz = mapFloat(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
         d2Osc.frequency(freqHz);
         break;
@@ -2398,7 +2658,7 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
       {
         float norm = normalizeKnob(knobValue);
 
-        // --- Shared pitch bend curve (both voices use the same shape) ---
+        // --- Shared pitch bend curve (all voices use the same shape) ---
         const float BEND_START = 0.25f;
         float pitchBend;
 
@@ -2410,64 +2670,78 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           pitchBend = 0.60f + 0.40f * (blend * blend);
         }
 
-        // --- 606 voice tuning ---
-        // Precomputed log of constant ratio — expf(x*log) is ~2x faster than powf on Cortex-M7
-        static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
-
-        const float hatCurve = pitchBend * pitchBend;
-        const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
-
-        // Gentle filter tracking (keeps volume steadier)
+        // Gentle filter tracking — shared by both modes (keeps volume steadier)
         const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
         const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
-
-        // --- FM voice tuning — reuses pitchBend from above ---
-        // Carriers scale together; irrational ratios stay fixed (changing
-        // ratios changes timbre, not pitch — we only want pitch shift here).
-        // Range: 500→3000 Hz (c1) and 1050→6300 Hz (c2) — ~2.5 octaves
-        static const float LOG_FM_C1_RATIO = logf(3000.0f / 500.0f);  // 500→3000 Hz
-        static const float LOG_FM_C2_RATIO = logf(6300.0f / 1050.0f); // 1050→6300 Hz
-
-        const float carrier1Hz = 500.0f * expf(pitchBend * LOG_FM_C1_RATIO);
-        const float carrier2Hz = 1050.0f * expf(pitchBend * LOG_FM_C2_RATIO);
-        const float modulator1Hz = carrier1Hz * 2.236f;  // √5 fixed ratio
-        const float modulator2Hz = carrier2Hz * 1.414f;  // √2 fixed ratio
-
-        // FM depth: increases with pitch to maintain brightness at high end
-        const float depth1 = 0.45f + 0.35f * pitchBend;
-        const float depth2 = 0.35f + 0.30f * pitchBend;
-
-        // FM shaping filters track pitch (gentle, keeps volume steady)
         const float fmBpfHz = 4000.0f + 4000.0f * pitchBend;   // 4000→8000 Hz
         const float fmHpfHz = 1500.0f + 1500.0f * pitchBend;   // 1500→3000 Hz
 
-        AudioNoInterrupts();
+        if (d3ChromaMode) {
+          // --- D3 CHROMA MODE: per-step note select ---
+          if (d3ChromaHeldStep >= 0) {
+            // Step held — set that step's note from knob position
+            uint8_t note = d3ChromaKnobToNote(knobValue);
+            d3ChromaNote[d3ChromaHeldStep] = note;
+            patternDirty = true;
+            // Don't set frequencies globally — applied per-step at playback time
+          }
+          // Filter tracking still applies in D3 chroma mode (keeps volume steadier)
+          AudioNoInterrupts();
+          d3606HighPass.frequency(hpfHz);
+          d3606BandPass.frequency(bpfHz);
+          d3FmBandPass.frequency(fmBpfHz);
+          d3FmHighPass.frequency(fmHpfHz);
+          AudioInterrupts();
 
-        // FM voice
-        d3FmCarrier1.frequency(carrier1Hz);
-        d3FmCarrier2.frequency(carrier2Hz);
-        d3FmMod1.frequency(modulator1Hz);
-        d3FmMod2.frequency(modulator2Hz);
-        d3FmMod1.amplitude(depth1);
-        d3FmMod2.amplitude(depth2);
-        d3FmBandPass.frequency(fmBpfHz);
-        d3FmHighPass.frequency(fmHpfHz);
+        } else {
+          // --- NORMAL MODE: inharmonic 606, irrational FM ---
+          // Precomputed log of constant ratio — expf(x*log) is ~2x faster than powf on Cortex-M7
+          static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
 
-        // 606 voice oscillator bank
-        d3606Osc1.frequency(hatBaseHz * 1.00f);
-        d3606Osc2.frequency(hatBaseHz * 1.08f);
-        d3606Osc3.frequency(hatBaseHz * 1.17f);
-        d3606Osc4.frequency(hatBaseHz * 1.26f);
-        d3606Osc5.frequency(hatBaseHz * 1.36f);
-        d3606Osc6.frequency(hatBaseHz * 1.48f);
-        d3606HighPass.frequency(hpfHz);
-        d3606BandPass.frequency(bpfHz);
+          const float hatCurve = pitchBend * pitchBend;
+          const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
 
-        // PERC voice — A3(220) → A6(1760), independent of FM carriers
-        static const float LOG_NOISE_RATIO = logf(1760.0f / 220.0f);  // A3→A6
-        d3Perc.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
+          // FM carriers and irrational ratios
+          static const float LOG_FM_C1_RATIO = logf(3000.0f / 500.0f);  // 500→3000 Hz
+          static const float LOG_FM_C2_RATIO = logf(6300.0f / 1050.0f); // 1050→6300 Hz
 
-        AudioInterrupts();
+          const float carrier1Hz = 500.0f * expf(pitchBend * LOG_FM_C1_RATIO);
+          const float carrier2Hz = 1050.0f * expf(pitchBend * LOG_FM_C2_RATIO);
+          const float modulator1Hz = carrier1Hz * 2.236f;  // √5 fixed ratio
+          const float modulator2Hz = carrier2Hz * 1.414f;  // √2 fixed ratio
+
+          // FM depth: increases with pitch to maintain brightness at high end
+          const float depth1 = 0.45f + 0.35f * pitchBend;
+          const float depth2 = 0.35f + 0.30f * pitchBend;
+
+          AudioNoInterrupts();
+
+          // FM voice
+          d3FmCarrier1.frequency(carrier1Hz);
+          d3FmCarrier2.frequency(carrier2Hz);
+          d3FmMod1.frequency(modulator1Hz);
+          d3FmMod2.frequency(modulator2Hz);
+          d3FmMod1.amplitude(depth1);
+          d3FmMod2.amplitude(depth2);
+          d3FmBandPass.frequency(fmBpfHz);
+          d3FmHighPass.frequency(fmHpfHz);
+
+          // 606 voice oscillator bank
+          d3606Osc1.frequency(hatBaseHz * 1.00f);
+          d3606Osc2.frequency(hatBaseHz * 1.08f);
+          d3606Osc3.frequency(hatBaseHz * 1.17f);
+          d3606Osc4.frequency(hatBaseHz * 1.26f);
+          d3606Osc5.frequency(hatBaseHz * 1.36f);
+          d3606Osc6.frequency(hatBaseHz * 1.48f);
+          d3606HighPass.frequency(hpfHz);
+          d3606BandPass.frequency(bpfHz);
+
+          // PERC voice — A3(220) → A6(1760), independent of FM carriers
+          static const float LOG_NOISE_RATIO = logf(1760.0f / 220.0f);  // A3→A6
+          d3Perc.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
+
+          AudioInterrupts();
+        }
         break;
       }
 
@@ -2649,32 +2923,42 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 
     case 25:  // Wavefold Frequency
       {
-        float norm = normalizeKnob(knobValue);
-        // C2→C6 exponential: 4 octaves, every 25% = one octave
-        float baseFreq = 65.41f * expf(norm * 2.7725887f);
-
-        float sineFreq, sawFreq;
-
-        if (norm <= 0.5f) {
-          // 0–50%: sine at baseFreq, saw one octave below
-          sineFreq = baseFreq;
-          sawFreq  = baseFreq * 0.5f;
-        } else if (norm <= 0.75f) {
-          // 50–75%: saw locks to baseFreq, sine diverges up to 2× baseFreq
-          float blend = (norm - 0.5f) / 0.25f;
-          sawFreq  = baseFreq;
-          sineFreq = baseFreq * (1.0f + blend);
+        if (wfChromaMode) {
+          // Quantize wavefold frequency to chromatic notes (C2–C6, MIDI 36–84)
+          uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
+          float freq = 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
+          AudioNoInterrupts();
+          masterWfOscSine.frequency(freq);
+          masterWfOscSaw.frequency(freq);
+          AudioInterrupts();
         } else {
-          // 75–100%: sine locks to baseFreq, saw diverges up to 4× baseFreq
-          float blend = (norm - 0.75f) / 0.25f;
-          sineFreq = baseFreq;
-          sawFreq  = baseFreq * (1.0f + blend * 3.0f);
-        }
+          float norm = normalizeKnob(knobValue);
+          // C2→C6 exponential: 4 octaves, every 25% = one octave
+          float baseFreq = 65.41f * expf(norm * 2.7725887f);
 
-        AudioNoInterrupts();
-        masterWfOscSine.frequency(sineFreq);
-        masterWfOscSaw.frequency(sawFreq);
-        AudioInterrupts();
+          float sineFreq, sawFreq;
+
+          if (norm <= 0.5f) {
+            // 0–50%: sine at baseFreq, saw one octave below
+            sineFreq = baseFreq;
+            sawFreq  = baseFreq * 0.5f;
+          } else if (norm <= 0.75f) {
+            // 50–75%: saw locks to baseFreq, sine diverges up to 2× baseFreq
+            float blend = (norm - 0.5f) / 0.25f;
+            sawFreq  = baseFreq;
+            sineFreq = baseFreq * (1.0f + blend);
+          } else {
+            // 75–100%: sine locks to baseFreq, saw diverges up to 4× baseFreq
+            float blend = (norm - 0.75f) / 0.25f;
+            sineFreq = baseFreq;
+            sawFreq  = baseFreq * (1.0f + blend * 3.0f);
+          }
+
+          AudioNoInterrupts();
+          masterWfOscSine.frequency(sineFreq);
+          masterWfOscSaw.frequency(sawFreq);
+          AudioInterrupts();
+        }
         break;
       }
 
@@ -3180,10 +3464,8 @@ void updateDisplay() {
     display.print(memBuf);
   }
 
-  // Transport / mode icon
-  if (bassLineModeActive) {
-    display.drawBitmap(118, 4, image_bassclef_bits, 10, 10, 1);
-  } else if (playingSnap) {
+  // Transport icon — play or stop only (CHROMA status is shown in bottom bar)
+  if (playingSnap) {
     display.drawBitmap(118, 4, image_play_bits, 10, 10, 1);
   } else {
     display.drawBitmap(118, 4, image_stop_bits, 10, 10, 1);
@@ -3192,13 +3474,46 @@ void updateDisplay() {
   // Oscilloscope waveform
   drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
 
-  // Parameter overlay at bottom of screen (on top of scope)
+  // CHROMA status bar or parameter overlay at bottom of screen
+  bool anyChroma = d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode;
+
+  if (anyChroma) {
+    // CHROMA status bar — always visible when any chroma mode is active
+    const int barY = 56;
+    display.fillRect(0, barY, 128, 8, SH110X_BLACK);
+
+    display.setTextSize(1);
+    display.setTextColor(SH110X_WHITE);
+    display.setCursor(3, barY + 1);
+    display.print("CHROMA");
+
+    // Channel indicators: active = inverted (white rect + black text)
+    struct { const char* label; bool active; int x; int w; } chItems[] = {
+      {"1", d1ChromaMode, 52, 10},
+      {"2", d2ChromaMode, 67, 10},
+      {"3", d3ChromaMode, 82, 10},
+      {"WF", wfChromaMode, 100, 18}
+    };
+
+    for (auto& item : chItems) {
+      if (item.active) {
+        display.fillRect(item.x, barY, item.w, 8, SH110X_WHITE);
+        display.setTextColor(SH110X_BLACK);
+        display.setCursor(item.x + 2, barY + 1);
+        display.print(item.label);
+        display.setTextColor(SH110X_WHITE);
+      } else {
+        display.setCursor(item.x + 2, barY + 1);
+        display.print(item.label);
+      }
+    }
+  }
+
   if (overlayActiveNow) {
     if (railSnap == RAIL_NONE) {
-      // Normal parameter: name left-aligned, value right-aligned at bottom
-      // Outlined text keeps scope waveform visible behind the overlay
       display.setTextSize(1);
-      const int bottomY = 56;
+      // When CHROMA bar is visible, shift parameter overlay up to avoid overlap
+      const int bottomY = anyChroma ? 48 : 56;
       if (param1Snap[0]) {
         drawOutlinedText(5, bottomY, param1Snap);
       }
@@ -3209,7 +3524,6 @@ void updateDisplay() {
         drawOutlinedText(128 - w2 - 2, bottomY, param2Snap);
       }
     } else {
-      // Voice rail only — rail graphic already contains labels, no extra text
       renderVoiceRails();
     }
   }
