@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.02.
+A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.03.
 
 ## Voices
 
@@ -20,13 +20,18 @@ A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.0
 
 Knob 25 sweeps the fold oscillator frequency exponentially from C2 to C6 (4 octaves — every 25% of knob travel = one octave). Knob 30 controls drive intensity with a halved range and loudness compensation. Sine and saw oscillators diverge across three zones: 0–50% (saw one octave below sine), 50–75% (sine diverges up to 2×), 75–100% (saw diverges up to 4×).
 
-## D2 Momentary Reverb
+## CHROMA Modes
 
-Hold button 1 (D2 track select) for 200ms to arm a reverb slam. The reverb maxes out on the next D2 trigger (roomsize 0.75, damping 0.5, full wet) and stays maxed until the button is released. Short press still selects the D2 track.
+Each voice has a per-step chromatic note mode, activated by long-pressing (2s) the corresponding track-select button. Hold a step button for 300ms to enter note-select, then turn the pitch knob to set that step's note. CHROMA notes are saved with patterns to EEPROM.
 
-## Bass Line Mode
+| Mode | Button | Pitch Knob | Note Range | Default |
+|------|--------|------------|------------|---------|
+| D1 CHROMA | D1 (2s hold) | Knob 0 | A1–A4 (MIDI 33–69) | C2 |
+| D2 CHROMA | D2 (2s hold) | Knob 8 | A2–A4 (MIDI 45–69) | C3 |
+| D3 CHROMA | D3 (2s hold) | Knob 16 | C3–C6 (MIDI 48–84) | C3 |
+| WF CHROMA | PLAY (2s hold) | Knob 25 | C2–C6 (MIDI 36–84) | — |
 
-Long-press (2s) the track-select button on D1 to toggle bass line mode. Each step gets its own chromatic pitch (A1–A4, default C2). Hold a step button for 300ms to enter note-select, then turn the D1 pitch knob to set that step's note. Bass line notes are saved with patterns to EEPROM.
+WF CHROMA quantizes the master wavefolder frequency to chromatic notes instead of the normal continuous sweep. The OLED status bar at the bottom of the display shows which CHROMA channels are active.
 
 ## Hardware
 
@@ -36,7 +41,7 @@ Long-press (2s) the track-select button on D1 to toggle bass line mode. Each ste
 - **Controls:** 32 knobs (2x 16-ch analog mux), 16 step buttons, 10 control buttons
 - **LEDs:** 16 step LEDs (74HC595 shift register)
 - **Clock:** Internal BPM (60–400) with external pulse clock sync on pin 12
-- **Storage:** 10 EEPROM pattern save/load slots with per-step bass line notes (empty slots load as blank patterns)
+- **Storage:** 10 EEPROM pattern save/load slots with per-step CHROMA notes for D1/D2/D3 (empty slots load as blank patterns)
 
 ## External Clock Sync
 
@@ -65,7 +70,7 @@ See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for a compr
 | `audio_init.h` | Mixer gains, envelope params, filter settings |
 | `hw_setup.h` | Pin assignments, mux/LED/OLED hardware config |
 | `ext_sync.h` | External clock sync — ISRs, glitch filter, lock-in, subdivision scheduling |
-| `eeprom.h` | Pattern save/load, bass line + PPQN persistence |
+| `eeprom.h` | Pattern save/load, CHROMA notes + PPQN persistence |
 | `EXTERNAL_SYNC_ARCHITECTURE.md` | Self-contained technical reference for external sync review |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
@@ -83,6 +88,6 @@ See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for a compr
 Open in Arduino IDE or compile with arduino-cli:
 
 ```bash
-arduino-cli compile --fqbn teensy:avr:teensy41 --build-property "build.flags.optimize=-O2" .
-arduino-cli upload --fqbn teensy:avr:teensy41 -p /dev/ttyACM0 .
+arduino-cli compile --fqbn "teensy:avr:teensy41:usb=audio" --build-property "build.flags.optimize=-O2" .
+arduino-cli upload --fqbn "teensy:avr:teensy41:usb=audio" -p /dev/ttyACM0 .
 ```
