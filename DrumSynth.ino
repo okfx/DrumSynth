@@ -75,25 +75,33 @@ static constexpr uint32_t PPQN_LONG_PRESS_MS = 2000;
 static constexpr uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
 static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_OPTIONS[0]);
 
-// D2 momentary reverb slam — button 1 hold, main-loop only
-bool d2ReverbSlamPending = false;  // button 1 held: waiting for next D2 trigger
-bool d2ReverbSlammed = false;      // reverb is currently maxed by button hold
-
 // Bass Line mode state — main-loop only
 bool bassLineModeActive = false;
 static constexpr uint32_t BASSLINE_LONG_PRESS_MS = 2000;
 
+// D2 chromatic mode — latching toggle via D2 button hold
+bool d2ChromaticMode = false;
+static constexpr uint32_t D2_CHROMATIC_LONG_PRESS_MS = 2000;
+
 // D3 harmonic mode — latching toggle via D3 button hold
 bool d3HarmonicMode = false;
 static constexpr uint32_t D3_HARMONIC_LONG_PRESS_MS = 2000;
+
 static constexpr uint32_t BASSLINE_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t bassLineHeldStep = -1;  // Which step button is held (-1 = none)
+int8_t d2ChromaticHeldStep = -1;  // Which step is in D2 chromatic note-select (-1 = none)
 int8_t d3HarmonicHeldStep = -1;  // Which step is in D3 harmonic note-select (-1 = none)
 
 // Per-step MIDI note for bass line (A1=33 to A4=69, 36 semitones)
 // Default C2 = MIDI 36
 uint8_t bassLineNote[numSteps] = {
   36,36,36,36, 36,36,36,36, 36,36,36,36, 36,36,36,36
+};
+
+// Per-step MIDI note for D2 chromatic mode (A2=45 to A4=69, 24 semitones)
+// Default C3 = MIDI 48
+uint8_t d2ChromaticNote[numSteps] = {
+  48,48,48,48, 48,48,48,48, 48,48,48,48, 48,48,48,48
 };
 
 // Per-step MIDI note for D3 harmonic mode (C3=48 to C6=84, 36 semitones)
@@ -977,7 +985,12 @@ void playSequenceCore(uint8_t step) {
     }
     triggerD1();
   }
-  if (d2Sequence[step]) triggerD2();
+  if (d2Sequence[step]) {
+    if (d2ChromaticMode) {
+      applyD2ChromaticFreq(d2ChromaticNote[step]);
+    }
+    triggerD2();
+  }
   if (d3Sequence[step]) {
     if (d3HarmonicMode) {
       applyD3HarmonicFreq(d3HarmonicNote[step]);
@@ -1021,14 +1034,6 @@ void triggerD2() {
     clapAmpEnv2.noteOff();
     clapMasterEnv.noteOff();
     d2NoiseEnv.noteOff();
-  }
-  // Momentary reverb slam — armed by button 1 hold, fires on first trigger
-  if (d2ReverbSlamPending) {
-    d2Reverb.roomsize(0.75f);
-    d2Reverb.damping(0.5f);
-    d2MasterMixer.gain(1, 1.0f);
-    d2ReverbSlamPending = false;
-    d2ReverbSlammed = true;
   }
   d2AmpEnv.noteOn();
   clapAmpEnv1.noteOn();
@@ -1165,8 +1170,9 @@ void updateOtherButtons() {
   static uint32_t btnD1PressTick = 0;
   static bool btnD1EnteredBassLine = false;
 
-  // Button 1 (D2) hold state — momentary reverb max (on next D2 trigger)
+  // Button 1 (D2) long-hold state — press/release below, continuous hold check at end of loop
   static uint32_t btnD2PressTick = 0;
+  static bool btnD2EnteredChromatic = false;
 
   // Button 2 (D3) long-hold state — press/release below, continuous hold check at end of loop
   static uint32_t btnD3PressTick = 0;
@@ -1242,21 +1248,18 @@ void updateOtherButtons() {
         }
       }
 
-      // Button 1 (D2 SEQ SELECT) — short press selects track, hold = momentary max reverb on next trigger
+      // Button 1 (D2 SEQ SELECT) — short press selects track, hold 2s = toggle chromatic mode
       if (i == 1) {
         if (btnState[1]) {
           btnD2PressTick = nowTick;
-          d2ReverbSlamPending = false;
-          d2ReverbSlammed = false;
+          btnD2EnteredChromatic = false;
         } else {
-          // Release — restore reverb if slammed, otherwise select track
-          if (d2ReverbSlammed || d2ReverbSlamPending) {
-            applyKnobToEngine(13, analog[13]->getValue());
-            d2ReverbSlammed = false;
-            d2ReverbSlamPending = false;
+          if (btnD2EnteredChromatic) {
+            // Long-press toggled chromatic mode — suppress selectTrack
           } else {
             selectTrack(TRACK_D2);
           }
+          btnD2EnteredChromatic = false;
         }
       }
 
@@ -1292,6 +1295,7 @@ void updateOtherButtons() {
                 d2Sequence[step] = 0;
                 d3Sequence[step] = 0;
                 bassLineNote[step] = 36;  // C2 default
+                d2ChromaticNote[step] = 48;  // C3 default
                 d3HarmonicNote[step] = 48;  // C3 default
               }
               updateLEDs();
@@ -1373,10 +1377,19 @@ void updateOtherButtons() {
       }
     }
 
-    // Button 1 (D2) continuous hold check — arm reverb slam after 200ms
-    if (i == 1 && btnState[1] && !d2ReverbSlamPending && !d2ReverbSlammed) {
-      if ((uint32_t)(nowTick - btnD2PressTick) >= 200) {
-        d2ReverbSlamPending = true;
+    // Button 1 (D2) continuous hold check — toggle chromatic mode after 2s
+    if (i == 1 && btnState[1] && !btnD2EnteredChromatic) {
+      if ((uint32_t)(nowTick - btnD2PressTick) >= D2_CHROMATIC_LONG_PRESS_MS) {
+        d2ChromaticMode = !d2ChromaticMode;
+        btnD2EnteredChromatic = true;
+
+        // Immediately reapply pitch using current knob value
+        applyKnobToEngine(8, analog[8]->getValue());
+
+        snprintf(displayParameter1, sizeof(displayParameter1),
+                 d2ChromaticMode ? "CHROMATIC MODE" : "NORMAL MODE");
+        displayParameter2[0] = 0;
+        parameterOverlayStartTick = nowTick;
       }
     }
 
@@ -1473,6 +1486,9 @@ void updateStepButtons() {
         if (bassLineModeActive && activeTrack == TRACK_D1) {
           // Bass line mode — defer toggle to release (to distinguish from hold)
           stepPressTick[i] = nowTick;
+        } else if (d2ChromaticMode && activeTrack == TRACK_D2) {
+          // D2 chromatic mode — defer toggle to release (to distinguish from hold)
+          stepPressTick[i] = nowTick;
         } else if (d3HarmonicMode && activeTrack == TRACK_D3) {
           // D3 harmonic mode — defer toggle to release (to distinguish from hold)
           stepPressTick[i] = nowTick;
@@ -1488,6 +1504,16 @@ void updateStepButtons() {
           if (bassLineHeldStep == i) {
             // Was in note-select — just clear, no toggle
             bassLineHeldStep = -1;
+          } else {
+            // Short press on a different step — toggle it
+            seq[i] ^= 1;
+            ledShiftReg.set(i, seq[i]);
+            patternDirty = true;
+          }
+        } else if (d2ChromaticMode && activeTrack == TRACK_D2) {
+          if (d2ChromaticHeldStep == i) {
+            // Was in note-select — just clear, no toggle
+            d2ChromaticHeldStep = -1;
           } else {
             // Short press on a different step — toggle it
             seq[i] ^= 1;
@@ -1520,6 +1546,21 @@ void updateStepButtons() {
       } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
         // Just crossed the hold threshold — enter note-select for this step
         bassLineHeldStep = i;
+      }
+    }
+
+    // D2 chromatic mode: after holding a step button for 300ms, enter note-select
+    if (d2ChromaticMode && activeTrack == TRACK_D2 && btnState[i]) {
+      if (d2ChromaticHeldStep == i) {
+        // Already in note-select — keep overlay alive
+        char noteName[5];
+        formatBassNote(d2ChromaticNote[i], noteName);
+        snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
+        snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+        parameterOverlayStartTick = nowTick;
+      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= BASSLINE_STEP_HOLD_MS) {
+        // Just crossed the hold threshold — enter note-select for this step
+        d2ChromaticHeldStep = i;
       }
     }
 
@@ -1627,6 +1668,24 @@ static inline uint8_t bassLineKnobToNote(int knobValue) {
   float semi = (knobValue / 1023.0f) * (float)(BASS_NOTE_MAX - BASS_NOTE_MIN);
   int note = constrain((int)(semi + 0.5f), 0, BASS_NOTE_MAX - BASS_NOTE_MIN);
   return (uint8_t)(note + BASS_NOTE_MIN);
+}
+
+// D2 chromatic mode constants
+static constexpr uint8_t D2_CHROM_NOTE_MIN = 45;  // A2
+static constexpr uint8_t D2_CHROM_NOTE_MAX = 69;  // A4
+
+// Maps knob 0–1023 linearly to MIDI note in A2(45)–A4(69) range, quantized.
+static inline uint8_t d2ChromaticKnobToNote(int knobValue) {
+  float semi = (knobValue / 1023.0f) * (float)(D2_CHROM_NOTE_MAX - D2_CHROM_NOTE_MIN);
+  return (uint8_t)constrain((int)(semi + 0.5f) + D2_CHROM_NOTE_MIN,
+                             D2_CHROM_NOTE_MIN, D2_CHROM_NOTE_MAX);
+}
+
+// Sets d2Osc frequency from MIDI note. Called per-step during playback
+// when chromatic mode is active. Only d2Osc is pitched — d2Body stays fixed.
+inline void applyD2ChromaticFreq(uint8_t midiNote) {
+  float freqHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
+  d2Osc.frequency(freqHz);
 }
 
 // D3 harmonic mode constants
@@ -1857,6 +1916,22 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
+        if (d2ChromaticMode) {
+          if (d2ChromaticHeldStep >= 0) {
+            // Step held — show note being set
+            uint8_t note = d2ChromaticKnobToNote(knobValue);
+            char noteName[5];
+            formatBassNote(note, noteName);
+            snprintf(displayParameter1, sizeof(displayParameter1),
+                     "STEP %d", d2ChromaticHeldStep + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
+          } else {
+            // No step held — knob locked
+            snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
+            snprintf(displayParameter2, sizeof(displayParameter2), "CHROMATIC");
+          }
+          break;
+        }
         float freqHz = mapFloat(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
         snprintf(displayParameter1, sizeof(displayParameter1), "D2 SNARE FREQ");
         snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)freqHz);
@@ -2282,6 +2357,15 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 
     case 8:  // D2 Pitch
       {
+        if (d2ChromaticMode) {
+          if (d2ChromaticHeldStep >= 0) {
+            uint8_t note = d2ChromaticKnobToNote(knobValue);
+            d2ChromaticNote[d2ChromaticHeldStep] = note;
+            patternDirty = true;
+            // Don't set frequency globally — applied per-step at playback time
+          }
+          break;
+        }
         float freqHz = mapFloat(knobValue, 0, 1023, 110.0f, 440.0f);  // A2–A4
         d2Osc.frequency(freqHz);
         break;
@@ -3253,7 +3337,12 @@ void updateDisplay() {
   }
 
   // Transport / mode icon
-  if (d3HarmonicMode) {
+  if (d2ChromaticMode) {
+    // "C" indicator for D2 chromatic mode
+    display.setTextSize(1);
+    display.setCursor(121, 4);
+    display.print("C");
+  } else if (d3HarmonicMode) {
     // "H" indicator for D3 harmonic mode
     display.setTextSize(1);
     display.setCursor(121, 4);
