@@ -3471,8 +3471,48 @@ void updateDisplay() {
     display.drawBitmap(118, 4, image_stop_bits, 10, 10, 1);
   }
 
-  // Oscilloscope waveform
-  drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
+  // When a CHROMA step-note is held, show large note name instead of scope
+  bool noteSelectActive = (d1ChromaHeldStep >= 0) || (d2ChromaHeldStep >= 0) || (d3ChromaHeldStep >= 0);
+
+  if (noteSelectActive) {
+    int stepNum;
+    uint8_t midiNote;
+    if (d1ChromaHeldStep >= 0) {
+      stepNum = d1ChromaHeldStep;
+      midiNote = d1ChromaNote[d1ChromaHeldStep];
+    } else if (d2ChromaHeldStep >= 0) {
+      stepNum = d2ChromaHeldStep;
+      midiNote = d2ChromaNote[d2ChromaHeldStep];
+    } else {
+      stepNum = d3ChromaHeldStep;
+      midiNote = d3ChromaNote[d3ChromaHeldStep];
+    }
+
+    char noteName[8];
+    formatChromaNote(midiNote, noteName);
+
+    // "STEP X" label — centered at top of scope area
+    display.setTextSize(1);
+    char stepLabel[10];
+    snprintf(stepLabel, sizeof(stepLabel), "STEP %d", stepNum + 1);
+    int16_t sx1, sy1;
+    uint16_t sw, sh;
+    display.getTextBounds(stepLabel, 0, 0, &sx1, &sy1, &sw, &sh);
+    display.setCursor((128 - sw) / 2, 24);
+    display.print(stepLabel);
+
+    // Large note name — textSize 3, centered in scope area
+    display.setTextSize(3);
+    int16_t nx1, ny1;
+    uint16_t nw, nh;
+    display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
+    display.setCursor((128 - nw) / 2, 36);
+    display.print(noteName);
+
+    display.setTextSize(1);
+  } else {
+    drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
+  }
 
   // CHROMA status bar or parameter overlay at bottom of screen
   bool anyChroma = d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode;
