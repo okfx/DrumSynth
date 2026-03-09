@@ -40,7 +40,7 @@ static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
 static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
 static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-#define FIRMWARE_VERSION "1.02"
+#define FIRMWARE_VERSION "1.03"
 #define FIRMWARE_DATE_FMT "%02d.%02d.%02d - %02d:%02d"
 #define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
 
