@@ -3428,11 +3428,13 @@ void updateDisplay() {
         display.print(item.label);
       }
     }
-  } else if (overlayActiveNow) {
-    // Normal parameter overlay (no chroma modes active)
+  }
+
+  if (overlayActiveNow) {
     if (railSnap == RAIL_NONE) {
       display.setTextSize(1);
-      const int bottomY = 56;
+      // When CHROMA bar is visible, shift parameter overlay up to avoid overlap
+      const int bottomY = anyChroma ? 48 : 56;
       if (param1Snap[0]) {
         drawOutlinedText(5, bottomY, param1Snap);
       }
