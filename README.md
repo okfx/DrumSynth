@@ -1,13 +1,13 @@
 # DrumSynth
 
-A 3-voice drum synthesizer + bass line built on Teensy 4.1. Firmware version 1.03.
+A 3-voice drum synthesizer with per-step chroma modes, built on Teensy 4.1. Firmware version 1.03.
 
 ## Voices
 
 | Voice | Name | Frequency Range |
 |-------|------|-----------------|
 | D1 | Kick | 55–440 Hz (A1–A4) |
-| D1 Bass Line | Chromatic bass | A1–A4 (MIDI 33–69) |
+| D1 Chroma | Chromatic bass | A1–A4 (MIDI 33–69) |
 | D2 Snare | Snare body | 110–440 Hz (A2–A4) |
 | D2 Clap | Clap | Fixed |
 | D2 Wavefolder | Wavefolder osc | 27.5–880 Hz (A0–A5) |
@@ -31,7 +31,7 @@ Each voice has a per-step chromatic note mode, activated by long-pressing (2s) t
 | D3 CHROMA | D3 (2s hold) | Knob 16 | C3–C6 (MIDI 48–84) | C3 |
 | WF CHROMA | PLAY (2s hold) | Knob 25 | C2–C6 (MIDI 36–84) | — |
 
-WF CHROMA quantizes the master wavefolder frequency to chromatic notes instead of the normal continuous sweep. The OLED status bar at the bottom of the display shows which CHROMA channels are active.
+WF CHROMA quantizes the master wavefolder frequency to chromatic notes instead of the normal continuous sweep. Active CHROMA channels are indicated by small dots at the bottom of the OLED display.
 
 ## Hardware
 
