@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with per-step chroma modes, built on Teensy 4.1. Firmware version 1.03.
+A 3-voice drum synthesizer with per-step chroma modes, built on Teensy 4.1. Firmware version 1.04.
 
 ## Voices
 
@@ -9,7 +9,7 @@ A 3-voice drum synthesizer with per-step chroma modes, built on Teensy 4.1. Firm
 | D1 | Kick | 55–440 Hz (A1–A4) |
 | D1 Chroma | Chromatic bass | A1–A4 (MIDI 33–69) |
 | D2 Snare | Snare body | 110–440 Hz (A2–A4) |
-| D2 Clap | Clap | Fixed |
+| D2 Clap | Clap (300 Hz HPF) | Fixed |
 | D2 Wavefolder | Wavefolder osc | 27.5–880 Hz (A0–A5) |
 | D3 606 Hats | Analog-style hats | 400–6000 Hz |
 | D3 FM Hats | FM carriers | 440–3520 Hz (A4–A7) |
@@ -41,7 +41,7 @@ WF CHROMA quantizes the master wavefolder frequency to chromatic notes instead o
 - **Controls:** 32 knobs (2x 16-ch analog mux), 16 step buttons, 10 control buttons
 - **LEDs:** 16 step LEDs (74HC595 shift register)
 - **Clock:** Internal BPM (60–400) with external pulse clock sync on pin 12
-- **Storage:** 10 EEPROM pattern save/load slots with per-step CHROMA notes for D1/D2/D3 (empty slots load as blank patterns)
+- **Storage:** 10 EEPROM pattern save/load slots with per-step CHROMA notes for D1/D2/D3 (empty slots load as blank patterns). EEPROM writes use `update()` semantics to minimise wear; PPQN saves are validated against the allowed option set before writing.
 
 ## External Clock Sync
 

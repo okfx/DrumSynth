@@ -231,7 +231,7 @@ inline void audioInit() {
   clapBusMixer.gain(1, 0.7f);   // secondary layer lower in mix
 
   // Clap master filter (highpass output) — removes rumble, low resonance
-  clapMasterFilter.frequency(600.0f);
+  clapMasterFilter.frequency(300.0f);
   clapMasterFilter.resonance(0.7f);
 
   // Clap master envelope — overall tail shape

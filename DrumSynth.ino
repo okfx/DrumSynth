@@ -564,7 +564,7 @@ void applyD2Decay() {
   d2ClapEffectiveDecay = clapDecayBase + chokeOffsetMs;
   if (d2ClapEffectiveDecay < 10.0f) d2ClapEffectiveDecay = 10.0f;
 
-  // Per-burst envelopes: current behavior to 65%, then open up to match clap tail
+  // Per-burst envelopes: linear 93→111ms over 0–65%, then accelerating to match clap tail
   float burstBase;
   if (d2Norm <= 0.65f) {
     burstBase = 93.0f + d2Norm * 27.0f;       // 93ms at min, ~111ms at 65%
@@ -1465,12 +1465,13 @@ void updateOtherButtons() {
         if (d1ChromaMode) {
           d1FreqBeforeChroma = d1BaseFreq;  // save pitch on entry
         } else {
+          d1ChromaHeldStep = -1;            // clear any active note-select
           d1BaseFreq = d1FreqBeforeChroma;  // restore pitch on exit
           applyD1Freq();
         }
         snprintf(displayParameter1, sizeof(displayParameter1),
                  d1ChromaMode ? "D1 CHROMA ON" : "D1 CHROMA OFF");
-        displayParameter2[0] = 0;
+        displayParameter2[0] = '\0';
         parameterOverlayStartTick = nowTick;
       }
     }
@@ -1480,13 +1481,14 @@ void updateOtherButtons() {
       if ((uint32_t)(nowTick - btnD2PressTick) >= D2_CHROMA_LONG_PRESS_MS) {
         d2ChromaMode = !d2ChromaMode;
         btnD2EnteredChroma = true;
+        if (!d2ChromaMode) d2ChromaHeldStep = -1;  // clear any active note-select
 
         // Immediately reapply pitch using current knob value
         applyKnobToEngine(8, analog[8]->getValue());
 
         snprintf(displayParameter1, sizeof(displayParameter1),
                  d2ChromaMode ? "D2 CHROMA ON" : "D2 CHROMA OFF");
-        displayParameter2[0] = 0;
+        displayParameter2[0] = '\0';
         parameterOverlayStartTick = nowTick;
       }
     }
@@ -1496,13 +1498,14 @@ void updateOtherButtons() {
       if ((uint32_t)(nowTick - btnD3PressTick) >= D3_CHROMA_LONG_PRESS_MS) {
         d3ChromaMode = !d3ChromaMode;
         btnD3EnteredChroma = true;
+        if (!d3ChromaMode) d3ChromaHeldStep = -1;  // clear any active note-select
 
         // Immediately reapply pitch using current knob value
         applyKnobToEngine(16, analog[16]->getValue());
 
         snprintf(displayParameter1, sizeof(displayParameter1),
                  d3ChromaMode ? "D3 CHROMA ON" : "D3 CHROMA OFF");
-        displayParameter2[0] = 0;
+        displayParameter2[0] = '\0';
         parameterOverlayStartTick = nowTick;
       }
     }
@@ -1565,6 +1568,22 @@ void updateLEDs() {
   }
 }
 
+// Returns the active chroma held-step pointer for the current track, or nullptr
+static inline int8_t* activeChromaHeldStep() {
+  if (d1ChromaMode && activeTrack == TRACK_D1) return &d1ChromaHeldStep;
+  if (d2ChromaMode && activeTrack == TRACK_D2) return &d2ChromaHeldStep;
+  if (d3ChromaMode && activeTrack == TRACK_D3) return &d3ChromaHeldStep;
+  return nullptr;
+}
+
+// Returns the per-step MIDI note array for the active chroma channel, or nullptr
+static inline uint8_t* activeChromaNotes() {
+  if (d1ChromaMode && activeTrack == TRACK_D1) return d1ChromaNote;
+  if (d2ChromaMode && activeTrack == TRACK_D2) return d2ChromaNote;
+  if (d3ChromaMode && activeTrack == TRACK_D3) return d3ChromaNote;
+  return nullptr;
+}
+
 void updateStepButtons() {
   static uint32_t lastDebounceTick[stepButtonCount] = { 0 };
   static bool btnState[stepButtonCount] = { false };
@@ -1591,16 +1610,12 @@ void updateStepButtons() {
     if ((uint32_t)(nowTick - lastDebounceTick[i]) > STEP_DEBOUNCE_MS && (rawPressed != btnState[i])) {
 
       btnState[i] = rawPressed;
+      int8_t* heldStep = activeChromaHeldStep();
+
       if (btnState[i]) {
         // Press down
-        if (d1ChromaMode && activeTrack == TRACK_D1) {
-          // D1 chroma mode — defer toggle to release (to distinguish from hold)
-          stepPressTick[i] = nowTick;
-        } else if (d2ChromaMode && activeTrack == TRACK_D2) {
-          // D2 chroma mode — defer toggle to release (to distinguish from hold)
-          stepPressTick[i] = nowTick;
-        } else if (d3ChromaMode && activeTrack == TRACK_D3) {
-          // D3 chroma mode — defer toggle to release (to distinguish from hold)
+        if (heldStep) {
+          // Chroma mode — defer toggle to release (to distinguish from hold)
           stepPressTick[i] = nowTick;
         } else {
           // Normal mode — toggle step immediately
@@ -1610,32 +1625,12 @@ void updateStepButtons() {
         }
       } else {
         // Release
-        if (d1ChromaMode && activeTrack == TRACK_D1) {
-          if (d1ChromaHeldStep == i) {
+        if (heldStep) {
+          if (*heldStep == i) {
             // Was in note-select — just clear, no toggle
-            d1ChromaHeldStep = -1;
+            *heldStep = -1;
           } else {
-            // Short press on a different step — toggle it
-            seq[i] ^= 1;
-            ledShiftReg.set(i, seq[i]);
-            patternDirty = true;
-          }
-        } else if (d2ChromaMode && activeTrack == TRACK_D2) {
-          if (d2ChromaHeldStep == i) {
-            // Was in note-select — just clear, no toggle
-            d2ChromaHeldStep = -1;
-          } else {
-            // Short press on a different step — toggle it
-            seq[i] ^= 1;
-            ledShiftReg.set(i, seq[i]);
-            patternDirty = true;
-          }
-        } else if (d3ChromaMode && activeTrack == TRACK_D3) {
-          if (d3ChromaHeldStep == i) {
-            // Was in note-select — just clear, no toggle
-            d3ChromaHeldStep = -1;
-          } else {
-            // Short press on a different step — toggle it
+            // Short press — toggle step
             seq[i] ^= 1;
             ledShiftReg.set(i, seq[i]);
             patternDirty = true;
@@ -1644,48 +1639,19 @@ void updateStepButtons() {
       }
     }
 
-    // D1 chroma mode: after holding a step button for 300ms, enter note-select
-    if (d1ChromaMode && activeTrack == TRACK_D1 && btnState[i]) {
-      if (d1ChromaHeldStep == i) {
+    // Chroma note-select: after holding a step button for 300ms, enter note-select
+    int8_t* heldStep = activeChromaHeldStep();
+    if (heldStep && btnState[i]) {
+      if (*heldStep == i) {
         // Already in note-select — keep overlay alive
+        uint8_t* notes = activeChromaNotes();
         char noteName[5];
-        formatChromaNote(d1ChromaNote[i], noteName);
+        formatChromaNote(notes[i], noteName);
         snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
         snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
         parameterOverlayStartTick = nowTick;
       } else if ((uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
-        // Just crossed the hold threshold — enter note-select for this step
-        d1ChromaHeldStep = i;
-      }
-    }
-
-    // D2 chroma mode: after holding a step button for 300ms, enter note-select
-    if (d2ChromaMode && activeTrack == TRACK_D2 && btnState[i]) {
-      if (d2ChromaHeldStep == i) {
-        // Already in note-select — keep overlay alive
-        char noteName[5];
-        formatChromaNote(d2ChromaNote[i], noteName);
-        snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
-        snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
-        parameterOverlayStartTick = nowTick;
-      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
-        // Just crossed the hold threshold — enter note-select for this step
-        d2ChromaHeldStep = i;
-      }
-    }
-
-    // D3 chroma mode: after holding a step button for 300ms, enter note-select
-    if (d3ChromaMode && activeTrack == TRACK_D3 && btnState[i]) {
-      if (d3ChromaHeldStep == i) {
-        // Already in note-select — keep overlay alive
-        char noteName[5];
-        formatChromaNote(d3ChromaNote[i], noteName);
-        snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
-        snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
-        parameterOverlayStartTick = nowTick;
-      } else if ((uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
-        // Just crossed the hold threshold — enter note-select for this step
-        d3ChromaHeldStep = i;
+        *heldStep = i;
       }
     }
 

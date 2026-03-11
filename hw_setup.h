@@ -46,6 +46,6 @@ admux::Mux otherButtonsMux = admux::Mux(admux::Pin(22, INPUT, admux::PinType::Di
 static constexpr int knobCount         = 32;  // 2 muxes × 16 channels
 static constexpr int stepButtonCount   = 16;  // 1 mux × 16 channels
 static constexpr int otherButtonsCount = 10;  // 1 mux, 10 of 16 channels used
-static constexpr int numSteps          = 16;  // Sequencer step count (matches step buttons)
+static constexpr int numSteps          = stepButtonCount;  // Sequencer step count
 
 #endif

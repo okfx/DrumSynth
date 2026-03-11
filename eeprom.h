@@ -198,6 +198,12 @@ void loadPpqnFromEEPROM() {
 }
 
 void savePpqnToEEPROM(uint8_t val) {
+  // Only save values from the valid PPQN set
+  bool valid = false;
+  for (uint8_t i = 0; i < PPQN_OPTION_COUNT; i++) {
+    if (PPQN_OPTIONS[i] == val) { valid = true; break; }
+  }
+  if (!valid) return;
   EEPROM.update(EEPROM_PPQN_ADDR, EEPROM_PPQN_MAGIC);
   EEPROM.update(EEPROM_PPQN_ADDR + 1, val);
 }
