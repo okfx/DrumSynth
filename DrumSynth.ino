@@ -93,8 +93,8 @@ static constexpr uint32_t WF_CHROMA_LONG_PRESS_MS = 2000;
 
 static constexpr uint32_t CHROMA_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t d1ChromaHeldStep = -1;  // Which step button is held (-1 = none)
-int8_t d2ChromaHeldStep = -1;  // Which step is in D2 chromatic note-select (-1 = none)
-int8_t d3ChromaHeldStep = -1;  // Which step is in D3 harmonic note-select (-1 = none)
+int8_t d2ChromaHeldStep = -1;  // Which step is in D2 chroma note-select (-1 = none)
+int8_t d3ChromaHeldStep = -1;  // Which step is in D3 chroma note-select (-1 = none)
 
 // Per-step MIDI note for D1 chroma (A1=33 to A4=69, 36 semitones)
 // Default C2 = MIDI 36
@@ -3428,16 +3428,12 @@ void updateDisplay() {
     display.print(bpmSnap, 1);
   }
 
-  // Track — label center = 44
-  display.setCursor(35, 0);
-  display.print("TRK");
-  display.setCursor(38, 10);  // 2-char value centered: 44 - 6 = 38
-  if (trackSnap == TRACK_D1) {
-    display.print("D1");
-  } else if (trackSnap == TRACK_D2) {
-    display.print("D2");
-  } else {
-    display.print("D3");
+  // Size-2 track digit — centered in the same slot (~x 35–52, y 2–15)
+  {
+    display.setTextSize(2);
+    display.setCursor(38, 2);
+    display.print(trackSnap + 1);
+    display.setTextSize(1);
   }
 
   // Choke (global decay offset) — label center = 73
@@ -3506,7 +3502,7 @@ void updateDisplay() {
     int16_t nx1, ny1;
     uint16_t nw, nh;
     display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 36);
+    display.setCursor((128 - nw) / 2, 35);
     display.print(noteName);
 
     display.setTextSize(1);
@@ -3514,46 +3510,36 @@ void updateDisplay() {
     drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
   }
 
-  // CHROMA status bar or parameter overlay at bottom of screen
+  // CHROMA dot indicator — only drawn when at least one channel is active
   bool anyChroma = d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode;
 
   if (anyChroma) {
-    // CHROMA status bar — always visible when any chroma mode is active
-    const int barY = 56;
-    display.fillRect(0, barY, 128, 8, SH110X_BLACK);
+    // Clear a strip at the bottom so dots sit on black, not on scope pixels.
+    // Start at x=2 to preserve the left border line at x=0,1.
+    display.fillRect(2, 58, 126, 6, SH110X_BLACK);
 
-    display.setTextSize(1);
-    display.setTextColor(SH110X_WHITE);
-    display.setCursor(3, barY + 1);
-    display.print("CHROMA");
-
-    // Channel indicators: active = inverted (white rect + black text)
-    struct { const char* label; bool active; int x; int w; } chItems[] = {
-      {"1", d1ChromaMode, 52, 10},
-      {"2", d2ChromaMode, 67, 10},
-      {"3", d3ChromaMode, 82, 10},
-      {"WF", wfChromaMode, 100, 18}
+    const bool chromaActive[4] = {
+      d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode
     };
+    const int dotCenters[4] = { 16, 48, 80, 112 };
+    const int dotSize = 4;
+    const int dotY = 59;
 
-    for (auto& item : chItems) {
-      if (item.active) {
-        display.fillRect(item.x, barY, item.w, 8, SH110X_WHITE);
-        display.setTextColor(SH110X_BLACK);
-        display.setCursor(item.x + 2, barY + 1);
-        display.print(item.label);
-        display.setTextColor(SH110X_WHITE);
-      } else {
-        display.setCursor(item.x + 2, barY + 1);
-        display.print(item.label);
+    for (int i = 0; i < 4; i++) {
+      if (chromaActive[i]) {
+        int x = dotCenters[i] - dotSize / 2;
+        display.fillRect(x, dotY, dotSize, dotSize, SH110X_WHITE);
       }
     }
   }
 
+  // Suppress parameter overlay during note-select — the screen belongs to the note name
+  if (noteSelectActive) overlayActiveNow = false;
+
   if (overlayActiveNow) {
     if (railSnap == RAIL_NONE) {
       display.setTextSize(1);
-      // When CHROMA bar is visible, shift parameter overlay up to avoid overlap
-      const int bottomY = anyChroma ? 48 : 56;
+      const int bottomY = 56;
       if (param1Snap[0]) {
         drawOutlinedText(5, bottomY, param1Snap);
       }
