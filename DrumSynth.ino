@@ -384,7 +384,7 @@ inline void applyD1Freq() {
 static inline int chokeOffsetFromKnob(int knobVal) {
   const int CENTER = 512;
   const int DEADBAND = 80;
-  const int MAX_NEG = -40;
+  const int MAX_NEG = -55;
   const int MAX_POS = 150;
 
   // Deadband: center ±80 ADC counts → offset 0ms
@@ -392,7 +392,7 @@ static inline int chokeOffsetFromKnob(int knobVal) {
     return 0;
   }
 
-  // Left of deadband: full CCW → -40ms
+  // Left of deadband: full CCW → -55ms
   if (knobVal < CENTER - DEADBAND) {
     int lowEnd = CENTER - DEADBAND;
     float blend = float(lowEnd - knobVal) / float(lowEnd);
@@ -572,8 +572,8 @@ void applyD2Decay() {
     float t = (d2Norm - 0.65f) / 0.35f;       // 0→1 over upper 35%
     burstBase = 111.0f + t * 114.0f;           // 111ms at 65%, 225ms at 100%
   }
-  float burstDecay1 = burstBase + chokeOffsetMs * 0.15f;
-  float burstDecay2 = (burstBase + 2.0f) + chokeOffsetMs * 0.15f;
+  float burstDecay1 = burstBase + chokeOffsetMs * 0.3f;
+  float burstDecay2 = (burstBase + 2.0f) + chokeOffsetMs * 0.3f;
   if (burstDecay1 < 80.0f) burstDecay1 = 80.0f;
   if (burstDecay1 > 225.0f) burstDecay1 = 225.0f;
   if (burstDecay2 < 80.0f) burstDecay2 = 80.0f;
