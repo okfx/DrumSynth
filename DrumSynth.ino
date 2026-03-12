@@ -84,6 +84,7 @@ bool d1BassKeysMode = false;
 static constexpr uint32_t D1_BASS_KEYS_LONG_PRESS_MS = 6000;
 uint8_t d1BassKeysOctave = 0;        // 0=OCT2 (C2), 1=OCT3 (C3), 2=OCT4 (C4)
 int8_t d1BassKeysActiveKey = -1;     // currently pressed key index (-1 = none)
+float d1BassKeysReleaseMs = 30.0f;   // gate-style release time (knob-controlled)
 bool d1BassKeysShowOctave = false;       // show large OCT display in scope area
 uint32_t d1BassKeysOctaveShowStart = 0;  // when octave display started (sysTickMs)
 static constexpr uint32_t BASS_KEYS_OCT_DISPLAY_MS = 1200;
@@ -1102,15 +1103,21 @@ void triggerD1() {
   lastD1TriggerUs = now;
 
   AudioNoInterrupts();
-  d1AmpEnv.hold(d1CachedHoldMs);
-  d1AmpEnv.decay(d1EffectiveDecay);
-  if (!skipNoteOff) {
+  if (d1BassKeysMode) {
+    // Gate-style: just retrigger amp envelope — no pitch sweep, no snap transient
     d1AmpEnv.noteOff();
-    d1PitchEnv.noteOff();
+    d1AmpEnv.noteOn();
+  } else {
+    d1AmpEnv.hold(d1CachedHoldMs);
+    d1AmpEnv.decay(d1EffectiveDecay);
+    if (!skipNoteOff) {
+      d1AmpEnv.noteOff();
+      d1PitchEnv.noteOff();
+    }
+    d1AmpEnv.noteOn();
+    d1PitchEnv.noteOn();
+    d1Snap.noteOn();
   }
-  d1AmpEnv.noteOn();
-  d1PitchEnv.noteOn();
-  d1Snap.noteOn();
   AudioInterrupts();
 }
 
@@ -1514,14 +1521,23 @@ void updateOtherButtons() {
           interrupts();
           d1BassKeysActiveKey = -1;
           d1BassKeysShowOctave = false;
-          // Snap attack for responsive key feel
+          // Gate-style bass synth envelope: fast attack, full sustain, short release
           AudioNoInterrupts();
-          d1AmpEnv.attack(0.1f);
+          d1AmpEnv.attack(2.0f);       // Moog-like punch (~2ms)
+          d1AmpEnv.hold(0.0f);         // no hold phase — sustain takes over
+          d1AmpEnv.decay(0.0f);        // no decay — sustain at full level
+          d1AmpEnv.sustain(1.0f);      // hold at full amplitude while key pressed
+          d1AmpEnv.release(d1BassKeysReleaseMs);
           AudioInterrupts();
         } else {
-          // Restore normal attack
+          // Restore drum envelope
           AudioNoInterrupts();
           d1AmpEnv.attack(D1_ATTACK_MS);
+          d1AmpEnv.hold(d1CachedHoldMs);
+          d1AmpEnv.decay(d1EffectiveDecay);
+          d1AmpEnv.sustain(0.0f);      // drum mode — decay to silence
+          d1AmpEnv.release(5.0f);      // library default
+          d1AmpEnv.noteOff();          // silence any lingering gate note
           AudioInterrupts();
         }
         snprintf(displayParameter1, sizeof(displayParameter1),
@@ -1698,8 +1714,11 @@ void updateStepButtons() {
           // Light only the pressed key
           for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == i);
         } else {
-          // Release — clear active key and LED
+          // Release — gate off, clear active key and LED
           if (d1BassKeysActiveKey == i) {
+            AudioNoInterrupts();
+            d1AmpEnv.noteOff();
+            AudioInterrupts();
             d1BassKeysActiveKey = -1;
             for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, LOW);
           }
@@ -2028,12 +2047,13 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 2:  // D1 Decay
       {
-        float decayMs = d1DecayCurve(knobValue);
         if (d1BassKeysMode) {
-          float holdMs = decayMs * 0.75f;
-          snprintf(displayParameter1, sizeof(displayParameter1), "DEC %.0fms", decayMs);
-          snprintf(displayParameter2, sizeof(displayParameter2), "HLD %.0fms", holdMs);
+          float norm = normalizeKnob(knobValue);
+          float releaseMs = 10.0f + norm * 190.0f;
+          snprintf(displayParameter1, sizeof(displayParameter1), "RELEASE");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", releaseMs);
         } else {
+          float decayMs = d1DecayCurve(knobValue);
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 DECAY");
           snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
         }
@@ -2465,8 +2485,17 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
         break;
       }
 
-    case 2:  // D1 Decay
+    case 2:  // D1 Decay (release time in BASS KEYS mode)
       {
+        if (d1BassKeysMode) {
+          // Decay knob → release time: 10–200ms linear
+          float norm = normalizeKnob(knobValue);
+          d1BassKeysReleaseMs = 10.0f + norm * 190.0f;
+          AudioNoInterrupts();
+          d1AmpEnv.release(d1BassKeysReleaseMs);
+          AudioInterrupts();
+          break;
+        }
         d1DecayBase = d1DecayCurve(knobValue);
         applyD1Decay();
         break;
