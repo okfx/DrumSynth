@@ -40,7 +40,7 @@ static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
 static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
 static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-#define FIRMWARE_VERSION "1.03"
+#define FIRMWARE_VERSION "1.03.1"
 #define FIRMWARE_DATE_FMT "%02d.%02d.%02d - %02d:%02d"
 #define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
 
@@ -62,14 +62,14 @@ static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3%
 bool accentPreviewActive = false;
 uint32_t accentPreviewStartTick = 0;
 uint16_t accentPreviewMask = 0;  // 16-bit mask, bit15 = step0 ... bit0 = step15
-static constexpr uint16_t ACCENT_PREVIEW_DURATION_MS = 2000;
+static constexpr uint16_t ACCENT_PREVIEW_DURATION_MS = 1500;
 
 // PPQN selection mode state — main-loop only
 bool ppqnModeActive = false;
 uint32_t ppqnModeLastActivityTick = 0;  // Last knob/button interaction
 uint8_t ppqnModeSelection = 2;          // Currently selected value in mode
 static constexpr uint32_t PPQN_MODE_TIMEOUT_MS = 5000;
-static constexpr uint32_t PPQN_LONG_PRESS_MS = 2000;
+static constexpr uint32_t PPQN_LONG_PRESS_MS = 1500;
 
 // PPQN options table
 static constexpr uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
@@ -77,19 +77,19 @@ static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_
 
 // D1 chroma mode state — main-loop only
 bool d1ChromaMode = false;
-static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 2000;
+static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 1500;
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
-static constexpr uint32_t D2_CHROMA_LONG_PRESS_MS = 2000;
+static constexpr uint32_t D2_CHROMA_LONG_PRESS_MS = 1500;
 
 // D3 chroma mode — latching toggle via D3 button hold
 bool d3ChromaMode = false;
-static constexpr uint32_t D3_CHROMA_LONG_PRESS_MS = 2000;
+static constexpr uint32_t D3_CHROMA_LONG_PRESS_MS = 1500;
 
 // Wavefolder CHROMA mode — latching toggle via PLAY button hold
 bool wfChromaMode = false;
-static constexpr uint32_t WF_CHROMA_LONG_PRESS_MS = 2000;
+static constexpr uint32_t WF_CHROMA_LONG_PRESS_MS = 1500;
 
 static constexpr uint32_t CHROMA_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t d1ChromaHeldStep = -1;  // Which step button is held (-1 = none)
@@ -176,7 +176,7 @@ volatile uint8_t ppqn = PPQN_DEFAULT;
 // Minimum interval between retriggering the same voice (µs).
 // Avoids noteOff() killing a just-triggered envelope when two steps fire
 // in rapid succession (e.g. skip-ahead fires step N then subdivision fires N+1).
-static constexpr uint32_t MIN_RETRIGGER_US = 2000;
+static constexpr uint32_t MIN_RETRIGGER_US = 1500;
 
 // Per-voice retrigger timestamps — main loop only (via playSequenceCore)
 uint32_t lastD1TriggerUs = 0;
@@ -212,7 +212,7 @@ uint32_t displayBlockedUntilTick = 0;       // Suppress OLED push after drop-in 
 
 // Base decay values (raw knob position, before choke offset)
 float d1DecayBase = 75.0f;
-float d2DecayBase = 93.0f;
+float d2DecayBase = 75.0f;
 float d2DecayNorm = 0.0f;  // 0–1 knob position, used by clap curves
 float d3DecayBase = 25.0f;
 
@@ -574,6 +574,8 @@ void applyD2Decay() {
   }
   float burstDecay1 = burstBase + chokeOffsetMs * 0.3f;
   float burstDecay2 = (burstBase + 2.0f) + chokeOffsetMs * 0.3f;
+  // Clamp burst decay to 80–225ms: floor prevents inaudible tails at full negative choke,
+  // ceiling matches the clap master envelope maximum.
   if (burstDecay1 < 80.0f) burstDecay1 = 80.0f;
   if (burstDecay1 > 225.0f) burstDecay1 = 225.0f;
   if (burstDecay2 < 80.0f) burstDecay2 = 80.0f;
@@ -603,8 +605,8 @@ void applyChokeToDecays() {
 
 // Animated waveform morph splash screen
 void splashAnimation() {
-  static constexpr int FRAME_MS    = 42;   // ~24 fps
-  static constexpr int TOTAL_FRAMES = 50;
+  static constexpr int FRAME_MS    = 28;   // ~36 fps
+  static constexpr int TOTAL_FRAMES = 36;
   static constexpr int X_MIN       = 4;
   static constexpr int X_MAX       = 124;
   static constexpr int X_CENTER    = 64;
@@ -615,9 +617,9 @@ void splashAnimation() {
     unsigned long t0 = millis();
     display.clearDisplay();
 
-    if (frame <= 5) {
+    if (frame <= 3) {
       // PHASE 1 — flat line grows from center
-      float progress = (float)frame / 5.0f;
+      float progress = (float)frame / 3.0f;
       int half = (int)(progress * (X_MAX - X_CENTER));
       int xL = X_CENTER - half;
       int xR = X_CENTER + half;
@@ -625,9 +627,9 @@ void splashAnimation() {
       if (xR > X_MAX) xR = X_MAX;
       display.drawLine(xL, Y_CENTER, xR, Y_CENTER, 1);
 
-    } else if (frame <= 18) {
+    } else if (frame <= 12) {
       // PHASE 2 — sine wave emerges
-      float progress = (float)(frame - 6) / 12.0f;
+      float progress = (float)(frame - 4) / 8.0f;
       float amplitude = progress * 18.0f;
       float freq = 1.0f + progress * 0.5f;
 
@@ -646,9 +648,9 @@ void splashAnimation() {
         prevY = y;
       }
 
-    } else if (frame <= 40) {
+    } else if (frame <= 28) {
       // PHASE 3 — wavefolding intensifies
-      float progress = (float)(frame - 19) / 21.0f;
+      float progress = (float)(frame - 13) / 15.0f;
       float foldAmount = 1.0f + progress * 5.0f;
       float amplitude = 18.0f + progress * 6.0f;
       float freq = 1.5f + progress * 0.5f;
@@ -1035,15 +1037,13 @@ void playSequence() {
 
   if (toDo == 0) return;
 
-  // During ext sync with 2 accumulated steps (common at ppqn=2 if the main
-  // loop was briefly blocked), fire both to preserve rhythmic density.
-  // ISR already advanced currentStep twice, so targetStep is the second step.
-  // firstStep = targetStep-1 works for both paths that produce toDo==2:
-  //   - Subdivision: step A (+1) then step B (+1) → targetStep = old+2, first = old+1
-  //   - Accumulator (ppqn≥4, steps=2): +2 in one call → targetStep = old+2, first = old+1
-  // For 3+ steps or internal clock, skip ahead — a missing step is less
-  // noticeable than an off-beat one.
-  if (toDo == 2 && transportState == RUN_EXT) {
+  // With 2 accumulated steps (common at ppqn=2 ext sync, rare on internal
+  // clock at high BPM if the main loop stalls briefly), fire both to
+  // preserve rhythmic density.  ISR already advanced currentStep twice,
+  // so targetStep is the second step; firstStep = targetStep-1.
+  // For 3+ steps, skip ahead — a missing step is less noticeable than
+  // an off-beat one.
+  if (toDo == 2) {
     uint8_t firstStep = (targetStep - 1 + numSteps) % numSteps;
     playSequenceCore(firstStep);   // fire first step
     playSequenceCore(targetStep);  // fire second step
@@ -1464,6 +1464,7 @@ void updateOtherButtons() {
         btnD1EnteredChroma = true;
         if (d1ChromaMode) {
           d1FreqBeforeChroma = d1BaseFreq;  // save pitch on entry
+          selectTrack(TRACK_D1);
         } else {
           d1ChromaHeldStep = -1;            // clear any active note-select
           d1BaseFreq = d1FreqBeforeChroma;  // restore pitch on exit
@@ -1481,7 +1482,11 @@ void updateOtherButtons() {
       if ((uint32_t)(nowTick - btnD2PressTick) >= D2_CHROMA_LONG_PRESS_MS) {
         d2ChromaMode = !d2ChromaMode;
         btnD2EnteredChroma = true;
-        if (!d2ChromaMode) d2ChromaHeldStep = -1;  // clear any active note-select
+        if (d2ChromaMode) {
+          selectTrack(TRACK_D2);
+        } else {
+          d2ChromaHeldStep = -1;  // clear any active note-select
+        }
 
         // Immediately reapply pitch using current knob value
         applyKnobToEngine(8, analog[8]->getValue());
@@ -1498,7 +1503,11 @@ void updateOtherButtons() {
       if ((uint32_t)(nowTick - btnD3PressTick) >= D3_CHROMA_LONG_PRESS_MS) {
         d3ChromaMode = !d3ChromaMode;
         btnD3EnteredChroma = true;
-        if (!d3ChromaMode) d3ChromaHeldStep = -1;  // clear any active note-select
+        if (d3ChromaMode) {
+          selectTrack(TRACK_D3);
+        } else {
+          d3ChromaHeldStep = -1;  // clear any active note-select
+        }
 
         // Immediately reapply pitch using current knob value
         applyKnobToEngine(16, analog[16]->getValue());
@@ -1810,17 +1819,18 @@ inline void applyD3ChromaFreq(uint8_t midiNote) {
   AudioInterrupts();
 }
 
-// D2 Decay curve: flat 93ms to 50%, curved 93–130ms at 50–75%, linear 130–500ms at 75–100%
+// D2 Decay curve: 75–93ms (0–50%), 93–225ms (51–75%), 225–500ms (75–100%)
 static inline float d2DecayCurve(int knobValue) {
   float norm = normalizeKnob(knobValue);
   if (norm <= 0.5f) {
-    return 93.0f;
+    float t = norm / 0.5f;             // 0..1 over bottom half
+    return 75.0f + t * 18.0f;          // 75 -> 93ms
   } else if (norm <= 0.75f) {
-    float t = (norm - 0.5f) * 2.0f;  // 0→0.5 over this segment (half-range so curve meets linear segment at 130ms)
-    return 93.0f + 16.0f * t + 116.0f * t * t;
+    float t = (norm - 0.5f) / 0.25f;   // 0..1 over 50–75%
+    return 93.0f + t * 132.0f;         // 93 -> 225ms
   } else {
-    float t = (norm - 0.75f) / 0.25f;  // 0→1 over upper quarter
-    return 130.0f + t * 370.0f;
+    float t = (norm - 0.75f) / 0.25f;  // 0..1 over 75–100%
+    return 225.0f + t * 275.0f;        // 225 -> 500ms
   }
 }
 
@@ -2585,9 +2595,9 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           float above30 = (norm > 0.3f) ? (norm - 0.3f) / 0.15f : 0.0f;  // 0→1 over 30–45%
           if (above30 > 1.0f) above30 = 1.0f;
           float above45 = (norm > 0.45f) ? (norm - 0.45f) / 0.55f : 0.0f; // 0→1 over 45–100%
-          float attackMs = 1.5f;                                            // fixed
+          float attackMs = 0.1f;                                            // fixed — 0.1ms to avoid click/pop
           float holdMs = 7.0f + above30 * 15.5f + above45 * 22.5f;  // 7→22.5→45ms
-          float decayMs = 25.0f + above30 * 3.75f + above45 * 26.25f; // 25→28.75→55ms
+          float decayMs = 25.0f + above30 * 3.75f + above45 * 61.25f; // 25→28.75→90ms
           float filterFreqHz = 3000.0f + 2000.0f * noiseScale;
           float noiseScaleCapped = (noiseScale > 0.5f) ? 0.5f : noiseScale;
           float noiseGain = 0.043f + 0.209f * noiseScaleCapped;  // gain caps at ~12.5% knob
@@ -2821,8 +2831,8 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
       {
         float norm = normalizeKnob(knobValue);
 
-        // Cutoff: exponential curve 1000–7500 Hz (log-spaced for natural feel)
-        float cutoffHz = 1000.0f * expf(norm * 2.015f);  // ln(7500/1000) ≈ 2.015
+        // Cutoff: exponential curve 800–7500 Hz (log-spaced for natural feel)
+        float cutoffHz = 800.0f * expf(norm * 2.239f);  // ln(7500/800) ≈ 2.239
 
         // Resonance: gentle bump at low cutoffs for volume compensation, clean when open
         float resonance = 0.35f + 0.15f * (1.0f - norm);  // 0.50 → 0.35
@@ -3231,6 +3241,8 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
     interrupts();
 
     // Step B: subdivision timer due within 25ms
+    // micros() called outside noInterrupts() — benign TOCTOU: a slightly later
+    // timestamp only makes remaining smaller, so we err toward skipping the push.
     if (subdivDue > 0) {
       int32_t remaining = (int32_t)(subdivDue - micros());
       if (remaining > 0 && remaining < 25000) return false;

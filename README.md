@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.03.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.03.1.
 
 ## Features
 
@@ -51,6 +51,18 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 | `eeprom.h` | Pattern save/load, CHROMA notes + PPQN persistence |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
+
+## Changes (v1.03.1)
+
+- CHROMA mode state (on/off per track) now saved and restored with each pattern slot
+- Entering CHROMA mode on a voice auto-selects that track for immediate step editing
+- CHROMA long-press time reduced to 1.5s (was 2s)
+- D2 snare decay curve rescaled -- wider useful range across the full knob travel
+- D2 snare and clap attack times tightened across all envelope stages
+- Clap bandpass filter frequencies adjusted for tone
+- D3 lowpass filter minimum cutoff lowered for darker perc sounds
+- Splash animation plays faster
+- Sequencer catch-up logic extended to internal clock -- rare missed triggers at high BPM eliminated
 
 ## Changes (v1.03)
 

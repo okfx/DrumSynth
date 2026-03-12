@@ -14,8 +14,9 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 
-// Simple CRC8 (polynomial 0x07) over a byte array.
-// Used to detect EEPROM corruption beyond the magic number.
+// CRC-8 (init=0xFF, poly=0x07, unreflected) over a byte array.
+// Not a standard named variant — values will not match generic CRC-8 tools.
+// Used solely to detect EEPROM corruption beyond the magic number.
 static uint8_t crc8(const uint8_t* data, size_t len) {
   uint8_t crc = 0xFF;
   for (size_t i = 0; i < len; i++) {
@@ -38,6 +39,13 @@ extern uint8_t d3Sequence[];
 extern uint8_t d1ChromaNote[];
 extern uint8_t d2ChromaNote[];
 extern uint8_t d3ChromaNote[];
+
+// Chroma mode flags
+extern bool d1ChromaMode;
+extern bool d2ChromaMode;
+extern bool d3ChromaMode;
+extern float d1BaseFreq;
+extern float d1FreqBeforeChroma;
 
 // PPQN (ppqn is extern; PPQN_OPTIONS, PPQN_OPTION_COUNT, PPQN_DEFAULT are
 // constexpr in .ino — visible because this header is included after them)
@@ -64,6 +72,7 @@ struct PatternStore {
   uint8_t d1Chroma[numSteps];     // Per-step MIDI note for D1 chroma mode
   uint8_t d2Chroma[numSteps];     // Per-step MIDI note for D2 chroma mode
   uint8_t d3Chroma[numSteps];     // Per-step MIDI note for D3 chroma mode
+  uint8_t flags;                  // bit 0: d1ChromaMode, bit 1: d2ChromaMode, bit 2: d3ChromaMode
 };
 
 struct EepromSlot {
@@ -77,7 +86,7 @@ struct EepromSlot {
 //  Constants
 // ============================================================================
 
-static constexpr uint16_t EEPROM_MAGIC      = 0x4246;  // Identifies valid slot
+static constexpr uint16_t EEPROM_MAGIC      = 0x4247;  // Identifies valid slot (bumped for flags byte)
 static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
 // PPQN stored after all save slots
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
@@ -121,6 +130,17 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
     d1ChromaNote[step] = constrain(slot.patterns.d1Chroma[step], 33, 69);  // A1–A4
     d2ChromaNote[step] = constrain(slot.patterns.d2Chroma[step], 45, 69);  // A2–A4
     d3ChromaNote[step] = constrain(slot.patterns.d3Chroma[step], 48, 84);  // C3–C6
+  }
+
+  // Restore chroma mode flags
+  bool wasD1Chroma = d1ChromaMode;
+  d1ChromaMode = (slot.patterns.flags & 0x01) != 0;
+  d2ChromaMode = (slot.patterns.flags & 0x02) != 0;
+  d3ChromaMode = (slot.patterns.flags & 0x04) != 0;
+
+  // If D1 chroma was just enabled by load, save current freq for restore on exit
+  if (d1ChromaMode && !wasD1Chroma) {
+    d1FreqBeforeChroma = d1BaseFreq;
   }
 
   // Refresh step LEDs so they reflect the loaded pattern
@@ -168,6 +188,11 @@ void saveStateToEEPROM(uint8_t slotIndex) {
     slot.patterns.d2Chroma[step] = d2ChromaNote[step];
     slot.patterns.d3Chroma[step] = d3ChromaNote[step];
   }
+
+  // Pack chroma mode flags
+  slot.patterns.flags = (d1ChromaMode ? 0x01 : 0)
+                      | (d2ChromaMode ? 0x02 : 0)
+                      | (d3ChromaMode ? 0x04 : 0);
 
   // CRC8 over pattern data — detects partial writes on load
   slot.crc = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));

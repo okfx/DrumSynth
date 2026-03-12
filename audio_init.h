@@ -128,8 +128,9 @@ inline void audioInit() {
   d2Osc.frequencyModulation(1);
 
   // D2 amplitude envelope
-  d2AmpEnv.decay(75.0f);
-  d2AmpEnv.hold(20.0f);
+  d2AmpEnv.attack(1.0f);
+  d2AmpEnv.decay(93.0f);
+  d2AmpEnv.hold(46.5f);  // decay * 0.5
   d2AmpEnv.sustain(0.0f);
 
   // D2 attack transient
@@ -143,7 +144,7 @@ inline void audioInit() {
   // D2 noise layer
   d2Noise.amplitude(0.75f);
 
-  d2NoiseEnv.attack(0.5f);
+  d2NoiseEnv.attack(0.1f);
   d2NoiseEnv.hold(7.0f);
   d2NoiseEnv.decay(70.0f);
   d2NoiseEnv.sustain(0.0f);
@@ -187,19 +188,19 @@ inline void audioInit() {
 
   // Clap bandpass filters — shape noise before delay taps
   // Two different frequencies reduce comb filtering between layers
-  clapFilter1.frequency(1000.0f);  // body path — classic 808 center
+  clapFilter1.frequency(1150.0f);  // body path
   clapFilter1.resonance(1.8f);
 
-  clapFilter2.frequency(1200.0f);  // brighter path
+  clapFilter2.frequency(1350.0f);  // brighter path
   clapFilter2.resonance(1.5f);
 
   // Clap per-burst envelopes — sharp sawtooth spikes, no hold
-  clapAmpEnv1.attack(0.0f);
+  clapAmpEnv1.attack(0.1f);
   clapAmpEnv1.hold(0.0f);
   clapAmpEnv1.decay(12.0f);
   clapAmpEnv1.sustain(0.0f);
 
-  clapAmpEnv2.attack(0.0f);
+  clapAmpEnv2.attack(0.1f);
   clapAmpEnv2.hold(0.0f);
   clapAmpEnv2.decay(14.0f);
   clapAmpEnv2.sustain(0.0f);
@@ -235,7 +236,7 @@ inline void audioInit() {
   clapMasterFilter.resonance(0.7f);
 
   // Clap master envelope — overall tail shape
-  clapMasterEnv.attack(0.0f);
+  clapMasterEnv.attack(0.1f);
   clapMasterEnv.hold(0.5f);
   clapMasterEnv.decay(150.0f);
   clapMasterEnv.sustain(0.0f);
@@ -297,7 +298,7 @@ inline void audioInit() {
   d3606BandPass.frequency(5000.0f);
   d3606BandPass.resonance(1.25f);
 
-  d3606AmpEnv.attack(1.0f);
+  d3606AmpEnv.attack(0.5f);
   d3606AmpEnv.decay(45.0f);
   d3606AmpEnv.sustain(0.0f);
 
@@ -341,7 +342,7 @@ inline void audioInit() {
   d3FmHighPass.frequency(1500.0f);  // highpass: tracks pitch knob (1500–3000 Hz)
   d3FmHighPass.resonance(0.7f);
 
-  d3FmAmpEnv.attack(1.0f);
+  d3FmAmpEnv.attack(0.5f);
   d3FmAmpEnv.decay(45.0f);
   d3FmAmpEnv.sustain(0.0f);
 
