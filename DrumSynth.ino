@@ -59,9 +59,12 @@ static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: stan
 static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3% — used by all wavefolder cases (11, 19, 30)
 
 // D3 accent LED preview state — Main-loop only, no ISR access
-bool accentPreviewActive = false;
-uint32_t accentPreviewStartTick = 0;
-uint16_t accentPreviewMask = 0;  // 16-bit mask, bit15 = step0 ... bit0 = step15
+struct AccentPreview {
+  bool active = false;
+  uint32_t startTick = 0;
+  uint16_t mask = 0;  // bit15 = step0 ... bit0 = step15
+};
+AccentPreview accentPreview;
 static constexpr uint16_t ACCENT_PREVIEW_DURATION_MS = 1500;
 
 // PPQN selection mode state — main-loop only
@@ -80,18 +83,22 @@ bool d1ChromaMode = false;
 static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 1500;
 
 // BASS KEYS mode — D1 live keyboard, sequencer fully suppressed
-bool d1BassKeysMode = false;
 static constexpr uint32_t D1_BASS_KEYS_LONG_PRESS_MS = 6000;
-uint8_t d1BassKeysOctave = 0;        // 0=OCT2 (C2), 1=OCT3 (C3), 2=OCT4 (C4)
-int8_t d1BassKeysActiveKey = -1;     // currently pressed key index (-1 = none)
-float d1BassKeysReleaseMs = 30.0f;   // gate-style release time (knob-controlled)
-bool d1BassKeysShowOctave = false;       // show large OCT display in scope area
-uint32_t d1BassKeysOctaveShowStart = 0;  // when octave display started (sysTickMs)
 static constexpr uint32_t BASS_KEYS_OCT_DISPLAY_MS = 1200;
-char d1BassKeysParamLabel[12] = "";      // short label for large-font param display
-char d1BassKeysParamValue[12] = "";      // value string for large-font param display
-uint32_t d1BassKeysParamShowStart = 0;   // when param display started
 static constexpr uint32_t BASS_KEYS_PARAM_DISPLAY_MS = 1500;
+
+struct BassKeysState {
+  bool active = false;
+  uint8_t octave = 0;           // 0=OCT2 (C2), 1=OCT3 (C3), 2=OCT4 (C4)
+  int8_t activeKey = -1;        // currently pressed key index (-1 = none)
+  float releaseMs = 30.0f;      // gate-style release time (knob-controlled)
+  bool showOctave = false;      // show large OCT display in scope area
+  uint32_t octaveShowStart = 0; // when octave display started (sysTickMs)
+  char paramLabel[12] = "";     // short label for large-font param display
+  char paramValue[12] = "";     // value string for large-font param display
+  uint32_t paramShowStart = 0;  // when param display started
+};
+BassKeysState bassKeys;
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
@@ -873,9 +880,9 @@ void loop() {
   interrupts();
 
   // Expire accent preview and restore normal LEDs
-  if (accentPreviewActive) {
-    if ((uint32_t)(loopNowTick - accentPreviewStartTick) >= ACCENT_PREVIEW_DURATION_MS) {
-      accentPreviewActive = false;  // Main-loop only — no guard needed
+  if (accentPreview.active) {
+    if ((uint32_t)(loopNowTick - accentPreview.startTick) >= ACCENT_PREVIEW_DURATION_MS) {
+      accentPreview.active = false;  // Main-loop only — no guard needed
       updateLEDs();
     }
   }
@@ -1076,7 +1083,7 @@ void playSequence() {
 // Called from main loop context via playSequence().
 void playSequenceCore(uint8_t step) {
   // BASS KEYS mode: entire sequencer suppressed — D1 is live keyboard only
-  if (d1BassKeysMode) return;
+  if (bassKeys.active) return;
 
   if (d1Sequence[step]) {
     if (d1ChromaMode) {
@@ -1103,11 +1110,11 @@ void triggerD1() {
   // Retrigger guard — uint32_t reads/writes are atomic on ARM Cortex-M7.
   // Called from main loop context via playSequenceCore().
   uint32_t now = micros();
-  bool skipNoteOff = !d1BassKeysMode && (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
+  bool skipNoteOff = !bassKeys.active && (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
   lastD1TriggerUs = now;
 
   AudioNoInterrupts();
-  if (d1BassKeysMode) {
+  if (bassKeys.active) {
     // Gate-style: retrigger amp envelope + snap, no pitch sweep
     d1AmpEnv.noteOff();
     d1AmpEnv.noteOn();
@@ -1356,7 +1363,7 @@ void updateOtherButtons() {
           // Release
           if (btnD1EnteredChroma || btnD1EnteredBassKeys) {
             // Long-press action taken — suppress selectTrack
-          } else if (!d1BassKeysMode) {
+          } else if (!bassKeys.active) {
             // Short press — normal D1 sequence select (blocked in BASS KEYS)
             selectTrack(TRACK_D1);
           }
@@ -1367,7 +1374,7 @@ void updateOtherButtons() {
 
       // Button 1 (D2 SEQ SELECT) — short press selects track, hold 2s = toggle D2 chroma
       // Blocked in BASS KEYS mode.
-      if (i == 1 && !d1BassKeysMode) {
+      if (i == 1 && !bassKeys.active) {
         if (btnState[1]) {
           btnD2PressTick = nowTick;
           btnD2EnteredChroma = false;
@@ -1383,7 +1390,7 @@ void updateOtherButtons() {
 
       // Button 2 (D3 SEQ SELECT) — short press selects track, hold = toggle D3 chroma
       // Blocked in BASS KEYS mode.
-      if (i == 2 && !d1BassKeysMode) {
+      if (i == 2 && !bassKeys.active) {
         if (btnState[2]) {
           btnD3PressTick = nowTick;
           btnD3EnteredChroma = false;
@@ -1399,7 +1406,7 @@ void updateOtherButtons() {
 
       // Button 6 (PLAY) — short press = play/stop, hold 2s = toggle WF chroma
       // Blocked in BASS KEYS mode — sequencer must remain stopped.
-      if (i == 6 && !d1BassKeysMode) {
+      if (i == 6 && !bassKeys.active) {
         if (btnState[6]) {
           btnPlayPressTick = nowTick;
           btnPlayEnteredChroma = false;
@@ -1515,9 +1522,9 @@ void updateOtherButtons() {
 
       // Tier 2: BASS KEYS at 6s
       if (!btnD1EnteredBassKeys && heldMs >= D1_BASS_KEYS_LONG_PRESS_MS) {
-        d1BassKeysMode = !d1BassKeysMode;
+        bassKeys.active = !bassKeys.active;
         btnD1EnteredBassKeys = true;
-        if (d1BassKeysMode) {
+        if (bassKeys.active) {
           // Stop transport if running
           noInterrupts();
           sequencePlaying = false;
@@ -1527,15 +1534,15 @@ void updateOtherButtons() {
           pendingStepCount = 0;
           wantSwitchToExt = false;
           interrupts();
-          d1BassKeysActiveKey = -1;
-          d1BassKeysShowOctave = false;
+          bassKeys.activeKey = -1;
+          bassKeys.showOctave = false;
           // Gate-style bass synth envelope: fast attack, full sustain, short release
           AudioNoInterrupts();
           d1AmpEnv.attack(2.0f);       // Moog-like punch (~2ms)
           d1AmpEnv.hold(0.0f);         // no hold phase — sustain takes over
           d1AmpEnv.decay(0.0f);        // no decay — sustain at full level
           d1AmpEnv.sustain(1.0f);      // hold at full amplitude while key pressed
-          d1AmpEnv.release(d1BassKeysReleaseMs);
+          d1AmpEnv.release(bassKeys.releaseMs);
           AudioInterrupts();
         } else {
           // Restore drum envelope
@@ -1549,7 +1556,7 @@ void updateOtherButtons() {
           AudioInterrupts();
         }
         snprintf(displayParameter1, sizeof(displayParameter1),
-                 d1BassKeysMode ? "BASS KEYS ON" : "BASS KEYS OFF");
+                 bassKeys.active ? "BASS KEYS ON" : "BASS KEYS OFF");
         displayParameter2[0] = '\0';
         parameterOverlayStartTick = nowTick;
         updateLEDs();
@@ -1623,15 +1630,15 @@ void updateLEDs() {
   // Main-loop only — no ISR access to accentPreview*, no guards needed
 
   // BASS KEYS mode — all LEDs off (active key lit in updateStepButtons on press)
-  if (d1BassKeysMode) {
+  if (bassKeys.active) {
     for (int i = 0; i < numSteps; i++) {
-      ledShiftReg.set(i, i == d1BassKeysActiveKey);
+      ledShiftReg.set(i, i == bassKeys.activeKey);
     }
     return;
   }
 
-  bool preview = accentPreviewActive;
-  uint16_t mask = accentPreviewMask;
+  bool preview = accentPreview.active;
+  uint16_t mask = accentPreview.mask;
 
   // Accent preview mode (temporary display)
   if (preview) {
@@ -1709,25 +1716,25 @@ void updateStepButtons() {
       btnState[i] = rawPressed;
 
       // BASS KEYS mode — buttons trigger D1 directly, skip all sequence editing
-      if (d1BassKeysMode) {
+      if (bassKeys.active) {
         if (btnState[i]) {
           // Press — play note
-          uint8_t midiNote = (36 + d1BassKeysOctave * 12) + i;
+          uint8_t midiNote = (36 + bassKeys.octave * 12) + i;
           if (midiNote > 75) midiNote = 75;  // clamp to D#5 (table max)
           d1BaseFreq = d1ChromaFreq(midiNote);
           applyD1Freq();
           triggerD1();
-          d1BassKeysActiveKey = i;
+          bassKeys.activeKey = i;
           // Note name shown in scope area by OLED render loop
           // Light only the pressed key
           for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == i);
         } else {
           // Release — gate off, clear active key and LED
-          if (d1BassKeysActiveKey == i) {
+          if (bassKeys.activeKey == i) {
             AudioNoInterrupts();
             d1AmpEnv.noteOff();
             AudioInterrupts();
-            d1BassKeysActiveKey = -1;
+            bassKeys.activeKey = -1;
             for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, LOW);
           }
         }
@@ -1765,7 +1772,7 @@ void updateStepButtons() {
     }
 
     // Chroma note-select: after holding a step button for 300ms, enter note-select
-    if (!d1BassKeysMode) {
+    if (!bassKeys.active) {
       int8_t* heldStep = activeChromaHeldStep();
       if (heldStep && btnState[i]) {
         if (*heldStep == i) {
@@ -2049,10 +2056,10 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
                      : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
         if (active > 1.0f) active = 1.0f;
         int percent = (int)(active * 100.0f + 0.5f);
-        if (d1BassKeysMode) {
-          strncpy(d1BassKeysParamLabel, "DISTORT", sizeof(d1BassKeysParamLabel));
-          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
-          d1BassKeysParamShowStart = sysTickMs;
+        if (bassKeys.active) {
+          strncpy(bassKeys.paramLabel, "DISTORT", sizeof(bassKeys.paramLabel));
+          snprintf(bassKeys.paramValue, sizeof(bassKeys.paramValue), "%d%%", percent);
+          bassKeys.paramShowStart = sysTickMs;
         } else {
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORTION");
           snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -2071,12 +2078,12 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 2:  // D1 Decay
       {
-        if (d1BassKeysMode) {
+        if (bassKeys.active) {
           float norm = normalizeKnob(knobValue);
           float releaseMs = 10.0f + norm * 190.0f;
-          strncpy(d1BassKeysParamLabel, "RELEASE", sizeof(d1BassKeysParamLabel));
-          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%.0fms", releaseMs);
-          d1BassKeysParamShowStart = sysTickMs;
+          strncpy(bassKeys.paramLabel, "RELEASE", sizeof(bassKeys.paramLabel));
+          snprintf(bassKeys.paramValue, sizeof(bassKeys.paramValue), "%.0fms", releaseMs);
+          bassKeys.paramShowStart = sysTickMs;
         } else {
           float decayMs = d1DecayCurve(knobValue);
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 DECAY");
@@ -2087,7 +2094,7 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
 
     case 3:  // D1 Pitch
       {
-        if (d1BassKeysMode) break;  // octave shown in scope area, suppress freq display
+        if (bassKeys.active) break;  // octave shown in scope area, suppress freq display
         if (d1ChromaMode) {
           if (d1ChromaHeldStep >= 0) {
             uint8_t note = d1ChromaKnobToNote(knobValue);
@@ -2112,10 +2119,10 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 4:  // D1 Volume
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        if (d1BassKeysMode) {
-          strncpy(d1BassKeysParamLabel, "VOLUME", sizeof(d1BassKeysParamLabel));
-          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
-          d1BassKeysParamShowStart = sysTickMs;
+        if (bassKeys.active) {
+          strncpy(bassKeys.paramLabel, "VOLUME", sizeof(bassKeys.paramLabel));
+          snprintf(bassKeys.paramValue, sizeof(bassKeys.paramValue), "%d%%", percent);
+          bassKeys.paramShowStart = sysTickMs;
         } else {
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 VOLUME");
           snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -2126,10 +2133,10 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 5:  // D1 Attack/Snap
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        if (d1BassKeysMode) {
-          strncpy(d1BassKeysParamLabel, "SNAP", sizeof(d1BassKeysParamLabel));
-          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
-          d1BassKeysParamShowStart = sysTickMs;
+        if (bassKeys.active) {
+          strncpy(bassKeys.paramLabel, "SNAP", sizeof(bassKeys.paramLabel));
+          snprintf(bassKeys.paramValue, sizeof(bassKeys.paramValue), "%d%%", percent);
+          bassKeys.paramShowStart = sysTickMs;
         } else {
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
           snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -2140,10 +2147,10 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 6:  // D1 EQ (Body)
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        if (d1BassKeysMode) {
-          strncpy(d1BassKeysParamLabel, "BODY", sizeof(d1BassKeysParamLabel));
-          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
-          d1BassKeysParamShowStart = sysTickMs;
+        if (bassKeys.active) {
+          strncpy(bassKeys.paramLabel, "BODY", sizeof(bassKeys.paramLabel));
+          snprintf(bassKeys.paramValue, sizeof(bassKeys.paramValue), "%d%%", percent);
+          bassKeys.paramShowStart = sysTickMs;
         } else {
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
           snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -2154,10 +2161,10 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 7:  // D1 Delay Send
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        if (d1BassKeysMode) {
-          strncpy(d1BassKeysParamLabel, "DELAY", sizeof(d1BassKeysParamLabel));
-          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
-          d1BassKeysParamShowStart = sysTickMs;
+        if (bassKeys.active) {
+          strncpy(bassKeys.paramLabel, "DELAY", sizeof(bassKeys.paramLabel));
+          snprintf(bassKeys.paramValue, sizeof(bassKeys.paramValue), "%d%%", percent);
+          bassKeys.paramShowStart = sysTickMs;
         } else {
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 DELAY SEND");
           snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -2536,12 +2543,12 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 
     case 2:  // D1 Decay (release time in BASS KEYS mode)
       {
-        if (d1BassKeysMode) {
+        if (bassKeys.active) {
           // Decay knob → release time: 10–200ms linear
           float norm = normalizeKnob(knobValue);
-          d1BassKeysReleaseMs = 10.0f + norm * 190.0f;
+          bassKeys.releaseMs = 10.0f + norm * 190.0f;
           AudioNoInterrupts();
-          d1AmpEnv.release(d1BassKeysReleaseMs);
+          d1AmpEnv.release(bassKeys.releaseMs);
           AudioInterrupts();
           break;
         }
@@ -2553,15 +2560,15 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
     case 3:  // D1 Pitch
       {
         // BASS KEYS mode: pitch knob becomes stepped octave selector
-        if (d1BassKeysMode) {
+        if (bassKeys.active) {
           uint8_t newOct;
           if (knobValue < 341)       newOct = 0;  // OCT 2 (C2)
           else if (knobValue < 682)  newOct = 1;  // OCT 3 (C3)
           else                       newOct = 2;  // OCT 4 (C4)
-          if (newOct != d1BassKeysOctave) {
-            d1BassKeysOctave = newOct;
-            d1BassKeysShowOctave = true;
-            d1BassKeysOctaveShowStart = sysTickMs;
+          if (newOct != bassKeys.octave) {
+            bassKeys.octave = newOct;
+            bassKeys.showOctave = true;
+            bassKeys.octaveShowStart = sysTickMs;
           }
           break;
         }
@@ -3053,15 +3060,15 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           applyD3Decay();
 
           // Show the new pattern briefly on step LEDs
-          accentPreviewMask = d3AccentMask;  // already computed above
+          accentPreview.mask = d3AccentMask;  // already computed above
 
           uint32_t nowTick;
           noInterrupts();
           nowTick = sysTickMs;  // sysTickMs is ISR-written
           interrupts();
 
-          accentPreviewStartTick = nowTick;
-          accentPreviewActive = true;  // Main-loop only — no guard needed
+          accentPreview.startTick = nowTick;
+          accentPreview.active = true;  // Main-loop only — no guard needed
 
           updateLEDs();
         }
@@ -3645,10 +3652,10 @@ void updateDisplay() {
 
   // BASS KEYS — large note name while key held, or large octave on knob change
   bool bassKeysDisplayActive = false;
-  if (d1BassKeysMode) {
-    if (d1BassKeysActiveKey >= 0) {
+  if (bassKeys.active) {
+    if (bassKeys.activeKey >= 0) {
       // Key held — show note name in large font
-      uint8_t midiNote = (36 + d1BassKeysOctave * 12) + d1BassKeysActiveKey;
+      uint8_t midiNote = (36 + bassKeys.octave * 12) + bassKeys.activeKey;
       if (midiNote > 75) midiNote = 75;
       char noteName[8];
       formatChromaNote(midiNote, noteName);
@@ -3668,27 +3675,27 @@ void updateDisplay() {
       display.print(noteName);
       display.setTextSize(1);
       bassKeysDisplayActive = true;
-    } else if (d1BassKeysParamLabel[0] && (sysTickMs - d1BassKeysParamShowStart < BASS_KEYS_PARAM_DISPLAY_MS)) {
+    } else if (bassKeys.paramLabel[0] && (sysTickMs - bassKeys.paramShowStart < BASS_KEYS_PARAM_DISPLAY_MS)) {
       // Parameter knob changed — show label + value in large font
       display.setTextSize(1);
       int16_t sx1, sy1;
       uint16_t sw, sh;
-      display.getTextBounds(d1BassKeysParamLabel, 0, 0, &sx1, &sy1, &sw, &sh);
+      display.getTextBounds(bassKeys.paramLabel, 0, 0, &sx1, &sy1, &sw, &sh);
       display.setCursor((128 - sw) / 2, 24);
-      display.print(d1BassKeysParamLabel);
+      display.print(bassKeys.paramLabel);
 
       display.setTextSize(3);
       int16_t nx1, ny1;
       uint16_t nw, nh;
-      display.getTextBounds(d1BassKeysParamValue, 0, 0, &nx1, &ny1, &nw, &nh);
+      display.getTextBounds(bassKeys.paramValue, 0, 0, &nx1, &ny1, &nw, &nh);
       display.setCursor((128 - nw) / 2, 35);
-      display.print(d1BassKeysParamValue);
+      display.print(bassKeys.paramValue);
       display.setTextSize(1);
       bassKeysDisplayActive = true;
-    } else if (d1BassKeysShowOctave && (sysTickMs - d1BassKeysOctaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
+    } else if (bassKeys.showOctave && (sysTickMs - bassKeys.octaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
       // Octave knob changed — show large octave
       char octLabel[8];
-      snprintf(octLabel, sizeof(octLabel), "OCT %d", d1BassKeysOctave + 2);
+      snprintf(octLabel, sizeof(octLabel), "OCT %d", bassKeys.octave + 2);
 
       display.setTextSize(1);
       int16_t sx1, sy1;
@@ -3706,8 +3713,8 @@ void updateDisplay() {
       display.setTextSize(1);
       bassKeysDisplayActive = true;
     } else {
-      d1BassKeysShowOctave = false;  // expired
-      d1BassKeysParamLabel[0] = '\0';  // expired
+      bassKeys.showOctave = false;  // expired
+      bassKeys.paramLabel[0] = '\0';  // expired
     }
   }
 
@@ -3757,7 +3764,7 @@ void updateDisplay() {
   }
 
   // CHROMA dot indicator — only drawn when at least one channel is active (not in BASS KEYS)
-  bool anyChroma = !d1BassKeysMode && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
+  bool anyChroma = !bassKeys.active && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
 
   if (anyChroma) {
     // Clear a strip at the bottom so dots sit on black, not on scope pixels.
