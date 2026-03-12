@@ -19,7 +19,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **External Clock Sync** -- Accepts an external pulse clock with configurable PPQN, auto lock-in, and armed count-in with beat countdown. See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for details.
 
-**OLED Display** -- Real-time oscilloscope waveform view.
+**OLED Display** -- Real-time oscilloscope waveform view and parameter information.
 
 ## CHROMA Mode
 
