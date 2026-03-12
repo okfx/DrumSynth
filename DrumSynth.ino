@@ -2502,7 +2502,14 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           // Remap above deadband to 0→1 so all curves start from zero
           float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
           driveGain = 0.75f + 0.15f * active;
-          freqHz = 27.5f + active * 852.5f;  // A0(27.5) → A5(880)
+          // Frequency: 32-220 Hz (0-75%), 220-440 Hz (75-100%)
+          if (active <= 0.75f) {
+            float t = active / 0.75f;
+            freqHz = 32.0f + t * 188.0f;           // 32 → 220 Hz
+          } else {
+            float t = (active - 0.75f) / 0.25f;
+            freqHz = 220.0f + t * 220.0f;           // 220 → 440 Hz
+          }
 
           // Wet mix comes in gradually with quadratic curve
           const float WET_START = 0.10f;
