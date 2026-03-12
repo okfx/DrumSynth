@@ -2790,8 +2790,8 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
         // Amplitude: 0.05 → 0.50 (linear ramp, full range)
         float drive = 0.05f + 0.45f * active;
 
-        // Frequency: 50 → 440 Hz (exponential, full knob range)
-        float freqHz = 50.0f * expf(active * 2.17f);  // ln(8.74) ≈ 2.17
+        // Frequency: 32 → 110 Hz (exponential, sub-bass waveshaping range)
+        float freqHz = 32.0f * expf(active * 1.234f);  // ln(110/32) ≈ 1.234
 
         // Dry pulls down slightly as drive rises (0.70 → 0.62, before loudness comp)
         float dryGain = 0.70f - 0.08f * active;
