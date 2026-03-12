@@ -15,6 +15,10 @@
 #include "bitmaps.h"
 #include "hw_setup.h"
 
+// Forward declaration for Arduino auto-prototype generation.
+// Full definition is in the button state machine section below.
+struct ButtonHandler;
+
 // FIRMWARE_VERSION auto-generated from compile date (__DATE__).
 // Format: "MM.DD.YY" (e.g., "03.04.26" for March 4, 2026).
 // Uses a constexpr lookup to convert the __DATE__ month abbreviation to a 2-digit number.
@@ -1257,38 +1261,278 @@ void handlePlayStop() {
 
 // Button index → function mapping:
 //   0 = D1 SEQ SELECT   (short press: selectTrack, long hold: toggle D1 chroma mode)
-//   1 = D2 SEQ SELECT
-//   2 = D3 SEQ SELECT
-//   3–5 = unassigned (hardware-present)
-//   6 = PLAY / STOP
-//   7 = MEMORY SLOT     (short press: cycle slot, long hold: enter/save PPQN mode)
-//   8 = LOAD PATTERN
-//   9 = SAVE PATTERN
+// ============================================================================
+//  Button handler state machine
+// ============================================================================
+
+struct ButtonHandler {
+  uint32_t pressTick = 0;
+  bool enteredMode = false;   // first-tier hold (chroma / PPQN)
+  bool enteredMode2 = false;  // second-tier hold (D1 BASS KEYS only)
+
+  void (*onPress)(ButtonHandler& self, uint32_t nowTick);
+  void (*onRelease)(ButtonHandler& self, uint32_t nowTick);
+  void (*onHoldCheck)(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs);
+};
+
+// --- D1 button (index 0): short=selectD1, hold 1.5s=chroma, hold 6s=BASS KEYS ---
+
+static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
+  self.pressTick = nowTick;
+  self.enteredMode = false;   // chroma
+  self.enteredMode2 = false;  // BASS KEYS
+}
+
+static void btnD1Release(ButtonHandler& self, uint32_t /*nowTick*/) {
+  if (!self.enteredMode && !self.enteredMode2 && !bassKeys.active) {
+    selectTrack(TRACK_D1);
+  }
+  self.enteredMode = false;
+  self.enteredMode2 = false;
+}
+
+static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+  // Tier 1: CHROMA at 1.5s
+  if (!self.enteredMode && !self.enteredMode2 && heldMs >= D1_CHROMA_LONG_PRESS_MS) {
+    d1ChromaMode = !d1ChromaMode;
+    self.enteredMode = true;
+    if (d1ChromaMode) {
+      d1FreqBeforeChroma = d1BaseFreq;
+      selectTrack(TRACK_D1);
+    } else {
+      d1ChromaHeldStep = -1;
+      d1BaseFreq = d1FreqBeforeChroma;
+      applyD1Freq();
+    }
+    snprintf(displayParameter1, sizeof(displayParameter1),
+             d1ChromaMode ? "D1 CHROMA ON" : "D1 CHROMA OFF");
+    displayParameter2[0] = '\0';
+    parameterOverlayStartTick = nowTick;
+  }
+  // Tier 2: BASS KEYS at 6s
+  if (!self.enteredMode2 && heldMs >= D1_BASS_KEYS_LONG_PRESS_MS) {
+    self.enteredMode2 = true;
+    if (!bassKeys.active) {
+      enterBassKeysMode();
+    } else {
+      exitBassKeysMode();
+    }
+    snprintf(displayParameter1, sizeof(displayParameter1),
+             bassKeys.active ? "BASS KEYS ON" : "BASS KEYS OFF");
+    displayParameter2[0] = '\0';
+    parameterOverlayStartTick = nowTick;
+    updateLEDs();
+  }
+}
+
+// --- D2 button (index 1): short=selectD2, hold 2s=chroma ---
+
+static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
+  if (bassKeys.active) return;
+  self.pressTick = nowTick;
+  self.enteredMode = false;
+}
+
+static void btnD2Release(ButtonHandler& self, uint32_t /*nowTick*/) {
+  if (bassKeys.active) return;
+  if (!self.enteredMode) selectTrack(TRACK_D2);
+  self.enteredMode = false;
+}
+
+static void btnD2Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+  if (bassKeys.active || self.enteredMode) return;
+  if (heldMs >= D2_CHROMA_LONG_PRESS_MS) {
+    d2ChromaMode = !d2ChromaMode;
+    self.enteredMode = true;
+    if (d2ChromaMode) {
+      selectTrack(TRACK_D2);
+    } else {
+      d2ChromaHeldStep = -1;
+    }
+    applyKnobToEngine(8, analog[8]->getValue());
+    snprintf(displayParameter1, sizeof(displayParameter1),
+             d2ChromaMode ? "D2 CHROMA ON" : "D2 CHROMA OFF");
+    displayParameter2[0] = '\0';
+    parameterOverlayStartTick = nowTick;
+  }
+}
+
+// --- D3 button (index 2): short=selectD3, hold 2s=chroma ---
+
+static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
+  if (bassKeys.active) return;
+  self.pressTick = nowTick;
+  self.enteredMode = false;
+}
+
+static void btnD3Release(ButtonHandler& self, uint32_t /*nowTick*/) {
+  if (bassKeys.active) return;
+  if (!self.enteredMode) selectTrack(TRACK_D3);
+  self.enteredMode = false;
+}
+
+static void btnD3Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+  if (bassKeys.active || self.enteredMode) return;
+  if (heldMs >= D3_CHROMA_LONG_PRESS_MS) {
+    d3ChromaMode = !d3ChromaMode;
+    self.enteredMode = true;
+    if (d3ChromaMode) {
+      selectTrack(TRACK_D3);
+    } else {
+      d3ChromaHeldStep = -1;
+    }
+    applyKnobToEngine(16, analog[16]->getValue());
+    snprintf(displayParameter1, sizeof(displayParameter1),
+             d3ChromaMode ? "D3 CHROMA ON" : "D3 CHROMA OFF");
+    displayParameter2[0] = '\0';
+    parameterOverlayStartTick = nowTick;
+  }
+}
+
+// --- PLAY button (index 6): short=play/stop, hold 2s=WF chroma ---
+
+static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
+  if (bassKeys.active) return;
+  self.pressTick = nowTick;
+  self.enteredMode = false;
+}
+
+static void btnPlayRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
+  if (bassKeys.active) return;
+  if (!self.enteredMode) handlePlayStop();
+  self.enteredMode = false;
+}
+
+static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+  if (bassKeys.active || self.enteredMode) return;
+  if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
+    wfChromaMode = !wfChromaMode;
+    self.enteredMode = true;
+    snprintf(displayParameter1, sizeof(displayParameter1),
+             wfChromaMode ? "WF CHROMA ON" : "WF CHROMA OFF");
+    displayParameter2[0] = '\0';
+    parameterOverlayStartTick = nowTick;
+  }
+}
+
+// --- MEMORY button (index 7): short=cycle slot, hold 2s=PPQN mode ---
+
+static void btnMemoryPress(ButtonHandler& self, uint32_t nowTick) {
+  self.pressTick = nowTick;
+  self.enteredMode = false;
+}
+
+static void btnMemoryRelease(ButtonHandler& self, uint32_t nowTick) {
+  if (self.enteredMode) {
+    // Hold entered PPQN mode — suppress slot cycle
+  } else if (ppqnModeActive) {
+    // Short press in PPQN mode — cycle to next value
+    uint8_t idx = 0;
+    for (uint8_t j = 0; j < PPQN_OPTION_COUNT; j++) {
+      if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
+    }
+    ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
+    ppqnModeLastActivityTick = nowTick;
+  } else {
+    // Short press — cycle memory slot
+    activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
+    snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
+    snprintf(displayParameter2, sizeof(displayParameter2), "SELECT");
+    parameterOverlayStartTick = nowTick;
+  }
+  self.enteredMode = false;
+}
+
+static void btnMemoryHold(ButtonHandler& self, uint32_t nowTick, uint32_t /*heldMs*/) {
+  if (self.enteredMode) return;
+  uint32_t heldMs = (uint32_t)(nowTick - self.pressTick);
+  if (heldMs < PPQN_LONG_PRESS_MS) return;
+
+  if (ppqnModeActive) {
+    ppqn = ppqnModeSelection;
+    savePpqnToEEPROM(ppqn);
+    ppqnModeActive = false;
+    snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
+    snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
+    parameterOverlayStartTick = nowTick;
+    activeRail = RAIL_NONE;
+  } else {
+    if (sequencePlaying) {
+      sequencePlaying = false;
+      setTransport(STOPPED);
+      resetExternalClockState();
+      applyMasterGain();
+    }
+    ppqnModeActive = true;
+    ppqnModeLastActivityTick = nowTick;
+    ppqnModeSelection = ppqn;
+  }
+  self.enteredMode = true;
+}
+
+// --- LOAD button (index 8): press-only ---
+
+static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
+  (void)self;
+  if (!loadStateFromEEPROM(activeSaveSlot)) {
+    for (int step = 0; step < numSteps; step++) {
+      d1Sequence[step] = 0;
+      d2Sequence[step] = 0;
+      d3Sequence[step] = 0;
+      d1ChromaNote[step] = 36;
+      d2ChromaNote[step] = 48;
+      d3ChromaNote[step] = 48;
+    }
+    updateLEDs();
+    patternDirty = false;
+    activeRail = RAIL_NONE;
+    snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
+    snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+    parameterOverlayStartTick = nowTick;
+  }
+}
+
+// --- SAVE button (index 9): press-only ---
+
+static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
+  (void)self;
+  activeRail = RAIL_NONE;
+  if (patternDirty) {
+    saveStateToEEPROM(activeSaveSlot);
+  } else {
+    snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
+    snprintf(displayParameter2, sizeof(displayParameter2), "CLEAN");
+    parameterOverlayStartTick = nowTick;
+  }
+}
+
+// --- Null handler for unassigned buttons (3, 4, 5) ---
+static void btnNullPress(ButtonHandler& s, uint32_t t) { (void)s; (void)t; }
+static void btnNullRelease(ButtonHandler& s, uint32_t t) { (void)s; (void)t; }
+static void btnNullHold(ButtonHandler& s, uint32_t t, uint32_t h) { (void)s; (void)t; (void)h; }
+
+// --- Handler table (indices 0–9 match otherButtonsMux channels) ---
+static ButtonHandler btnHandlers[otherButtonsCount] = {
+  /* 0 D1     */ { 0, false, false, btnD1Press,     btnD1Release,     btnD1Hold     },
+  /* 1 D2     */ { 0, false, false, btnD2Press,     btnD2Release,     btnD2Hold     },
+  /* 2 D3     */ { 0, false, false, btnD3Press,     btnD3Release,     btnD3Hold     },
+  /* 3 n/a    */ { 0, false, false, btnNullPress,   btnNullRelease,   btnNullHold   },
+  /* 4 n/a    */ { 0, false, false, btnNullPress,   btnNullRelease,   btnNullHold   },
+  /* 5 n/a    */ { 0, false, false, btnNullPress,   btnNullRelease,   btnNullHold   },
+  /* 6 PLAY   */ { 0, false, false, btnPlayPress,   btnPlayRelease,   btnPlayHold   },
+  /* 7 MEMORY */ { 0, false, false, btnMemoryPress, btnMemoryRelease, btnMemoryHold },
+  /* 8 LOAD   */ { 0, false, false, btnLoadPress,   btnNullRelease,   btnNullHold   },
+  /* 9 SAVE   */ { 0, false, false, btnSavePress,   btnNullRelease,   btnNullHold   },
+};
+
+// ============================================================================
+//  Generic button scan loop — debounce + dispatch
+// ============================================================================
+
 void updateOtherButtons() {
   static uint32_t lastDebounceTick[otherButtonsCount] = { 0 };
   static bool btnState[otherButtonsCount] = { false };
   static bool btnLastState[otherButtonsCount] = { false };
-
-  // Button 7 (MEMORY) long-hold state — press/release below, continuous hold check at end of loop
-  static uint32_t btnMemoryPressTick = 0;
-  static bool btnMemoryEnteredPpqn = false;
-
-  // Button 0 (D1) long-hold state — press/release below, continuous hold check at end of loop
-  static uint32_t btnD1PressTick = 0;
-  static bool btnD1EnteredChroma = false;
-  static bool btnD1EnteredBassKeys = false;
-
-  // Button 1 (D2) long-hold state — press/release below, continuous hold check at end of loop
-  static uint32_t btnD2PressTick = 0;
-  static bool btnD2EnteredChroma = false;
-
-  // Button 2 (D3) long-hold state — press/release below, continuous hold check at end of loop
-  static uint32_t btnD3PressTick = 0;
-  static bool btnD3EnteredChroma = false;
-
-  // Button 6 (PLAY) long-hold state — press/release below, continuous hold check at end of loop
-  static uint32_t btnPlayPressTick = 0;
-  static bool btnPlayEnteredChroma = false;
 
   uint32_t nowTick;
   noInterrupts();
@@ -1296,11 +1540,9 @@ void updateOtherButtons() {
   interrupts();
 
   for (int i = 0; i < otherButtonsCount; i++) {
-
     otherButtonsMux.channel(i);
     delayMicroseconds(5);
-
-    bool rawPressed = !otherButtonsMux.read();  // no arg — use channel already set above
+    bool rawPressed = !otherButtonsMux.read();
 
     if (rawPressed != btnLastState[i]) {
       lastDebounceTick[i] = nowTick;
@@ -1308,276 +1550,18 @@ void updateOtherButtons() {
 
     uint16_t debounceMs = (i == 6) ? PLAY_DEBOUNCE_MS : BUTTON_DEBOUNCE_MS;
     if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceMs && (rawPressed != btnState[i])) {
-
       btnState[i] = rawPressed;
-
-      // Button 7 (CHANGE MEMORY SLOT) — state transitions only.
-      // 2s hold detection is in continuous check below.
-      if (i == 7) {
-        if (btnState[7]) {
-          // Press down — record timestamp
-          btnMemoryPressTick = nowTick;
-          btnMemoryEnteredPpqn = false;
-        } else {
-          // Release
-          if (btnMemoryEnteredPpqn) {
-            // Hold already entered PPQN mode — ignore release (don't cycle slot)
-          } else if (ppqnModeActive) {
-            // Short press in PPQN mode — cycle to next value
-            uint8_t idx = 0;
-            for (uint8_t j = 0; j < PPQN_OPTION_COUNT; j++) {
-              if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
-            }
-            ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
-            ppqnModeLastActivityTick = nowTick;  // Reset timeout
-          } else {
-            // Short press — cycle memory slot (display only, no load).
-            // The LOAD button (case 8) loads the selected slot.
-            activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
-            snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
-            snprintf(displayParameter2, sizeof(displayParameter2), "SELECT");
-            parameterOverlayStartTick = nowTick;
-          }
-          btnMemoryEnteredPpqn = false;
-        }
-      }
-
-      // Button 0 (D1 SEQ SELECT) — press/release for D1 chroma and BASS KEYS long-hold.
-      if (i == 0) {
-        if (btnState[0]) {
-          // Press down — record timestamp
-          btnD1PressTick = nowTick;
-          btnD1EnteredChroma = false;
-          btnD1EnteredBassKeys = false;
-        } else {
-          // Release
-          if (btnD1EnteredChroma || btnD1EnteredBassKeys) {
-            // Long-press action taken — suppress selectTrack
-          } else if (!bassKeys.active) {
-            // Short press — normal D1 sequence select (blocked in BASS KEYS)
-            selectTrack(TRACK_D1);
-          }
-          btnD1EnteredChroma = false;
-          btnD1EnteredBassKeys = false;
-        }
-      }
-
-      // Button 1 (D2 SEQ SELECT) — short press selects track, hold 2s = toggle D2 chroma
-      // Blocked in BASS KEYS mode.
-      if (i == 1 && !bassKeys.active) {
-        if (btnState[1]) {
-          btnD2PressTick = nowTick;
-          btnD2EnteredChroma = false;
-        } else {
-          if (btnD2EnteredChroma) {
-            // Long-press toggled D2 chroma — suppress selectTrack
-          } else {
-            selectTrack(TRACK_D2);
-          }
-          btnD2EnteredChroma = false;
-        }
-      }
-
-      // Button 2 (D3 SEQ SELECT) — short press selects track, hold = toggle D3 chroma
-      // Blocked in BASS KEYS mode.
-      if (i == 2 && !bassKeys.active) {
-        if (btnState[2]) {
-          btnD3PressTick = nowTick;
-          btnD3EnteredChroma = false;
-        } else {
-          if (btnD3EnteredChroma) {
-            // Long-press toggled D3 chroma — suppress selectTrack
-          } else {
-            selectTrack(TRACK_D3);
-          }
-          btnD3EnteredChroma = false;
-        }
-      }
-
-      // Button 6 (PLAY) — short press = play/stop, hold 2s = toggle WF chroma
-      // Blocked in BASS KEYS mode — sequencer must remain stopped.
-      if (i == 6 && !bassKeys.active) {
-        if (btnState[6]) {
-          btnPlayPressTick = nowTick;
-          btnPlayEnteredChroma = false;
-        } else {
-          if (!btnPlayEnteredChroma) {
-            handlePlayStop();
-          }
-          btnPlayEnteredChroma = false;
-        }
-      }
-
-      // Buttons 0, 1, 2, 6, and 7 handled separately
-      if (btnState[i] && i != 7 && i != 0 && i != 1 && i != 2 && i != 6) {
-        switch (i) {
-
-          // cases 3, 4, 5: hardware-present but unassigned
-
-          case 8:
-            if (!loadStateFromEEPROM(activeSaveSlot)) {
-              // Empty slot — clear to initialized pattern (no steps programmed).
-              // Sequences are main-loop only (see concurrency contract) — no guard needed.
-              for (int step = 0; step < numSteps; step++) {
-                d1Sequence[step] = 0;
-                d2Sequence[step] = 0;
-                d3Sequence[step] = 0;
-                d1ChromaNote[step] = 36;  // C2 default
-                d2ChromaNote[step] = 48;  // C3 default
-                d3ChromaNote[step] = 48;  // C3 default
-              }
-              updateLEDs();
-              patternDirty = false;
-              activeRail = RAIL_NONE;
-              snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
-              snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
-              parameterOverlayStartTick = nowTick;
-            }
-            // updateLEDs() called inside loadStateFromEEPROM() on success
-            break;
-
-          case 9:
-            {
-              activeRail = RAIL_NONE;
-
-              if (patternDirty) {
-                saveStateToEEPROM(activeSaveSlot);
-              } else {
-                snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
-                snprintf(displayParameter2, sizeof(displayParameter2), "CLEAN");
-                parameterOverlayStartTick = nowTick;
-              }
-              break;
-            }
-
-          default:
-            break;
-        }
+      if (btnState[i]) {
+        btnHandlers[i].onPress(btnHandlers[i], nowTick);
+      } else {
+        btnHandlers[i].onRelease(btnHandlers[i], nowTick);
       }
     }
 
-    // Button 7 (MEMORY) continuous hold check — pairs with press/release handling above.
-    // Runs on every scan iteration (not just state change). Enters/exits PPQN mode after 2s.
-    if (i == 7 && btnState[7] && !btnMemoryEnteredPpqn) {
-      if ((uint32_t)(nowTick - btnMemoryPressTick) >= PPQN_LONG_PRESS_MS) {
-        if (ppqnModeActive) {
-          // Long-press while in PPQN mode — save and exit
-          ppqn = ppqnModeSelection;
-          savePpqnToEEPROM(ppqn);
-          ppqnModeActive = false;
-          snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
-          snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
-          parameterOverlayStartTick = nowTick;
-          activeRail = RAIL_NONE;
-        } else {
-          // Long-press while not in PPQN mode — enter PPQN mode
-          // Stop playback first — changing PPQN mid-playback would leave the
-          // accumulator and subdivision state in an ambiguous state.
-          if (sequencePlaying) {
-            sequencePlaying = false;
-            setTransport(STOPPED);
-            resetExternalClockState();
-            applyMasterGain();
-          }
-          ppqnModeActive = true;
-          ppqnModeLastActivityTick = nowTick;
-          ppqnModeSelection = ppqn;
-        }
-        btnMemoryEnteredPpqn = true;  // Prevent release from cycling slot/PPQN
-      }
-    }
-
-    // Button 0 (D1) continuous hold check — pairs with press/release handling above.
-    // Tier 1 (1.5s): CHROMA toggle.  Tier 2 (6s): BASS KEYS toggle.
-    if (i == 0 && btnState[0]) {
-      uint32_t heldMs = (uint32_t)(nowTick - btnD1PressTick);
-
-      // Tier 1: CHROMA at 1.5s
-      if (!btnD1EnteredChroma && !btnD1EnteredBassKeys && heldMs >= D1_CHROMA_LONG_PRESS_MS) {
-        d1ChromaMode = !d1ChromaMode;
-        btnD1EnteredChroma = true;
-        if (d1ChromaMode) {
-          d1FreqBeforeChroma = d1BaseFreq;  // save pitch on entry
-          selectTrack(TRACK_D1);
-        } else {
-          d1ChromaHeldStep = -1;            // clear any active note-select
-          d1BaseFreq = d1FreqBeforeChroma;  // restore pitch on exit
-          applyD1Freq();
-        }
-        snprintf(displayParameter1, sizeof(displayParameter1),
-                 d1ChromaMode ? "D1 CHROMA ON" : "D1 CHROMA OFF");
-        displayParameter2[0] = '\0';
-        parameterOverlayStartTick = nowTick;
-      }
-
-      // Tier 2: BASS KEYS at 6s
-      if (!btnD1EnteredBassKeys && heldMs >= D1_BASS_KEYS_LONG_PRESS_MS) {
-        btnD1EnteredBassKeys = true;
-        if (!bassKeys.active) {
-          enterBassKeysMode();
-        } else {
-          exitBassKeysMode();
-        }
-        snprintf(displayParameter1, sizeof(displayParameter1),
-                 bassKeys.active ? "BASS KEYS ON" : "BASS KEYS OFF");
-        displayParameter2[0] = '\0';
-        parameterOverlayStartTick = nowTick;
-        updateLEDs();
-      }
-    }
-
-    // Button 1 (D2) continuous hold check — toggle D2 chroma after 2s
-    if (i == 1 && btnState[1] && !btnD2EnteredChroma) {
-      if ((uint32_t)(nowTick - btnD2PressTick) >= D2_CHROMA_LONG_PRESS_MS) {
-        d2ChromaMode = !d2ChromaMode;
-        btnD2EnteredChroma = true;
-        if (d2ChromaMode) {
-          selectTrack(TRACK_D2);
-        } else {
-          d2ChromaHeldStep = -1;  // clear any active note-select
-        }
-
-        // Immediately reapply pitch using current knob value
-        applyKnobToEngine(8, analog[8]->getValue());
-
-        snprintf(displayParameter1, sizeof(displayParameter1),
-                 d2ChromaMode ? "D2 CHROMA ON" : "D2 CHROMA OFF");
-        displayParameter2[0] = '\0';
-        parameterOverlayStartTick = nowTick;
-      }
-    }
-
-    // Button 2 (D3) continuous hold check — toggle D3 chroma after 2s
-    if (i == 2 && btnState[2] && !btnD3EnteredChroma) {
-      if ((uint32_t)(nowTick - btnD3PressTick) >= D3_CHROMA_LONG_PRESS_MS) {
-        d3ChromaMode = !d3ChromaMode;
-        btnD3EnteredChroma = true;
-        if (d3ChromaMode) {
-          selectTrack(TRACK_D3);
-        } else {
-          d3ChromaHeldStep = -1;  // clear any active note-select
-        }
-
-        // Immediately reapply pitch using current knob value
-        applyKnobToEngine(16, analog[16]->getValue());
-
-        snprintf(displayParameter1, sizeof(displayParameter1),
-                 d3ChromaMode ? "D3 CHROMA ON" : "D3 CHROMA OFF");
-        displayParameter2[0] = '\0';
-        parameterOverlayStartTick = nowTick;
-      }
-    }
-
-    // Button 6 (PLAY) continuous hold check — toggle WF chroma after 2s
-    if (i == 6 && btnState[6] && !btnPlayEnteredChroma) {
-      if ((uint32_t)(nowTick - btnPlayPressTick) >= WF_CHROMA_LONG_PRESS_MS) {
-        wfChromaMode = !wfChromaMode;
-        btnPlayEnteredChroma = true;
-        snprintf(displayParameter1, sizeof(displayParameter1),
-                 wfChromaMode ? "WF CHROMA ON" : "WF CHROMA OFF");
-        displayParameter2[0] = '\0';
-        parameterOverlayStartTick = nowTick;
-      }
+    // Continuous hold check — runs every scan iteration while button is held
+    if (btnState[i]) {
+      uint32_t heldMs = (uint32_t)(nowTick - btnHandlers[i].pressTick);
+      btnHandlers[i].onHoldCheck(btnHandlers[i], nowTick, heldMs);
     }
 
     btnLastState[i] = rawPressed;
