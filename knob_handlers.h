@@ -713,7 +713,9 @@ static void engineD1Volume(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
   d1Volume = norm * norm * 0.65f;  // Log taper (square law), max 0.65
+  AudioNoInterrupts();
   drumMixer.gain(0, d1Volume);
+  AudioInterrupts();
   updateDrumDelayGains();
 }
 
@@ -779,7 +781,9 @@ static void engineD2Pitch(uint8_t idx, int knobValue) {
     return;
   }
   float freqHz = mapFloat(knobValue, 0, 1023, 110.0f, 440.0f);  // A2-A4
+  AudioNoInterrupts();
   d2Osc.frequency(freqHz);
+  AudioInterrupts();
 }
 
 // Case 9: D2 Decay
@@ -953,7 +957,9 @@ static void engineD2Volume(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
   d2Volume = norm * norm * 1.25f;  // Log taper (square law), max 1.25
+  AudioNoInterrupts();
   drumMixer.gain(1, d2Volume);
+  AudioInterrupts();
   updateDrumDelayGains();
 }
 
@@ -1208,7 +1214,9 @@ static void engineD3Volume(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
   d3Volume = norm * norm * 0.75f;  // Log taper (square law), max 0.75
+  AudioNoInterrupts();
   drumMixer.gain(2, d3Volume);
+  AudioInterrupts();
   updateDrumDelayGains();
 }
 

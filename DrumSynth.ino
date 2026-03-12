@@ -1643,8 +1643,9 @@ void updateLEDs() {
   if (preview) {
     for (int i = 0; i < numSteps; i++) {
       bool on = (mask >> ((numSteps - 1) - i)) & 1;
-      ledShiftReg.set(i, on);
+      ledShiftReg.setNoUpdate(i, on);
     }
+    ledShiftReg.updateRegisters();
     return;
   }
 
@@ -1667,8 +1668,9 @@ void updateLEDs() {
       ledState = true;
     }
 
-    ledShiftReg.set(i, ledState);
+    ledShiftReg.setNoUpdate(i, ledState);
   }
+  ledShiftReg.updateRegisters();
 }
 
 // Returns the active chroma held-step pointer for the current track, or nullptr
@@ -1886,7 +1888,9 @@ static inline uint8_t d2ChromaKnobToNote(int knobValue) {
 // Sets d2Osc frequency from MIDI note. Called per-step during playback
 // when D2 chroma mode is active. Only d2Osc is pitched — d2Body stays fixed.
 inline void applyD2ChromaFreq(uint8_t midiNote) {
+  AudioNoInterrupts();
   d2Osc.frequency(midiToFreq(midiNote));
+  AudioInterrupts();
 }
 
 // D3 chroma mode constants
