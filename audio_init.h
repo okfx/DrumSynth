@@ -14,7 +14,7 @@ extern float d1Volume;
 extern float d2Volume;
 extern float d3Volume;
 
-inline void audioInit() {
+void audioInit() {
 
   // ============================================================================
   // SGTL5000 CODEC SETUP

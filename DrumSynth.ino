@@ -1203,6 +1203,9 @@ void handlePlayStop() {
     // PLAY = ARM. No step fires here. The next external pulse (or
     // internal tick for RUN_INT) fires step 0.
     subdivTimer.end();
+    // Snapshot sysTickMs before the critical section — avoids reading
+    // the volatile inside noInterrupts() where it can't update anyway.
+    uint32_t nowTick = sysTickMs;
     // Wide critical section — all ISR-shared state must be initialized
     // before setTransport() arms the timer that creates the ISR source.
     noInterrupts();
@@ -1237,7 +1240,7 @@ void handlePlayStop() {
       sequencePlaying = true;
       setTransport(RUN_INT);
     }
-    displayBlockedUntilTick = sysTickMs + 500;  // suppress OLED push during drop-in
+    displayBlockedUntilTick = nowTick + 500;  // suppress OLED push during drop-in
     interrupts();
   } else {
     // STOP — also aborts armed count-in if active.
@@ -1831,29 +1834,40 @@ static inline float d1PitchCurve(int knobValue) {
 static constexpr uint8_t D1_CHROMA_NOTE_MIN = 33;
 static constexpr uint8_t D1_CHROMA_NOTE_MAX = 75;
 
-// D1 chroma frequency: maps MIDI note (33–75) to Hz via lookup table.
-// Pre-computed A1(33)=55Hz through D#5(75)=622.254Hz.
-static const float D1_CHROMA_FREQ[] = {
-  // MIDI 33  34       35       36       37       38       39       40
+// Shared MIDI-to-Hz lookup table covering MIDI 33 (A1) through 84 (C6).
+// Used by D1/D2/D3 chroma modes and wavefolder chroma — replaces per-voice
+// expf()/powf() calls with a single 208-byte flash table.
+static constexpr uint8_t MIDI_FREQ_MIN = 33;
+static constexpr uint8_t MIDI_FREQ_MAX = 84;
+
+static const float MIDI_FREQ[] = {
+  // MIDI 33   34       35       36       37       38       39       40
   55.000f, 58.270f, 61.735f, 65.406f, 69.296f, 73.416f, 77.782f, 82.407f,
-  // MIDI 41  42       43       44       45       46       47       48
+  // MIDI 41   42       43       44       45       46       47       48
   87.307f, 92.499f, 97.999f, 103.826f, 110.000f, 116.541f, 123.471f, 130.813f,
-  // MIDI 49  50       51       52       53       54       55       56
+  // MIDI 49   50       51       52       53       54       55       56
   138.591f, 146.832f, 155.563f, 164.814f, 174.614f, 184.997f, 195.998f, 207.652f,
-  // MIDI 57  58       59       60       61       62       63       64
+  // MIDI 57   58       59       60       61       62       63       64
   220.000f, 233.082f, 246.942f, 261.626f, 277.183f, 293.665f, 311.127f, 329.628f,
-  // MIDI 65  66       67       68       69       70       71       72
+  // MIDI 65   66       67       68       69       70       71       72
   349.228f, 369.994f, 391.995f, 415.305f, 440.000f, 466.164f, 493.883f, 523.251f,
-  // MIDI 73  74       75
-  554.365f, 587.330f, 622.254f
+  // MIDI 73   74       75       76       77       78       79       80
+  554.365f, 587.330f, 622.254f, 659.255f, 698.456f, 739.989f, 783.991f, 830.609f,
+  // MIDI 81   82       83       84
+  880.000f, 932.328f, 987.767f, 1046.502f
 };
 
-static_assert(sizeof(D1_CHROMA_FREQ) / sizeof(D1_CHROMA_FREQ[0]) == (D1_CHROMA_NOTE_MAX - D1_CHROMA_NOTE_MIN + 1),
-              "D1_CHROMA_FREQ must have one entry per MIDI note in range");
+static_assert(sizeof(MIDI_FREQ) / sizeof(MIDI_FREQ[0]) == (MIDI_FREQ_MAX - MIDI_FREQ_MIN + 1),
+              "MIDI_FREQ must have one entry per MIDI note in range");
+
+// Clamp-and-lookup: safe for any uint8_t input.
+inline float midiToFreq(uint8_t midiNote) {
+  uint8_t idx = constrain(midiNote, MIDI_FREQ_MIN, MIDI_FREQ_MAX) - MIDI_FREQ_MIN;
+  return MIDI_FREQ[idx];
+}
 
 inline float d1ChromaFreq(uint8_t midiNote) {
-  uint8_t idx = constrain(midiNote, D1_CHROMA_NOTE_MIN, D1_CHROMA_NOTE_MAX) - D1_CHROMA_NOTE_MIN;
-  return D1_CHROMA_FREQ[idx];
+  return midiToFreq(midiNote);
 }
 
 // Chroma pitch: writes note name string for display.
@@ -1865,7 +1879,7 @@ static inline void formatChromaNote(uint8_t midiNote, char* outName) {
   snprintf(outName, 5, "%s%d", NOTE_NAMES[midiNote % 12], (midiNote / 12) - 1);
 }
 
-// Maps knob 0–1023 to MIDI note in A1(33)–A4(69) range, quantized.
+// Maps knob 0–1023 to MIDI note in A1(33)–D#5(75) range, quantized.
 static inline uint8_t d1ChromaKnobToNote(int knobValue) {
   float semi = (knobValue / 1023.0f) * (float)(D1_CHROMA_NOTE_MAX - D1_CHROMA_NOTE_MIN);
   int note = constrain((int)(semi + 0.5f), 0, D1_CHROMA_NOTE_MAX - D1_CHROMA_NOTE_MIN);
@@ -1873,21 +1887,20 @@ static inline uint8_t d1ChromaKnobToNote(int knobValue) {
 }
 
 // D2 chroma mode constants
-static constexpr uint8_t D2_CHROM_NOTE_MIN = 45;  // A2
-static constexpr uint8_t D2_CHROM_NOTE_MAX = 69;  // A4
+static constexpr uint8_t D2_CHROMA_NOTE_MIN = 45;  // A2
+static constexpr uint8_t D2_CHROMA_NOTE_MAX = 69;  // A4
 
 // Maps knob 0–1023 linearly to MIDI note in A2(45)–A4(69) range, quantized.
 static inline uint8_t d2ChromaKnobToNote(int knobValue) {
-  float semi = (knobValue / 1023.0f) * (float)(D2_CHROM_NOTE_MAX - D2_CHROM_NOTE_MIN);
-  return (uint8_t)constrain((int)(semi + 0.5f) + D2_CHROM_NOTE_MIN,
-                             D2_CHROM_NOTE_MIN, D2_CHROM_NOTE_MAX);
+  float semi = (knobValue / 1023.0f) * (float)(D2_CHROMA_NOTE_MAX - D2_CHROMA_NOTE_MIN);
+  return (uint8_t)constrain((int)(semi + 0.5f) + D2_CHROMA_NOTE_MIN,
+                             D2_CHROMA_NOTE_MIN, D2_CHROMA_NOTE_MAX);
 }
 
 // Sets d2Osc frequency from MIDI note. Called per-step during playback
 // when D2 chroma mode is active. Only d2Osc is pitched — d2Body stays fixed.
 inline void applyD2ChromaFreq(uint8_t midiNote) {
-  float freqHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
-  d2Osc.frequency(freqHz);
+  d2Osc.frequency(midiToFreq(midiNote));
 }
 
 // D3 chroma mode constants
@@ -1915,7 +1928,7 @@ static inline uint8_t d3ChromaKnobToNote(int knobValue) {
 // MIDI note.  Called per-step during playback when D3 chroma mode is active.
 // Filter tracking is handled separately by the knob handler — not per-step.
 inline void applyD3ChromaFreq(uint8_t midiNote) {
-  float baseHz = 440.0f * expf((float)(midiNote - 69) * (logf(2.0f) / 12.0f));
+  float baseHz = midiToFreq(midiNote);
   AudioNoInterrupts();
   // 606 bank: power chord spacing
   d3606Osc1.frequency(baseHz * 1.0f);   // root
@@ -3087,7 +3100,7 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
         if (wfChromaMode) {
           // Quantize wavefold frequency to chromatic notes (C2–C6, MIDI 36–84)
           uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
-          float freq = 440.0f * powf(2.0f, (midiNote - 69) / 12.0f);
+          float freq = midiToFreq(midiNote);
           AudioNoInterrupts();
           masterWfOscSine.frequency(freq);
           masterWfOscSaw.frequency(freq);

@@ -86,7 +86,8 @@ struct EepromSlot {
 //  Constants
 // ============================================================================
 
-static constexpr uint16_t EEPROM_MAGIC      = 0x4247;  // Identifies valid slot (bumped for flags byte)
+static constexpr uint16_t EEPROM_MAGIC_PREV  = 0x4247;  // Previous magic (D1 chroma 33–69)
+static constexpr uint16_t EEPROM_MAGIC      = 0x4248;  // Current magic (D1 chroma 33–75)
 static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
 // PPQN stored after all save slots
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
@@ -115,19 +116,30 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   EepromSlot slot;
   EEPROM.get((int)addr, slot);
 
-  // Verify magic number
-  if (slot.magic != EEPROM_MAGIC) return false;
+  // Verify magic number — accept current or previous version
+  bool isLegacy = false;
+  if (slot.magic == EEPROM_MAGIC) {
+    // Current format
+  } else if (slot.magic == EEPROM_MAGIC_PREV) {
+    isLegacy = true;  // D1 chroma range was 33–69
+  } else {
+    return false;
+  }
 
   // Verify CRC8 over pattern data — catches partial writes and bit rot
   uint8_t expected = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
   if (slot.crc != expected) return false;
+
+  // D1 chroma upper bound depends on which magic wrote the slot.
+  // Legacy slots used 33–69; current uses 33–75 (D1_CHROMA_NOTE_MAX).
+  uint8_t d1ChromaMax = isLegacy ? 69 : 75;
 
   // Sequences are main-loop only (see concurrency contract in ext_sync.h)
   for (int step = 0; step < numSteps; step++) {
     d1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
     d2Sequence[step] = slot.patterns.drum2[step] ? 1 : 0;
     d3Sequence[step] = slot.patterns.drum3[step] ? 1 : 0;
-    d1ChromaNote[step] = constrain(slot.patterns.d1Chroma[step], 33, 69);  // A1–A4
+    d1ChromaNote[step] = constrain(slot.patterns.d1Chroma[step], 33, d1ChromaMax);
     d2ChromaNote[step] = constrain(slot.patterns.d2Chroma[step], 45, 69);  // A2–A4
     d3ChromaNote[step] = constrain(slot.patterns.d3Chroma[step], 48, 84);  // C3–C6
   }
