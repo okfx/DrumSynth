@@ -75,6 +75,8 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - Oscilloscope scroll speed reduced for easier waveform shape comparison across oscillators
 - LED updates batched to single SPI transaction across all `updateLEDs()` paths (accent preview, normal pattern)
 - Audio thread safety: `AudioNoInterrupts()` guards added to `applyD2ChromaFreq()`, volume engines, and `engineD2Pitch()`
+- EEPROM safety: `loadStateFromEEPROM()` and `saveStateToEEPROM()` cleaned up—unnecessary `noInterrupts()` wrappers removed (ISR does not access EEPROM)
+- Display robustness: D1/D2/D3 decay display functions confirmed not to factor in choke knob (show base decay only)
 - WF Chromatic mode state now persisted in EEPROM pattern slots (backward-compatible with V1/V2 slots)
 
 ## Changes (v1.03.1)
