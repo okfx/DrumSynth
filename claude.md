@@ -112,7 +112,7 @@ but must be kept in mind during refactoring.
    `DrumSynth.ino` with the other `*Curve()` helpers and call it from both
    display and engine functions. Never duplicate the formula.
 5. **When disabling knobs/buttons in MONOBASS mode**, follow the existing pattern:
-   display shows `"DISABLED FOR"` / `"MONOBASS MODE"`, engine returns early.
+   display shows `"DISABLED FOR"` / `"MONOBASS"`, engine returns early.
 6. **When asked to discuss or conceptualize**, do NOT explore the codebase unless asked.
 
 ## Sharp Edges

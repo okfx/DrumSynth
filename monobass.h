@@ -17,24 +17,33 @@
 //  Constants
 // ============================================================================
 
-static constexpr uint32_t D1_MONOBASS_LONG_PRESS_MS = 6000;
-static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS   = 1200;
-static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1500;
+static constexpr uint32_t D1_MONOBASS_LONG_PRESS_MS  = 4000;
+static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS    = 1200;
+static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1200;
+static constexpr uint32_t MONOBASS_NOTE_DISPLAY_MS   = 1200;
 
 // ============================================================================
 //  State
 // ============================================================================
 
 struct MonoBassState {
+  static constexpr uint8_t kMaxHeldKeys = 8;
+
   bool active = false;
   uint8_t octave = 0;           // 0=OCT2 (C2), 1=OCT3 (C3), 2=OCT4 (C4)
-  int8_t activeKey = -1;        // currently pressed key index (-1 = none)
   float releaseMs = 30.0f;      // gate-style release time (knob-controlled)
   bool showOctave = false;      // show large OCT display in scope area
   uint32_t octaveShowStart = 0; // when octave display started (sysTickMs)
   char paramLabel[12] = "";     // short label for large-font param display
   char paramValue[12] = "";     // value string for large-font param display
   uint32_t paramShowStart = 0;  // when param display started
+  uint32_t noteShowStart = 0;   // when note display was triggered
+
+  // Last-note-priority key stack for polyphonic trill
+  int8_t heldKeys[kMaxHeldKeys];
+  uint8_t heldCount = 0;
+
+  int8_t topKey() const { return heldCount > 0 ? heldKeys[heldCount - 1] : -1; }
 };
 
 extern MonoBassState monoBass;
@@ -69,6 +78,7 @@ extern void applyD1Freq();
 extern void triggerD1();
 extern void setTransport(TransportState s);
 extern void updateLEDs();
+extern void drawOutlinedText(int x, int y, const char* text);
 
 // ============================================================================
 //  Entry / exit
@@ -86,8 +96,10 @@ void enterMonoBassMode() {
   pendingStepCount = 0;
   wantSwitchToExt = false;
   interrupts();
-  monoBass.activeKey = -1;
+  monoBass.heldCount = 0;
+  memset(monoBass.heldKeys, -1, sizeof(monoBass.heldKeys));
   monoBass.showOctave = false;
+  monoBass.noteShowStart = 0;
   // Clear any chroma note-select state so it doesn't persist across mode switch
   d1ChromaHeldStep = -1;
   d2ChromaHeldStep = -1;
@@ -120,27 +132,60 @@ void exitMonoBassMode() {
 // ============================================================================
 
 // Handle a step button press/release in MONOBASS mode.
+// Last-note priority: most recently pressed key sounds. Releasing it
+// falls back to the previous still-held key, enabling trills.
 // Returns true if handled (caller should skip normal step logic).
 bool handleMonoBassButton(int buttonIndex, bool pressed) {
   if (!monoBass.active) return false;
 
   if (pressed) {
-    // Press — play note
+    // Push key onto held-key stack
+    if (monoBass.heldCount < MonoBassState::kMaxHeldKeys) {
+      monoBass.heldKeys[monoBass.heldCount++] = buttonIndex;
+    } else {
+      // Stack full — drop oldest, shift left, push new at end
+      for (uint8_t k = 1; k < MonoBassState::kMaxHeldKeys; k++) {
+        monoBass.heldKeys[k - 1] = monoBass.heldKeys[k];
+      }
+      monoBass.heldKeys[MonoBassState::kMaxHeldKeys - 1] = buttonIndex;
+    }
+
+    // Play the new top key
     uint8_t midiNote = (36 + monoBass.octave * 12) + buttonIndex;
-    if (midiNote > 75) midiNote = 75;  // clamp to D#5 (table max)
+    if (midiNote > 75) midiNote = 75;
     d1BaseFreq = d1ChromaFreq(midiNote);
     applyD1Freq();
     triggerD1();
-    monoBass.activeKey = buttonIndex;
-    // Light only the pressed key
+    monoBass.noteShowStart = sysTickMs;
+
+    // Light only the sounding key
     for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == buttonIndex);
   } else {
-    // Release — gate off, clear active key and LED
-    if (monoBass.activeKey == buttonIndex) {
+    // Remove released key from stack
+    bool found = false;
+    for (uint8_t k = 0; k < monoBass.heldCount; k++) {
+      if (monoBass.heldKeys[k] == buttonIndex) found = true;
+      if (found && k + 1 < monoBass.heldCount) {
+        monoBass.heldKeys[k] = monoBass.heldKeys[k + 1];
+      }
+    }
+    if (found) monoBass.heldCount--;
+
+    int8_t top = monoBass.topKey();
+    if (top >= 0) {
+      // Fall back to previous held key
+      uint8_t midiNote = (36 + monoBass.octave * 12) + top;
+      if (midiNote > 75) midiNote = 75;
+      d1BaseFreq = d1ChromaFreq(midiNote);
+      applyD1Freq();
+      triggerD1();
+      monoBass.noteShowStart = sysTickMs;
+      for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == top);
+    } else {
+      // No keys held — gate off
       AudioNoInterrupts();
       d1AmpEnv.noteOff();
       AudioInterrupts();
-      monoBass.activeKey = -1;
       for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, LOW);
     }
   }
@@ -151,80 +196,52 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
 //  Display — scope area renderer
 // ============================================================================
 
-// Render MONOBASS display in scope area (note name, octave, or param).
-// Returns true if it drew content (suppresses oscilloscope).
-bool renderMonoBassScope(uint32_t nowMs) {
-  if (!monoBass.active) return false;
+// Helper: draw centered outlined text at given y position and text size.
+static inline void monoBassOutlinedCenter(const char* text, int y, uint8_t textSize) {
+  display.setTextSize(textSize);
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+  drawOutlinedText((128 - w) / 2, y, text);
+  display.setTextSize(1);
+}
 
-  if (monoBass.activeKey >= 0) {
-    // Key held — show note name
-    uint8_t midiNote = (36 + monoBass.octave * 12) + monoBass.activeKey;
+// Render MONOBASS overlay in scope area (note, param, or octave).
+// Draws on top of scope waveform using outlined text. Always returns false
+// so the oscilloscope continues to render behind.
+void renderMonoBassScope(uint32_t nowMs) {
+  if (!monoBass.active) return;
+
+  // Priority 1: Parameter knob changed recently
+  if (monoBass.paramLabel[0] && (nowMs - monoBass.paramShowStart < MONOBASS_PARAM_DISPLAY_MS)) {
+    monoBassOutlinedCenter(monoBass.paramLabel, 24, 1);
+    monoBassOutlinedCenter(monoBass.paramValue, 37, 2);
+    return;
+  }
+
+  // Priority 2: Octave changed recently
+  if (monoBass.showOctave && (nowMs - monoBass.octaveShowStart < MONOBASS_OCT_DISPLAY_MS)) {
+    char octLabel[8];
+    snprintf(octLabel, sizeof(octLabel), "OCT %d", monoBass.octave + 2);
+    monoBassOutlinedCenter("MONOBASS", 24, 1);
+    monoBassOutlinedCenter(octLabel, 37, 2);
+    return;
+  }
+
+  // Priority 3: Note display (temporary — shown for MONOBASS_NOTE_DISPLAY_MS after key press)
+  if (monoBass.topKey() >= 0 && (nowMs - monoBass.noteShowStart < MONOBASS_NOTE_DISPLAY_MS)) {
+    int8_t top = monoBass.topKey();
+    uint8_t midiNote = (36 + monoBass.octave * 12) + top;
     if (midiNote > 75) midiNote = 75;
     char noteName[8];
     formatChromaNote(midiNote, noteName);
-
-    display.setTextSize(1);
-    int16_t sx1, sy1;
-    uint16_t sw, sh;
-    display.getTextBounds("MONOBASS", 0, 0, &sx1, &sy1, &sw, &sh);
-    display.setCursor((128 - sw) / 2, 24);
-    display.print("MONOBASS");
-
-    display.setTextSize(3);
-    int16_t nx1, ny1;
-    uint16_t nw, nh;
-    display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 35);
-    display.print(noteName);
-    display.setTextSize(1);
-    return true;
+    monoBassOutlinedCenter(noteName, 34, 2);
+    return;
   }
 
-  if (monoBass.paramLabel[0] && (nowMs - monoBass.paramShowStart < MONOBASS_PARAM_DISPLAY_MS)) {
-    // Parameter knob changed — show label + value
-    display.setTextSize(1);
-    int16_t sx1, sy1;
-    uint16_t sw, sh;
-    display.getTextBounds(monoBass.paramLabel, 0, 0, &sx1, &sy1, &sw, &sh);
-    display.setCursor((128 - sw) / 2, 24);
-    display.print(monoBass.paramLabel);
-
-    display.setTextSize(3);
-    int16_t nx1, ny1;
-    uint16_t nw, nh;
-    display.getTextBounds(monoBass.paramValue, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 35);
-    display.print(monoBass.paramValue);
-    display.setTextSize(1);
-    return true;
-  }
-
-  if (monoBass.showOctave && (nowMs - monoBass.octaveShowStart < MONOBASS_OCT_DISPLAY_MS)) {
-    // Octave knob changed — show large octave
-    char octLabel[8];
-    snprintf(octLabel, sizeof(octLabel), "OCT %d", monoBass.octave + 2);
-
-    display.setTextSize(1);
-    int16_t sx1, sy1;
-    uint16_t sw, sh;
-    display.getTextBounds("MONOBASS", 0, 0, &sx1, &sy1, &sw, &sh);
-    display.setCursor((128 - sw) / 2, 24);
-    display.print("MONOBASS");
-
-    display.setTextSize(3);
-    int16_t nx1, ny1;
-    uint16_t nw, nh;
-    display.getTextBounds(octLabel, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 35);
-    display.print(octLabel);
-    display.setTextSize(1);
-    return true;
-  }
-
-  // All MONOBASS displays expired
+  // All displays expired — clear flags
   monoBass.showOctave = false;
   monoBass.paramLabel[0] = '\0';
-  return false;
 }
 
 #endif // MONOBASS_H

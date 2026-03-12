@@ -58,6 +58,7 @@ enum Track : uint8_t {
 // overlay and debounce timing
 static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
+static constexpr uint16_t MONOBASS_DEBOUNCE_MS = 2;    // 2ms — keyboard feel for MONOBASS live play
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
 static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3% — used by all wavefolder cases (11, 19, 30)
@@ -1392,19 +1393,17 @@ static void btnD3Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
 // --- PLAY button (index 6): short=play/stop, hold 2s=WF chroma ---
 
 static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
-  if (monoBass.active) return;
   self.pressTick = nowTick;
   self.enteredMode = false;
 }
 
 static void btnPlayRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (monoBass.active) return;
-  if (!self.enteredMode) handlePlayStop();
+  if (!self.enteredMode && !monoBass.active) handlePlayStop();
   self.enteredMode = false;
 }
 
 static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  if (monoBass.active || self.enteredMode) return;
+  if (self.enteredMode) return;
   if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
     wfChromaMode = !wfChromaMode;
     self.enteredMode = true;
@@ -1420,7 +1419,7 @@ static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) 
 static void btnMemoryPress(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     parameterOverlayStartTick = nowTick;
     activeRail = RAIL_NONE;
     return;
@@ -1486,7 +1485,7 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     parameterOverlayStartTick = nowTick;
     activeRail = RAIL_NONE;
     return;
@@ -1515,7 +1514,7 @@ static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     parameterOverlayStartTick = nowTick;
     activeRail = RAIL_NONE;
     return;
@@ -1603,7 +1602,7 @@ void updateLEDs() {
   // MONOBASS mode — all LEDs off (active key lit in updateStepButtons on press)
   if (monoBass.active) {
     for (int i = 0; i < numSteps; i++) {
-      ledShiftReg.set(i, i == monoBass.activeKey);
+      ledShiftReg.set(i, i == monoBass.topKey());
     }
     return;
   }
@@ -1682,7 +1681,8 @@ void updateStepButtons() {
       lastDebounceTick[i] = nowTick;
     }
 
-    if ((uint32_t)(nowTick - lastDebounceTick[i]) > STEP_DEBOUNCE_MS && (rawPressed != btnState[i])) {
+    uint16_t debounceMs = monoBass.active ? MONOBASS_DEBOUNCE_MS : STEP_DEBOUNCE_MS;
+    if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceMs && (rawPressed != btnState[i])) {
 
       btnState[i] = rawPressed;
 
@@ -2487,17 +2487,17 @@ void updateDisplay() {
 
   renderTopBar(bpmSnap, trackSnap, chokeSnap, slotSnap, playingSnap);
 
-  // Scope area: MONOBASS display > chroma note select > oscilloscope
-  bool monoBassDisplayActive = renderMonoBassScope(nowMs);
+  // Scope area: chroma note select > oscilloscope, then MONOBASS overlay on top
   bool noteSelectActive = renderChromaNoteSelect();
-  if (!monoBassDisplayActive && !noteSelectActive) {
+  if (!noteSelectActive) {
     drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
   }
+  renderMonoBassScope(nowMs);  // outlined overlay on top of scope
 
   renderChromaDots();
 
   // Suppress small parameter overlay when scope area owns the display
-  if (noteSelectActive || monoBassDisplayActive) overlayActiveNow = false;
+  if (noteSelectActive || monoBass.active) overlayActiveNow = false;
   if (overlayActiveNow) {
     renderParameterOverlay(railSnap, param1Snap, param2Snap);
   }

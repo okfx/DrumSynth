@@ -197,7 +197,7 @@ static void displayD1Decay(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) {
     float norm = normalizeKnob(knobValue);
-    float releaseMs = 10.0f + norm * 190.0f;
+    float releaseMs = 10.0f + norm * 990.0f;
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "%s", "RELEASE");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%.0fms", releaseMs);
     monoBass.paramShowStart = sysTickMs;
@@ -260,7 +260,7 @@ static void displayD1DelaySend(uint8_t idx, int knobValue) {
 static void displayD2Pitch(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -287,7 +287,7 @@ static void displayD2Pitch(uint8_t idx, int knobValue) {
 static void displayD2Decay(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -300,7 +300,7 @@ static void displayD2Decay(uint8_t idx, int knobValue) {
 static void displayD2VoiceMix(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -314,7 +314,7 @@ static void displayD2VoiceMix(uint8_t idx, int knobValue) {
 static void displayD2WfDrive(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -331,7 +331,7 @@ static void displayD2WfDrive(uint8_t idx, int knobValue) {
 static void displayD2DelaySend(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -342,7 +342,7 @@ static void displayD2DelaySend(uint8_t idx, int knobValue) {
 static void displayD2Reverb(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -353,7 +353,7 @@ static void displayD2Reverb(uint8_t idx, int knobValue) {
 static void displayD2Noise(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -364,7 +364,7 @@ static void displayD2Noise(uint8_t idx, int knobValue) {
 static void displayD2Volume(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -375,7 +375,7 @@ static void displayD2Volume(uint8_t idx, int knobValue) {
 static void displayD3Pitch(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -402,7 +402,7 @@ static void displayD3Pitch(uint8_t idx, int knobValue) {
 static void displayD3Decay(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -415,7 +415,7 @@ static void displayD3Decay(uint8_t idx, int knobValue) {
 static void displayD3VoiceMix(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -429,7 +429,7 @@ static void displayD3VoiceMix(uint8_t idx, int knobValue) {
 static void displayD3Distort(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -446,7 +446,7 @@ static void displayD3Distort(uint8_t idx, int knobValue) {
 static void displayD3DelaySend(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -457,7 +457,7 @@ static void displayD3DelaySend(uint8_t idx, int knobValue) {
 static void displayD3Filter(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -471,7 +471,7 @@ static void displayD3Filter(uint8_t idx, int knobValue) {
 static void displayD3Accent(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -484,7 +484,7 @@ static void displayD3Accent(uint8_t idx, int knobValue) {
 static void displayD3Volume(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -528,7 +528,7 @@ static void displayMasterLowpass(uint8_t idx, int knobValue) {
 static void displayMasterTempo(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -556,7 +556,7 @@ static void displayMasterVolume(uint8_t idx, int knobValue) {
 static void displayMasterChoke(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
   (void)idx;
@@ -667,9 +667,9 @@ static void engineD1Shape(uint8_t idx, int knobValue) {
 static void engineD1Decay(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) {
-    // Decay knob -> release time: 10-200ms linear
+    // Decay knob -> release time: 10-1000ms linear
     float norm = normalizeKnob(knobValue);
-    monoBass.releaseMs = 10.0f + norm * 190.0f;
+    monoBass.releaseMs = 10.0f + norm * 990.0f;
     AudioNoInterrupts();
     d1AmpEnv.release(monoBass.releaseMs);
     AudioInterrupts();
