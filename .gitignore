@@ -1,4 +1,7 @@
 build/
 *.elf
-*.hex
 *.bin
+
+# Exclude hex files except release builds
+*.hex
+!Builds/**/*.hex
