@@ -3464,7 +3464,227 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
 }
 
 // ============================================================================
-//  OLED Drawing
+//  OLED Drawing — sub-renderers
+// ============================================================================
+
+// Top bar: BPM/EXT, track digit, choke, MEM slot, transport icon.
+void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
+                  uint8_t slotSnap, bool playingSnap) {
+  // BPM / EXT clock state
+  display.setCursor(0, 0);
+  if (extBpmDisplay > 0.0f) {
+    display.print("EXT");
+    display.setCursor(0, 10);
+    float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
+    display.print(snapped, 1);
+  } else {
+    display.print("BPM");
+    display.setCursor(0, 10);
+    display.print(bpmSnap, 1);
+  }
+
+  // Size-2 track digit
+  display.setTextSize(2);
+  display.setCursor(38, 2);
+  display.print(trackSnap + 1);
+  display.setTextSize(1);
+
+  // Choke
+  display.setCursor(58, 0);
+  display.print("CHOKE");
+  {
+    char chokeBuf[6];
+    if (chokeSnap == 0) {
+      strcpy(chokeBuf, "OFF");
+    } else {
+      snprintf(chokeBuf, sizeof(chokeBuf), "%+d%%", chokeSnap);
+    }
+    display.setCursor(73 - (int)strlen(chokeBuf) * 3, 10);
+    display.print(chokeBuf);
+  }
+
+  // Memory slot
+  display.setCursor(95, 0);
+  display.print("MEM");
+  {
+    char memBuf[4];
+    snprintf(memBuf, sizeof(memBuf), "%d", slotSnap + 1);
+    display.setCursor(104 - (int)strlen(memBuf) * 3, 10);
+    display.print(memBuf);
+  }
+
+  // Transport icon
+  if (playingSnap) {
+    display.drawBitmap(118, 4, image_play_bits, 10, 10, 1);
+  } else {
+    display.drawBitmap(118, 4, image_stop_bits, 10, 10, 1);
+  }
+}
+
+// BASS KEYS scope area: note name while key held, octave/param on knob change.
+// Returns true if it drew content (suppresses oscilloscope).
+bool renderBassKeysScope(uint32_t nowMs) {
+  if (!bassKeys.active) return false;
+
+  if (bassKeys.activeKey >= 0) {
+    // Key held — show note name
+    uint8_t midiNote = (36 + bassKeys.octave * 12) + bassKeys.activeKey;
+    if (midiNote > 75) midiNote = 75;
+    char noteName[8];
+    formatChromaNote(midiNote, noteName);
+
+    display.setTextSize(1);
+    int16_t sx1, sy1;
+    uint16_t sw, sh;
+    display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
+    display.setCursor((128 - sw) / 2, 24);
+    display.print("BASS KEYS");
+
+    display.setTextSize(3);
+    int16_t nx1, ny1;
+    uint16_t nw, nh;
+    display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
+    display.setCursor((128 - nw) / 2, 35);
+    display.print(noteName);
+    display.setTextSize(1);
+    return true;
+  }
+
+  if (bassKeys.paramLabel[0] && (nowMs - bassKeys.paramShowStart < BASS_KEYS_PARAM_DISPLAY_MS)) {
+    // Parameter knob changed — show label + value
+    display.setTextSize(1);
+    int16_t sx1, sy1;
+    uint16_t sw, sh;
+    display.getTextBounds(bassKeys.paramLabel, 0, 0, &sx1, &sy1, &sw, &sh);
+    display.setCursor((128 - sw) / 2, 24);
+    display.print(bassKeys.paramLabel);
+
+    display.setTextSize(3);
+    int16_t nx1, ny1;
+    uint16_t nw, nh;
+    display.getTextBounds(bassKeys.paramValue, 0, 0, &nx1, &ny1, &nw, &nh);
+    display.setCursor((128 - nw) / 2, 35);
+    display.print(bassKeys.paramValue);
+    display.setTextSize(1);
+    return true;
+  }
+
+  if (bassKeys.showOctave && (nowMs - bassKeys.octaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
+    // Octave knob changed — show large octave
+    char octLabel[8];
+    snprintf(octLabel, sizeof(octLabel), "OCT %d", bassKeys.octave + 2);
+
+    display.setTextSize(1);
+    int16_t sx1, sy1;
+    uint16_t sw, sh;
+    display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
+    display.setCursor((128 - sw) / 2, 24);
+    display.print("BASS KEYS");
+
+    display.setTextSize(3);
+    int16_t nx1, ny1;
+    uint16_t nw, nh;
+    display.getTextBounds(octLabel, 0, 0, &nx1, &ny1, &nw, &nh);
+    display.setCursor((128 - nw) / 2, 35);
+    display.print(octLabel);
+    display.setTextSize(1);
+    return true;
+  }
+
+  // All BASS KEYS displays expired
+  bassKeys.showOctave = false;
+  bassKeys.paramLabel[0] = '\0';
+  return false;
+}
+
+// Chroma note select: large note name when a chroma step is held.
+// Returns true if it drew content (suppresses oscilloscope).
+bool renderChromaNoteSelect() {
+  bool noteSelectActive = (d1ChromaHeldStep >= 0) || (d2ChromaHeldStep >= 0) || (d3ChromaHeldStep >= 0);
+  if (!noteSelectActive) return false;
+
+  int stepNum;
+  uint8_t midiNote;
+  if (d1ChromaHeldStep >= 0) {
+    stepNum = d1ChromaHeldStep;
+    midiNote = d1ChromaNote[d1ChromaHeldStep];
+  } else if (d2ChromaHeldStep >= 0) {
+    stepNum = d2ChromaHeldStep;
+    midiNote = d2ChromaNote[d2ChromaHeldStep];
+  } else {
+    stepNum = d3ChromaHeldStep;
+    midiNote = d3ChromaNote[d3ChromaHeldStep];
+  }
+
+  char noteName[8];
+  formatChromaNote(midiNote, noteName);
+
+  // "STEP X" label — centered at top of scope area
+  display.setTextSize(1);
+  char stepLabel[10];
+  snprintf(stepLabel, sizeof(stepLabel), "STEP %d", stepNum + 1);
+  int16_t sx1, sy1;
+  uint16_t sw, sh;
+  display.getTextBounds(stepLabel, 0, 0, &sx1, &sy1, &sw, &sh);
+  display.setCursor((128 - sw) / 2, 24);
+  display.print(stepLabel);
+
+  // Large note name
+  display.setTextSize(3);
+  int16_t nx1, ny1;
+  uint16_t nw, nh;
+  display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
+  display.setCursor((128 - nw) / 2, 35);
+  display.print(noteName);
+  display.setTextSize(1);
+  return true;
+}
+
+// Chroma dot indicator — bottom bar dots for active chroma channels.
+void renderChromaDots() {
+  bool anyChroma = !bassKeys.active && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
+  if (!anyChroma) return;
+
+  // Clear strip so dots sit on black, not on scope pixels.
+  display.fillRect(2, 58, 126, 6, SH110X_BLACK);
+
+  const bool chromaActive[4] = {
+    d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode
+  };
+  const int dotCenters[4] = { 16, 48, 80, 112 };
+  const int dotSize = 4;
+  const int dotY = 59;
+
+  for (int i = 0; i < 4; i++) {
+    if (chromaActive[i]) {
+      int x = dotCenters[i] - dotSize / 2;
+      display.fillRect(x, dotY, dotSize, dotSize, SH110X_WHITE);
+    }
+  }
+}
+
+// Parameter overlay — bottom text or voice rails.
+void renderParameterOverlay(uint8_t railSnap, const char* param1Snap,
+                            const char* param2Snap) {
+  if (railSnap == RAIL_NONE) {
+    display.setTextSize(1);
+    const int bottomY = 56;
+    if (param1Snap[0]) {
+      drawOutlinedText(5, bottomY, param1Snap);
+    }
+    if (param2Snap[0]) {
+      int16_t x1, y1;
+      uint16_t w2, h2;
+      display.getTextBounds(param2Snap, 0, 0, &x1, &y1, &w2, &h2);
+      drawOutlinedText(128 - w2 - 2, bottomY, param2Snap);
+    }
+  } else {
+    renderVoiceRails();
+  }
+}
+
+// ============================================================================
+//  OLED Drawing — main dispatcher
 // ============================================================================
 
 void updateDisplay() {
@@ -3595,216 +3815,21 @@ void updateDisplay() {
   display.drawLine(0, 63, 0, 20, 1);
   display.drawLine(1, 19, 127, 19, 1);
 
-  // BPM / EXT clock state — always show one decimal place.
-  // Show "EXT" and external BPM whenever sync pulses are being received,
-  // even while STOPPED — so the user sees the incoming tempo before pressing PLAY.
-  display.setCursor(0, 0);
-  if (extBpmDisplay > 0.0f) {
-    display.print("EXT");
-    display.setCursor(0, 10);
-    // Round to nearest 0.5 BPM for stable readout (quantization provides hysteresis)
-    float snapped = floorf(extBpmDisplay * 2.0f + 0.5f) * 0.5f;
-    display.print(snapped, 1);
-  } else {
-    display.print("BPM");
-    display.setCursor(0, 10);
-    display.print(bpmSnap, 1);
-  }
+  renderTopBar(bpmSnap, trackSnap, chokeSnap, slotSnap, playingSnap);
 
-  // Size-2 track digit — centered in the same slot (~x 35–52, y 2–15)
-  {
-    display.setTextSize(2);
-    display.setCursor(38, 2);
-    display.print(trackSnap + 1);
-    display.setTextSize(1);
-  }
-
-  // Choke (global decay offset) — label center = 73
-  display.setCursor(58, 0);
-  display.print("CHOKE");
-  {
-    char chokeBuf[6];
-    if (chokeSnap == 0) {
-      strcpy(chokeBuf, "OFF");
-    } else {
-      snprintf(chokeBuf, sizeof(chokeBuf), "%+d%%", chokeSnap);
-    }
-    display.setCursor(73 - (int)strlen(chokeBuf) * 3, 10);
-    display.print(chokeBuf);
-  }
-
-  // Memory slot — label center = 104
-  display.setCursor(95, 0);
-  display.print("MEM");
-  {
-    char memBuf[4];
-    snprintf(memBuf, sizeof(memBuf), "%d", slotSnap + 1);
-    display.setCursor(104 - (int)strlen(memBuf) * 3, 10);
-    display.print(memBuf);
-  }
-
-  // Transport icon — play or stop only (CHROMA status is shown in bottom bar)
-  if (playingSnap) {
-    display.drawBitmap(118, 4, image_play_bits, 10, 10, 1);
-  } else {
-    display.drawBitmap(118, 4, image_stop_bits, 10, 10, 1);
-  }
-
-  // BASS KEYS — large note name while key held, or large octave on knob change
-  bool bassKeysDisplayActive = false;
-  if (bassKeys.active) {
-    if (bassKeys.activeKey >= 0) {
-      // Key held — show note name in large font
-      uint8_t midiNote = (36 + bassKeys.octave * 12) + bassKeys.activeKey;
-      if (midiNote > 75) midiNote = 75;
-      char noteName[8];
-      formatChromaNote(midiNote, noteName);
-
-      display.setTextSize(1);
-      int16_t sx1, sy1;
-      uint16_t sw, sh;
-      display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
-      display.setCursor((128 - sw) / 2, 24);
-      display.print("BASS KEYS");
-
-      display.setTextSize(3);
-      int16_t nx1, ny1;
-      uint16_t nw, nh;
-      display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
-      display.setCursor((128 - nw) / 2, 35);
-      display.print(noteName);
-      display.setTextSize(1);
-      bassKeysDisplayActive = true;
-    } else if (bassKeys.paramLabel[0] && (sysTickMs - bassKeys.paramShowStart < BASS_KEYS_PARAM_DISPLAY_MS)) {
-      // Parameter knob changed — show label + value in large font
-      display.setTextSize(1);
-      int16_t sx1, sy1;
-      uint16_t sw, sh;
-      display.getTextBounds(bassKeys.paramLabel, 0, 0, &sx1, &sy1, &sw, &sh);
-      display.setCursor((128 - sw) / 2, 24);
-      display.print(bassKeys.paramLabel);
-
-      display.setTextSize(3);
-      int16_t nx1, ny1;
-      uint16_t nw, nh;
-      display.getTextBounds(bassKeys.paramValue, 0, 0, &nx1, &ny1, &nw, &nh);
-      display.setCursor((128 - nw) / 2, 35);
-      display.print(bassKeys.paramValue);
-      display.setTextSize(1);
-      bassKeysDisplayActive = true;
-    } else if (bassKeys.showOctave && (sysTickMs - bassKeys.octaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
-      // Octave knob changed — show large octave
-      char octLabel[8];
-      snprintf(octLabel, sizeof(octLabel), "OCT %d", bassKeys.octave + 2);
-
-      display.setTextSize(1);
-      int16_t sx1, sy1;
-      uint16_t sw, sh;
-      display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
-      display.setCursor((128 - sw) / 2, 24);
-      display.print("BASS KEYS");
-
-      display.setTextSize(3);
-      int16_t nx1, ny1;
-      uint16_t nw, nh;
-      display.getTextBounds(octLabel, 0, 0, &nx1, &ny1, &nw, &nh);
-      display.setCursor((128 - nw) / 2, 35);
-      display.print(octLabel);
-      display.setTextSize(1);
-      bassKeysDisplayActive = true;
-    } else {
-      bassKeys.showOctave = false;  // expired
-      bassKeys.paramLabel[0] = '\0';  // expired
-    }
-  }
-
-  // When a CHROMA step-note is held, show large note name instead of scope
-  bool noteSelectActive = (d1ChromaHeldStep >= 0) || (d2ChromaHeldStep >= 0) || (d3ChromaHeldStep >= 0);
-
-  if (bassKeysDisplayActive) {
-    // Already drawn above — skip scope
-  } else if (noteSelectActive) {
-    int stepNum;
-    uint8_t midiNote;
-    if (d1ChromaHeldStep >= 0) {
-      stepNum = d1ChromaHeldStep;
-      midiNote = d1ChromaNote[d1ChromaHeldStep];
-    } else if (d2ChromaHeldStep >= 0) {
-      stepNum = d2ChromaHeldStep;
-      midiNote = d2ChromaNote[d2ChromaHeldStep];
-    } else {
-      stepNum = d3ChromaHeldStep;
-      midiNote = d3ChromaNote[d3ChromaHeldStep];
-    }
-
-    char noteName[8];
-    formatChromaNote(midiNote, noteName);
-
-    // "STEP X" label — centered at top of scope area
-    display.setTextSize(1);
-    char stepLabel[10];
-    snprintf(stepLabel, sizeof(stepLabel), "STEP %d", stepNum + 1);
-    int16_t sx1, sy1;
-    uint16_t sw, sh;
-    display.getTextBounds(stepLabel, 0, 0, &sx1, &sy1, &sw, &sh);
-    display.setCursor((128 - sw) / 2, 24);
-    display.print(stepLabel);
-
-    // Large note name — textSize 3, centered in scope area
-    display.setTextSize(3);
-    int16_t nx1, ny1;
-    uint16_t nw, nh;
-    display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 35);
-    display.print(noteName);
-
-    display.setTextSize(1);
-  } else {
+  // Scope area: BASS KEYS display > chroma note select > oscilloscope
+  bool bassKeysDisplayActive = renderBassKeysScope(nowMs);
+  bool noteSelectActive = renderChromaNoteSelect();
+  if (!bassKeysDisplayActive && !noteSelectActive) {
     drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
   }
 
-  // CHROMA dot indicator — only drawn when at least one channel is active (not in BASS KEYS)
-  bool anyChroma = !bassKeys.active && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
-
-  if (anyChroma) {
-    // Clear a strip at the bottom so dots sit on black, not on scope pixels.
-    // Start at x=2 to preserve the left border line at x=0,1.
-    display.fillRect(2, 58, 126, 6, SH110X_BLACK);
-
-    const bool chromaActive[4] = {
-      d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode
-    };
-    const int dotCenters[4] = { 16, 48, 80, 112 };
-    const int dotSize = 4;
-    const int dotY = 59;
-
-    for (int i = 0; i < 4; i++) {
-      if (chromaActive[i]) {
-        int x = dotCenters[i] - dotSize / 2;
-        display.fillRect(x, dotY, dotSize, dotSize, SH110X_WHITE);
-      }
-    }
-  }
+  renderChromaDots();
 
   // Suppress small parameter overlay when scope area owns the display
   if (noteSelectActive || bassKeysDisplayActive) overlayActiveNow = false;
-
   if (overlayActiveNow) {
-    if (railSnap == RAIL_NONE) {
-      display.setTextSize(1);
-      const int bottomY = 56;
-      if (param1Snap[0]) {
-        drawOutlinedText(5, bottomY, param1Snap);
-      }
-      if (param2Snap[0]) {
-        int16_t x1, y1;
-        uint16_t w2, h2;
-        display.getTextBounds(param2Snap, 0, 0, &x1, &y1, &w2, &h2);
-        drawOutlinedText(128 - w2 - 2, bottomY, param2Snap);
-      }
-    } else {
-      renderVoiceRails();
-    }
+    renderParameterOverlay(railSnap, param1Snap, param2Snap);
   }
 
   // Fire any steps queued during framebuffer drawing, before the
