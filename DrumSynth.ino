@@ -82,23 +82,7 @@ static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_
 bool d1ChromaMode = false;
 static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 1500;
 
-// BASS KEYS mode — D1 live keyboard, sequencer fully suppressed
-static constexpr uint32_t D1_BASS_KEYS_LONG_PRESS_MS = 6000;
-static constexpr uint32_t BASS_KEYS_OCT_DISPLAY_MS = 1200;
-static constexpr uint32_t BASS_KEYS_PARAM_DISPLAY_MS = 1500;
-
-struct BassKeysState {
-  bool active = false;
-  uint8_t octave = 0;           // 0=OCT2 (C2), 1=OCT3 (C3), 2=OCT4 (C4)
-  int8_t activeKey = -1;        // currently pressed key index (-1 = none)
-  float releaseMs = 30.0f;      // gate-style release time (knob-controlled)
-  bool showOctave = false;      // show large OCT display in scope area
-  uint32_t octaveShowStart = 0; // when octave display started (sysTickMs)
-  char paramLabel[12] = "";     // short label for large-font param display
-  char paramValue[12] = "";     // value string for large-font param display
-  uint32_t paramShowStart = 0;  // when param display started
-};
-BassKeysState bassKeys;
+// BASS KEYS mode — see bass_keys.h (included after forward declarations).
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
@@ -471,6 +455,12 @@ void applyD2Decay();
 void applyD3Decay();
 void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
+
+// BASS KEYS — struct, constants, entry/exit, keyboard handler, display renderer.
+// Included here because it depends on forward declarations above and state
+// variables like D1_ATTACK_MS, TransportState, d1EffectiveDecay, etc.
+#include "bass_keys.h"
+BassKeysState bassKeys;
 
 // Accent pattern bitmask — single source of truth for all 15 accent modes (OFF + 14 patterns).
 // Bit 15 = step 0, bit 0 = step 15.  Used by triggerD3() and LED preview.
@@ -1522,38 +1512,11 @@ void updateOtherButtons() {
 
       // Tier 2: BASS KEYS at 6s
       if (!btnD1EnteredBassKeys && heldMs >= D1_BASS_KEYS_LONG_PRESS_MS) {
-        bassKeys.active = !bassKeys.active;
         btnD1EnteredBassKeys = true;
-        if (bassKeys.active) {
-          // Stop transport if running
-          noInterrupts();
-          sequencePlaying = false;
-          setTransport(STOPPED);
-          armed = false;
-          armPulseCountdown = 0;
-          pendingStepCount = 0;
-          wantSwitchToExt = false;
-          interrupts();
-          bassKeys.activeKey = -1;
-          bassKeys.showOctave = false;
-          // Gate-style bass synth envelope: fast attack, full sustain, short release
-          AudioNoInterrupts();
-          d1AmpEnv.attack(2.0f);       // Moog-like punch (~2ms)
-          d1AmpEnv.hold(0.0f);         // no hold phase — sustain takes over
-          d1AmpEnv.decay(0.0f);        // no decay — sustain at full level
-          d1AmpEnv.sustain(1.0f);      // hold at full amplitude while key pressed
-          d1AmpEnv.release(bassKeys.releaseMs);
-          AudioInterrupts();
+        if (!bassKeys.active) {
+          enterBassKeysMode();
         } else {
-          // Restore drum envelope
-          AudioNoInterrupts();
-          d1AmpEnv.attack(D1_ATTACK_MS);
-          d1AmpEnv.hold(d1CachedHoldMs);
-          d1AmpEnv.decay(d1EffectiveDecay);
-          d1AmpEnv.sustain(0.0f);      // drum mode — decay to silence
-          d1AmpEnv.release(5.0f);      // library default
-          d1AmpEnv.noteOff();          // silence any lingering gate note
-          AudioInterrupts();
+          exitBassKeysMode();
         }
         snprintf(displayParameter1, sizeof(displayParameter1),
                  bassKeys.active ? "BASS KEYS ON" : "BASS KEYS OFF");
@@ -1716,28 +1679,7 @@ void updateStepButtons() {
       btnState[i] = rawPressed;
 
       // BASS KEYS mode — buttons trigger D1 directly, skip all sequence editing
-      if (bassKeys.active) {
-        if (btnState[i]) {
-          // Press — play note
-          uint8_t midiNote = (36 + bassKeys.octave * 12) + i;
-          if (midiNote > 75) midiNote = 75;  // clamp to D#5 (table max)
-          d1BaseFreq = d1ChromaFreq(midiNote);
-          applyD1Freq();
-          triggerD1();
-          bassKeys.activeKey = i;
-          // Note name shown in scope area by OLED render loop
-          // Light only the pressed key
-          for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == i);
-        } else {
-          // Release — gate off, clear active key and LED
-          if (bassKeys.activeKey == i) {
-            AudioNoInterrupts();
-            d1AmpEnv.noteOff();
-            AudioInterrupts();
-            bassKeys.activeKey = -1;
-            for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, LOW);
-          }
-        }
+      if (handleBassKeysButton(i, btnState[i])) {
         btnLastState[i] = rawPressed;
         continue;
       }
@@ -3521,81 +3463,7 @@ void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
   }
 }
 
-// BASS KEYS scope area: note name while key held, octave/param on knob change.
-// Returns true if it drew content (suppresses oscilloscope).
-bool renderBassKeysScope(uint32_t nowMs) {
-  if (!bassKeys.active) return false;
-
-  if (bassKeys.activeKey >= 0) {
-    // Key held — show note name
-    uint8_t midiNote = (36 + bassKeys.octave * 12) + bassKeys.activeKey;
-    if (midiNote > 75) midiNote = 75;
-    char noteName[8];
-    formatChromaNote(midiNote, noteName);
-
-    display.setTextSize(1);
-    int16_t sx1, sy1;
-    uint16_t sw, sh;
-    display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
-    display.setCursor((128 - sw) / 2, 24);
-    display.print("BASS KEYS");
-
-    display.setTextSize(3);
-    int16_t nx1, ny1;
-    uint16_t nw, nh;
-    display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 35);
-    display.print(noteName);
-    display.setTextSize(1);
-    return true;
-  }
-
-  if (bassKeys.paramLabel[0] && (nowMs - bassKeys.paramShowStart < BASS_KEYS_PARAM_DISPLAY_MS)) {
-    // Parameter knob changed — show label + value
-    display.setTextSize(1);
-    int16_t sx1, sy1;
-    uint16_t sw, sh;
-    display.getTextBounds(bassKeys.paramLabel, 0, 0, &sx1, &sy1, &sw, &sh);
-    display.setCursor((128 - sw) / 2, 24);
-    display.print(bassKeys.paramLabel);
-
-    display.setTextSize(3);
-    int16_t nx1, ny1;
-    uint16_t nw, nh;
-    display.getTextBounds(bassKeys.paramValue, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 35);
-    display.print(bassKeys.paramValue);
-    display.setTextSize(1);
-    return true;
-  }
-
-  if (bassKeys.showOctave && (nowMs - bassKeys.octaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
-    // Octave knob changed — show large octave
-    char octLabel[8];
-    snprintf(octLabel, sizeof(octLabel), "OCT %d", bassKeys.octave + 2);
-
-    display.setTextSize(1);
-    int16_t sx1, sy1;
-    uint16_t sw, sh;
-    display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
-    display.setCursor((128 - sw) / 2, 24);
-    display.print("BASS KEYS");
-
-    display.setTextSize(3);
-    int16_t nx1, ny1;
-    uint16_t nw, nh;
-    display.getTextBounds(octLabel, 0, 0, &nx1, &ny1, &nw, &nh);
-    display.setCursor((128 - nw) / 2, 35);
-    display.print(octLabel);
-    display.setTextSize(1);
-    return true;
-  }
-
-  // All BASS KEYS displays expired
-  bassKeys.showOctave = false;
-  bassKeys.paramLabel[0] = '\0';
-  return false;
-}
+// renderBassKeysScope() is now in bass_keys.h
 
 // Chroma note select: large note name when a chroma step is held.
 // Returns true if it drew content (suppresses oscilloscope).
