@@ -59,6 +59,7 @@ enum Track : uint8_t {
 static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
 static constexpr uint8_t  MONOBASS_DEBOUNCE_MS = 2;    // 2ms — keyboard feel for MONOBASS live play
+static bool monoBassKeyEvent = false;                   // set by handleMonoBassButton() to skip next OLED frame
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
 static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3% — used by all wavefolder cases (11, 19, 30)
@@ -989,7 +990,12 @@ void loop() {
         skipForSubdiv = true;
       }
     }
-    if (!skipForSubdiv) {
+    // Skip OLED push when a MONOBASS key event just fired — the SPI transfer
+    // would block the CPU for ~1-5ms, adding latency to the next key scan.
+    // The skipped frame renders on the next 42ms cycle (imperceptible).
+    bool skipForMonoBass = monoBassKeyEvent;
+    monoBassKeyEvent = false;
+    if (!skipForSubdiv && !skipForMonoBass) {
       updateDisplay();
     }
   }
@@ -1421,10 +1427,17 @@ static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) 
   if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
     wfChromaMode = !wfChromaMode;
     self.enteredMode = true;
-    snprintf(displayParameter1, sizeof(displayParameter1),
-             wfChromaMode ? "WF CHROMA ON" : "WF CHROMA OFF");
-    displayParameter2[0] = '\0';
-    parameterOverlayStartTick = nowTick;
+    if (monoBass.active) {
+      // Route through MONOBASS scope overlay (normal overlay is suppressed)
+      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF CHROMA");
+      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", wfChromaMode ? "ON" : "OFF");
+      monoBass.paramShowStart = sysTickMs;
+    } else {
+      snprintf(displayParameter1, sizeof(displayParameter1),
+               wfChromaMode ? "WF CHROMA ON" : "WF CHROMA OFF");
+      displayParameter2[0] = '\0';
+      parameterOverlayStartTick = nowTick;
+    }
   }
 }
 
@@ -1613,11 +1626,13 @@ void selectTrack(Track t) {
 void updateLEDs() {
   // Main-loop only — no ISR access to accentPreview*, no guards needed
 
-  // MONOBASS mode — all LEDs off (active key lit in updateStepButtons on press)
+  // MONOBASS mode — light only the sounding key (single SPI transaction)
   if (monoBass.active) {
+    int8_t top = monoBass.topKey();
     for (int i = 0; i < numSteps; i++) {
-      ledShiftReg.set(i, i == monoBass.topKey());
+      ledShiftReg.setNoUpdate(i, i == top);
     }
+    ledShiftReg.updateRegisters();
     return;
   }
 
@@ -2329,7 +2344,8 @@ bool renderChromaNoteSelect() {
 
 // Chroma dot indicator — bottom bar dots for active chroma channels.
 void renderChromaDots() {
-  bool anyChroma = !monoBass.active && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
+  // Show WF chroma dot even during MONOBASS — user can toggle WF chroma while playing
+  bool anyChroma = (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
   if (!anyChroma) return;
 
   // Clear strip so dots sit on black, not on scope pixels.

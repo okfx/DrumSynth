@@ -197,7 +197,7 @@ static void displayD1Decay(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) {
     float norm = normalizeKnob(knobValue);
-    float releaseMs = 10.0f + norm * 990.0f;
+    float releaseMs = 3.0f + norm * 997.0f;
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "%s", "RELEASE");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%.0fms", releaseMs);
     monoBass.paramShowStart = sysTickMs;  // ARM 32-bit aligned read — atomic, no guard required
@@ -667,9 +667,9 @@ static void engineD1Shape(uint8_t idx, int knobValue) {
 static void engineD1Decay(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) {
-    // Decay knob -> release time: 10-1000ms linear
+    // Decay knob -> release time: 3-1000ms linear
     float norm = normalizeKnob(knobValue);
-    monoBass.releaseMs = 10.0f + norm * 990.0f;
+    monoBass.releaseMs = 3.0f + norm * 997.0f;
     AudioNoInterrupts();
     d1AmpEnv.release(monoBass.releaseMs);
     AudioInterrupts();

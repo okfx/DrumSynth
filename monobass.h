@@ -158,8 +158,10 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     triggerD1();
     monoBass.noteShowStart = sysTickMs;
 
-    // Light only the sounding key
-    for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == buttonIndex);
+    // Light only the sounding key — buffer all 16 then latch once (1 SPI
+    // transaction instead of 16, eliminates ~0.5ms of blocking on key press)
+    for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j == buttonIndex);
+    ledShiftReg.updateRegisters();
   } else {
     // Remove released key from stack
     bool found = false;
@@ -180,15 +182,18 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       applyD1Freq();
       triggerD1();
       monoBass.noteShowStart = sysTickMs;
-      for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == top);
+      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j == top);
+      ledShiftReg.updateRegisters();
     } else {
       // No keys held — gate off
       AudioNoInterrupts();
       d1AmpEnv.noteOff();
       AudioInterrupts();
-      for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, LOW);
+      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, LOW);
+      ledShiftReg.updateRegisters();
     }
   }
+  monoBassKeyEvent = true;  // tell loop() to skip next OLED frame for lower latency
   return true;
 }
 

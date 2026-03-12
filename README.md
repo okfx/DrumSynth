@@ -69,6 +69,10 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - CHROMA note-select state cleared on MONOBASS mode entry to prevent stale state
 - EEPROM backward compatibility preserved across format changes
 - ISR robustness: `setTransport()` refactored to remove non-nestable interrupt pair; `applyMasterGain()` guarded with `AudioNoInterrupts()`; count-in beat display snapshots `armPulseCountdown` atomically with `ppqn`
+- WF Chromatic mode now works during MONOBASS — indicator dot and parameter overlay display correctly
+- MONOBASS key responsiveness: LED updates batched to 1 SPI transaction (was 16); OLED frame skipped on key events to prevent SPI blocking
+- MONOBASS release time minimum lowered from 10ms to 3ms for tighter note cutoff
+- Oscilloscope scroll speed reduced for easier waveform shape comparison across oscillators
 
 ## Changes (v1.03.1)
 
