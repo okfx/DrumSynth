@@ -73,6 +73,9 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - MONOBASS key responsiveness: LED updates batched to 1 SPI transaction (was 16); OLED frame skipped on key events to prevent SPI blocking
 - MONOBASS release time minimum lowered from 10ms to 3ms for tighter note cutoff
 - Oscilloscope scroll speed reduced for easier waveform shape comparison across oscillators
+- LED updates batched to single SPI transaction across all `updateLEDs()` paths (accent preview, normal pattern)
+- Audio thread safety: `AudioNoInterrupts()` guards added to `applyD2ChromaFreq()`, volume engines, and `engineD2Pitch()`
+- WF Chromatic mode state now persisted in EEPROM pattern slots (backward-compatible with V1/V2 slots)
 
 ## Changes (v1.03.1)
 
