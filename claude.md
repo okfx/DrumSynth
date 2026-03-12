@@ -62,10 +62,12 @@ ISR sources: `stepISR` (PIT), `subdivTimerCallback` (PIT), `externalClockISR` (G
 Rule: aligned 32-bit reads/writes are atomic on ARM Cortex-M7. Use `noInterrupts()`
 when snapshotting multiple related ISR variables that must be consistent together.
 
-**Known hazard:** `noInterrupts()`/`interrupts()` do NOT nest on ARM. `setTransport()`
-contains its own `noInterrupts()`/`interrupts()` pair, so callers that wrap it in a
-wider critical section will have interrupts re-enabled prematurely. Currently benign
-but must be kept in mind during refactoring.
+**`setTransport()` interrupt contract:** This function does NOT manage interrupt
+guards — `transportState` is `volatile uint8_t` (ARM-atomic). Callers that bundle
+`setTransport()` with other ISR-shared writes must provide their own
+`noInterrupts()`/`interrupts()` wrapper. See the comment block in `setTransport()`
+for the full per-callsite contract. ARM `noInterrupts()`/`interrupts()` are
+non-nestable; never add an `interrupts()` call inside a wider critical section.
 
 ### Dispatch Tables
 

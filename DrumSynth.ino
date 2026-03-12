@@ -58,7 +58,7 @@ enum Track : uint8_t {
 // overlay and debounce timing
 static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
-static constexpr uint16_t MONOBASS_DEBOUNCE_MS = 2;    // 2ms — keyboard feel for MONOBASS live play
+static constexpr uint8_t  MONOBASS_DEBOUNCE_MS = 2;    // 2ms — keyboard feel for MONOBASS live play
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
 static constexpr float    WF_DEADBAND = 0.03f;        // wavefolder off below 3% — used by all wavefolder cases (11, 19, 30)
@@ -534,7 +534,9 @@ void updateDrumDelayGains() {
 }
 
 void applyMasterGain() {
+  AudioNoInterrupts();
   masterAmp.gain(masterNominalGain);
+  AudioInterrupts();
 }
 
 // Recompute cached D1 hold time (scales with decay).
@@ -1003,13 +1005,26 @@ void loop() {
   }
 }
 
-// Transport state machine — manages clock timer and ext sync cleanup on transitions
+// Transport state machine — pure state + timer management, no interrupt guards.
+//
+// transportState is volatile uint8_t (ARM atomic STRB) — the assignment is
+// inherently race-safe without explicit masking. This function intentionally
+// does NOT call noInterrupts()/interrupts() so it can safely be called from
+// within a caller's existing critical section. ARM noInterrupts/interrupts are
+// non-nestable: an inner interrupts() call re-enables PRIMASK regardless of
+// any outer guard, breaking the caller's atomicity.
+//
+// Callers that bundle setTransport() with other ISR-shared writes must wrap
+// the entire block in noInterrupts()/interrupts():
+//   handlePlayStop()    — also writes sequencePlaying, armed, armPulseCountdown
+//   enterMonoBassMode() — same (monobass.h)
+//   btnMemoryHold()     — also writes sequencePlaying
+//
+// Callers that change only transportState need no guard (uint8_t is atomic):
+//   checkExtClockLockIn(), checkExtClockTimeout()
 void setTransport(TransportState s) {
   if (transportState == s) return;
 
-  // Atomic state cleanup — ISR checks transportState to gate step generation,
-  // so all shared state must be consistent before interrupts see the new value.
-  noInterrupts();
   transportState = s;
   if (s != RUN_EXT) {
     extStepAcc = 0;
@@ -1017,7 +1032,6 @@ void setTransport(TransportState s) {
     subdivStepsRemaining = 0;
     subdivTimerDueUs = 0;
   }
-  interrupts();
 
   switch (s) {
     case RUN_INT:
@@ -2165,7 +2179,7 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
     if ((int32_t)(displayBlockedUntilTick - nowMs) > 0) {
       return false;
     } else {
-      displayBlockedUntilTick = 0;
+      displayBlockedUntilTick = 0;  // main-loop only — no interrupt guard required
     }
   }
 
@@ -2378,13 +2392,22 @@ void updateDisplay() {
     // pulsesPerCycle = numSteps * ppqn / STEPS_PER_BEAT
     // pulsesPerBeat = ppqn
     // pulsesCounted = pulsesPerCycle - armPulseCountdown
-    uint8_t p = ppqn;  // Snapshot volatile once for consistent arithmetic
+    // Snapshot both ISR-written volatiles atomically before arithmetic.
+    // armPulseCountdown is ARM-atomic (uint16_t LDRH), but an ISR decrement
+    // between a separate ppqn read and the countdown comparison would make
+    // pulsesPerCycle - armPulseCountdown inconsistent (off by one beat).
+    uint8_t p;
+    uint16_t armSnap;
+    noInterrupts();
+    p       = ppqn;
+    armSnap = armPulseCountdown;
+    interrupts();
     uint16_t pulsesPerCycle = (uint16_t)numSteps * p / STEPS_PER_BEAT;
     uint8_t beatsPerCycle = numSteps / STEPS_PER_BEAT;  // 4
 
     uint8_t currentBeat = 0;
-    if (armPulseCountdown < pulsesPerCycle) {
-      uint16_t pulsesCounted = pulsesPerCycle - armPulseCountdown;
+    if (armSnap < pulsesPerCycle) {
+      uint16_t pulsesCounted = pulsesPerCycle - armSnap;
       currentBeat = (pulsesCounted - 1) / p + 1;  // 1-based beat number
     }
     // Countdown: show beatsRemaining = beatsPerCycle - currentBeat + 1

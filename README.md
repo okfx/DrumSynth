@@ -68,6 +68,7 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - Replaced `strncpy` with `snprintf` throughout for safe string handling
 - CHROMA note-select state cleared on MONOBASS mode entry to prevent stale state
 - EEPROM backward compatibility preserved across format changes
+- ISR robustness: `setTransport()` refactored to remove non-nestable interrupt pair; `applyMasterGain()` guarded with `AudioNoInterrupts()`; count-in beat display snapshots `armPulseCountdown` atomically with `ppqn`
 
 ## Changes (v1.03.1)
 

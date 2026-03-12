@@ -154,7 +154,7 @@ static inline void displayMonoBassParam(const char* normalLabel, const char* bkL
   if (monoBass.active) {
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "%s", bkLabel);
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
-    monoBass.paramShowStart = sysTickMs;
+    monoBass.paramShowStart = sysTickMs;  // ARM 32-bit aligned read — atomic, no guard required
   } else {
     snprintf(displayParameter1, sizeof(displayParameter1), "%s", normalLabel);
     snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -176,7 +176,7 @@ static void displayD1Distort(uint8_t idx, int knobValue) {
   if (monoBass.active) {
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "%s", "DISTORT");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
-    monoBass.paramShowStart = sysTickMs;
+    monoBass.paramShowStart = sysTickMs;  // ARM 32-bit aligned read — atomic, no guard required
   } else {
     snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORTION");
     snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -200,7 +200,7 @@ static void displayD1Decay(uint8_t idx, int knobValue) {
     float releaseMs = 10.0f + norm * 990.0f;
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "%s", "RELEASE");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%.0fms", releaseMs);
-    monoBass.paramShowStart = sysTickMs;
+    monoBass.paramShowStart = sysTickMs;  // ARM 32-bit aligned read — atomic, no guard required
   } else {
     float decayMs = d1DecayCurve(knobValue);
     snprintf(displayParameter1, sizeof(displayParameter1), "D1 DECAY");
