@@ -88,6 +88,10 @@ float d1BassKeysReleaseMs = 30.0f;   // gate-style release time (knob-controlled
 bool d1BassKeysShowOctave = false;       // show large OCT display in scope area
 uint32_t d1BassKeysOctaveShowStart = 0;  // when octave display started (sysTickMs)
 static constexpr uint32_t BASS_KEYS_OCT_DISPLAY_MS = 1200;
+char d1BassKeysParamLabel[12] = "";      // short label for large-font param display
+char d1BassKeysParamValue[12] = "";      // value string for large-font param display
+uint32_t d1BassKeysParamShowStart = 0;   // when param display started
+static constexpr uint32_t BASS_KEYS_PARAM_DISPLAY_MS = 1500;
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
@@ -1104,9 +1108,10 @@ void triggerD1() {
 
   AudioNoInterrupts();
   if (d1BassKeysMode) {
-    // Gate-style: just retrigger amp envelope — no pitch sweep, no snap transient
+    // Gate-style: retrigger amp envelope + snap, no pitch sweep
     d1AmpEnv.noteOff();
     d1AmpEnv.noteOn();
+    d1Snap.noteOn();
   } else {
     d1AmpEnv.hold(d1CachedHoldMs);
     d1AmpEnv.decay(d1EffectiveDecay);
@@ -2031,8 +2036,14 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
                      : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
         if (active > 1.0f) active = 1.0f;
         int percent = (int)(active * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORTION");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (d1BassKeysMode) {
+          strncpy(d1BassKeysParamLabel, "DISTORT", sizeof(d1BassKeysParamLabel));
+          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
+          d1BassKeysParamShowStart = sysTickMs;
+        } else {
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 DISTORTION");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
@@ -2050,8 +2061,9 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
         if (d1BassKeysMode) {
           float norm = normalizeKnob(knobValue);
           float releaseMs = 10.0f + norm * 190.0f;
-          snprintf(displayParameter1, sizeof(displayParameter1), "RELEASE");
-          snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", releaseMs);
+          strncpy(d1BassKeysParamLabel, "RELEASE", sizeof(d1BassKeysParamLabel));
+          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%.0fms", releaseMs);
+          d1BassKeysParamShowStart = sysTickMs;
         } else {
           float decayMs = d1DecayCurve(knobValue);
           snprintf(displayParameter1, sizeof(displayParameter1), "D1 DECAY");
@@ -2087,32 +2099,56 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 4:  // D1 Volume
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 VOLUME");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (d1BassKeysMode) {
+          strncpy(d1BassKeysParamLabel, "VOLUME", sizeof(d1BassKeysParamLabel));
+          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
+          d1BassKeysParamShowStart = sysTickMs;
+        } else {
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 VOLUME");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
     case 5:  // D1 Attack/Snap
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (d1BassKeysMode) {
+          strncpy(d1BassKeysParamLabel, "SNAP", sizeof(d1BassKeysParamLabel));
+          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
+          d1BassKeysParamShowStart = sysTickMs;
+        } else {
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
     case 6:  // D1 EQ (Body)
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (d1BassKeysMode) {
+          strncpy(d1BassKeysParamLabel, "BODY", sizeof(d1BassKeysParamLabel));
+          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
+          d1BassKeysParamShowStart = sysTickMs;
+        } else {
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
     case 7:  // D1 Delay Send
       {
         int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DELAY SEND");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        if (d1BassKeysMode) {
+          strncpy(d1BassKeysParamLabel, "DELAY", sizeof(d1BassKeysParamLabel));
+          snprintf(d1BassKeysParamValue, sizeof(d1BassKeysParamValue), "%d%%", percent);
+          d1BassKeysParamShowStart = sysTickMs;
+        } else {
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 DELAY SEND");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+        }
         break;
       }
 
@@ -3619,6 +3655,23 @@ void updateDisplay() {
       display.print(noteName);
       display.setTextSize(1);
       bassKeysDisplayActive = true;
+    } else if (d1BassKeysParamLabel[0] && (sysTickMs - d1BassKeysParamShowStart < BASS_KEYS_PARAM_DISPLAY_MS)) {
+      // Parameter knob changed — show label + value in large font
+      display.setTextSize(1);
+      int16_t sx1, sy1;
+      uint16_t sw, sh;
+      display.getTextBounds(d1BassKeysParamLabel, 0, 0, &sx1, &sy1, &sw, &sh);
+      display.setCursor((128 - sw) / 2, 24);
+      display.print(d1BassKeysParamLabel);
+
+      display.setTextSize(3);
+      int16_t nx1, ny1;
+      uint16_t nw, nh;
+      display.getTextBounds(d1BassKeysParamValue, 0, 0, &nx1, &ny1, &nw, &nh);
+      display.setCursor((128 - nw) / 2, 35);
+      display.print(d1BassKeysParamValue);
+      display.setTextSize(1);
+      bassKeysDisplayActive = true;
     } else if (d1BassKeysShowOctave && (sysTickMs - d1BassKeysOctaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
       // Octave knob changed — show large octave
       char octLabel[8];
@@ -3641,6 +3694,7 @@ void updateDisplay() {
       bassKeysDisplayActive = true;
     } else {
       d1BassKeysShowOctave = false;  // expired
+      d1BassKeysParamLabel[0] = '\0';  // expired
     }
   }
 
@@ -3689,8 +3743,8 @@ void updateDisplay() {
     drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
   }
 
-  // CHROMA dot indicator — only drawn when at least one channel is active
-  bool anyChroma = d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode;
+  // CHROMA dot indicator — only drawn when at least one channel is active (not in BASS KEYS)
+  bool anyChroma = !d1BassKeysMode && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
 
   if (anyChroma) {
     // Clear a strip at the bottom so dots sit on black, not on scope pixels.
@@ -3712,8 +3766,8 @@ void updateDisplay() {
     }
   }
 
-  // Suppress parameter overlay during note-select — the screen belongs to the note name
-  if (noteSelectActive) overlayActiveNow = false;
+  // Suppress small parameter overlay when scope area owns the display
+  if (noteSelectActive || bassKeysDisplayActive) overlayActiveNow = false;
 
   if (overlayActiveNow) {
     if (railSnap == RAIL_NONE) {
