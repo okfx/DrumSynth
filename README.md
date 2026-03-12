@@ -1,79 +1,72 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with per-step chroma modes, built on Teensy 4.1. Firmware version 1.04.
+A 3-voice drum synthesizer + wavefolder built on Teensy 4.1. Firmware v1.03.
 
-## Voices
+## Features
 
-| Voice | Name | Frequency Range |
-|-------|------|-----------------|
-| D1 | Kick | 55–440 Hz (A1–A4) |
-| D1 Chroma | Chromatic bass | A1–A4 (MIDI 33–69) |
-| D2 Snare | Snare body | 110–440 Hz (A2–A4) |
-| D2 Clap | Clap (300 Hz HPF) | Fixed |
-| D2 Wavefolder | Wavefolder osc | 27.5–880 Hz (A0–A5) |
-| D3 606 Hats | Analog-style hats | 400–6000 Hz |
-| D3 FM Hats | FM carriers | 440–3520 Hz (A4–A7) |
-| D3 Noise Hat | Noise hat | 220–1760 Hz (A3–A6) |
-| Master Wavefolder | Sine + saw fold drive | 65.41–1046.50 Hz (C2–C6) |
+**Three drum voices** with deep per-voice synthesis control:
+- **D1 Kick** — Sine-based kick with pitch sweep, drive, and tone shaping (55–440 Hz)
+- **D2 Snare/Clap** — Snare body with tunable pitch, clap with multi-burst envelope, and a wavefolder oscillator sub-voice (27.5–880 Hz)
+- **D3 Hats** — Three hat models crossfaded via mix knob: 606-style analog, FM metallic, and noise
 
-## Master Wavefolder
+**Master Wavefolder** — Sine + saw oscillators through a waveshaping stage. Knob 25 sweeps frequency exponentially across 4 octaves (C2–C6). Knob 30 controls fold drive with loudness compensation. The two oscillators diverge across three zones for evolving harmonic content.
 
-Knob 25 sweeps the fold oscillator frequency exponentially from C2 to C6 (4 octaves — every 25% of knob travel = one octave). Knob 30 controls drive intensity with a halved range and loudness compensation. Sine and saw oscillators diverge across three zones: 0–50% (saw one octave below sine), 50–75% (sine diverges up to 2×), 75–100% (saw diverges up to 4×).
+**CHROMA Modes** — Per-step chromatic note programming for any voice. Long-press a track button (2s) to enter CHROMA mode, hold a step (300ms) to select its note with the pitch knob. Each step plays its own tuned pitch while the sequencer runs. Active channels are shown as small dots at the bottom of the display.
 
-## CHROMA Modes
+| Mode | Activation | Note Range |
+|------|-----------|------------|
+| D1 CHROMA | Hold D1 (2s) | A1–A4 |
+| D2 CHROMA | Hold D2 (2s) | A2–A4 |
+| D3 CHROMA | Hold D3 (2s) | C3–C6 |
+| WF CHROMA | Hold PLAY (2s) | C2–C6 |
 
-Each voice has a per-step chromatic note mode, activated by long-pressing (2s) the corresponding track-select button. Hold a step button for 300ms to enter note-select, then turn the pitch knob to set that step's note. CHROMA notes are saved with patterns to EEPROM.
+**Choke Knob** — Global envelope tightening/loosening across all voices. Negative values shorten decays (down to -55ms), positive values lengthen them. Each voice responds with tuned sensitivity for musical results.
 
-| Mode | Button | Pitch Knob | Note Range | Default |
-|------|--------|------------|------------|---------|
-| D1 CHROMA | D1 (2s hold) | Knob 0 | A1–A4 (MIDI 33–69) | C2 |
-| D2 CHROMA | D2 (2s hold) | Knob 8 | A2–A4 (MIDI 45–69) | C3 |
-| D3 CHROMA | D3 (2s hold) | Knob 16 | C3–C6 (MIDI 48–84) | C3 |
-| WF CHROMA | PLAY (2s hold) | Knob 25 | C2–C6 (MIDI 36–84) | — |
+**16-Step Sequencer** with per-step programming, 10 pattern save/load slots (EEPROM), and accent patterns (straight, offbeat, bossa).
 
-WF CHROMA quantizes the master wavefolder frequency to chromatic notes instead of the normal continuous sweep. Active CHROMA channels are indicated by small dots at the bottom of the OLED display.
+**USB Audio Output** — Stereo audio over USB alongside the headphone/line output. Trim knob for USB level.
+
+**External Clock Sync** — Pulse input on pin 12 with configurable PPQN (1/2/4/8/24/48/96), auto lock-in, armed count-in with beat countdown, and glitch-filtered pulse rejection. See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for details.
+
+**OLED Display** — 128×64 SH1106 with real-time oscilloscope waveform, large track number, parameter overlays, and full-screen note-select during CHROMA step editing. Display updates yield to audio timing to prevent sequencer jitter.
+
+**Animated Splash** — Waveform morph animation on power-up.
 
 ## Hardware
 
-- **MCU:** Teensy 4.1 (ARM Cortex-M7 @ 600MHz)
-- **Audio:** Teensy Audio Library → SGTL5000 codec (headphone + line out) + USB audio output
-- **Display:** 128x64 SH1106 OLED (software SPI) with oscilloscope waveform view
-- **Controls:** 32 knobs (2x 16-ch analog mux), 16 step buttons, 10 control buttons
+- **MCU:** Teensy 4.1 (ARM Cortex-M7 @ 600 MHz)
+- **Audio:** Teensy Audio Library → SGTL5000 codec (headphone + line out) + USB audio
+- **Display:** 128×64 SH1106 OLED (software SPI)
+- **Controls:** 32 knobs (2× 16-ch analog mux), 16 step buttons, 10 control buttons
 - **LEDs:** 16 step LEDs (74HC595 shift register)
-- **Clock:** Internal BPM (60–400) with external pulse clock sync on pin 12
-- **Storage:** 10 EEPROM pattern save/load slots with per-step CHROMA notes for D1/D2/D3 (empty slots load as blank patterns). EEPROM writes use `update()` semantics to minimise wear; PPQN saves are validated against the allowed option set before writing.
-
-## External Clock Sync
-
-External clock input on pin 12 (RISING edge). Configurable PPQN (1, 2, 4, 8, 24, 48, 96) — default 2 PPQN (Korg Volca standard). Long-press the slot button (2s) to enter PPQN selection mode, tap to cycle through values, long-press again to save. 5-second timeout exits without saving.
-
-**Transport states:** STOPPED, RUN_INT (internal timer), RUN_EXT (external pulses).
-
-**Lock-in:** 3 accepted pulses (2 consecutive intervals within 25%) required to auto-switch from RUN_INT to RUN_EXT. Two-part glitch filter rejects noise (300 µs hard floor + 40% of EMA relative threshold).
-
-**Step generation:** ISR advances `currentStep` and queues via `pendingStepCount`; main loop fires audio via `playSequence()`. For low PPQN (1 or 2), step A fires on the pulse, then a hardware one-shot timer schedules deferred steps B/C/D at precise intervals. A slow EMA (alpha=1/8) smooths step B placement to resist pulse jitter. Each new pulse cancels and rearms any in-flight subdivision. If steps are backlogged, skip ahead to the latest — a skipped step is less noticeable than an off-beat one.
-
-**Armed count-in:** PLAY with external clock arms a full-cycle count-in (e.g. 8 pulses at 2 PPQN). The OLED shows a 4-3-2-1 beat countdown. Step 0 fires on the aligned pulse boundary. A grace window (50% of pulse interval) forgives slightly-late PLAY presses so the user doesn't end up one pulse out of phase.
-
-**OLED timing guard:** The SH1106 software SPI push takes 15–25 ms. An `isSafeToPushOled()` guard skips the frame if a step is pending, a subdivision timer is due within 25 ms, or the next pulse is predicted within 25 ms. Audio timing always wins over display updates.
-
-**Timeout:** 2 seconds without a pulse falls back to RUN_INT (if playing) or STOPPED. Pulse timing state is preserved across STOP so PLAY detects external clock immediately on the next press.
-
-See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for a comprehensive technical reference covering the full sync system.
+- **Clock:** Internal BPM (60–400) + external pulse sync on pin 12
+- **Storage:** EEPROM with `update()` wear-leveling — 10 pattern slots storing drum steps + CHROMA notes for D1/D2/D3, PPQN validated before write
 
 ## File Structure
 
 | File | Purpose |
 |------|---------|
-| `DrumSynth.ino` | Main firmware — sequencer, UI, knob handling, display |
+| `DrumSynth.ino` | Main firmware — sequencer, UI, knob engine, display |
 | `audiotool.h` | Audio graph (Teensy Audio Design Tool export) |
 | `audio_init.h` | Mixer gains, envelope params, filter settings |
 | `hw_setup.h` | Pin assignments, mux/LED/OLED hardware config |
-| `ext_sync.h` | External clock sync — ISRs, glitch filter, lock-in, subdivision scheduling |
+| `ext_sync.h` | External clock sync — ISRs, glitch filter, lock-in, subdivisions |
 | `eeprom.h` | Pattern save/load, CHROMA notes + PPQN persistence |
-| `EXTERNAL_SYNC_ARCHITECTURE.md` | Self-contained technical reference for external sync review |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
+
+## Changes (v1.03)
+
+- CHROMA modes for all voices (D1/D2/D3/WF) with per-step note selection
+- WF CHROMA mode (PLAY button 2s hold) quantizes wavefolder to chromatic pitches
+- Dot indicator replaces text status bar for active CHROMA channels
+- Large track digit display, cleaner note-select overlay
+- Choke knob with deeper negative range (-55ms) for tighter envelopes
+- Clap master highpass lowered (600→300 Hz) for fuller transients
+- EEPROM PPQN validation, numSteps linkage to hardware step count
+- Chroma step-handling refactored into shared helpers
+- Animated waveform morph splash screen
+- USB audio output with trim control
 
 ## Dependencies
 
@@ -84,8 +77,6 @@ See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for a compr
 - [Adafruit GFX](https://github.com/adafruit/Adafruit-GFX-Library) + [Adafruit SH110X](https://github.com/adafruit/Adafruit_SH110x)
 
 ## Build
-
-Open in Arduino IDE or compile with arduino-cli:
 
 ```bash
 arduino-cli compile --fqbn "teensy:avr:teensy41:usb=audio" --build-property "build.flags.optimize=-O2" .
