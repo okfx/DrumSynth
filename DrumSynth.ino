@@ -84,6 +84,9 @@ bool d1BassKeysMode = false;
 static constexpr uint32_t D1_BASS_KEYS_LONG_PRESS_MS = 6000;
 uint8_t d1BassKeysOctave = 0;        // 0=OCT2 (C2), 1=OCT3 (C3), 2=OCT4 (C4)
 int8_t d1BassKeysActiveKey = -1;     // currently pressed key index (-1 = none)
+bool d1BassKeysShowOctave = false;       // show large OCT display in scope area
+uint32_t d1BassKeysOctaveShowStart = 0;  // when octave display started (sysTickMs)
+static constexpr uint32_t BASS_KEYS_OCT_DISPLAY_MS = 1200;
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
@@ -1095,7 +1098,7 @@ void triggerD1() {
   // Retrigger guard — uint32_t reads/writes are atomic on ARM Cortex-M7.
   // Called from main loop context via playSequenceCore().
   uint32_t now = micros();
-  bool skipNoteOff = (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
+  bool skipNoteOff = !d1BassKeysMode && (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
   lastD1TriggerUs = now;
 
   AudioNoInterrupts();
@@ -1510,6 +1513,16 @@ void updateOtherButtons() {
           wantSwitchToExt = false;
           interrupts();
           d1BassKeysActiveKey = -1;
+          d1BassKeysShowOctave = false;
+          // Snap attack for responsive key feel
+          AudioNoInterrupts();
+          d1AmpEnv.attack(0.1f);
+          AudioInterrupts();
+        } else {
+          // Restore normal attack
+          AudioNoInterrupts();
+          d1AmpEnv.attack(D1_ATTACK_MS);
+          AudioInterrupts();
         }
         snprintf(displayParameter1, sizeof(displayParameter1),
                  d1BassKeysMode ? "BASS KEYS ON" : "BASS KEYS OFF");
@@ -1681,12 +1694,7 @@ void updateStepButtons() {
           applyD1Freq();
           triggerD1();
           d1BassKeysActiveKey = i;
-          // Show note name on OLED
-          char noteName[5];
-          formatChromaNote(midiNote, noteName);
-          snprintf(displayParameter1, sizeof(displayParameter1), "%s", noteName);
-          displayParameter2[0] = '\0';
-          parameterOverlayStartTick = nowTick;
+          // Note name shown in scope area by OLED render loop
           // Light only the pressed key
           for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == i);
         } else {
@@ -2021,13 +2029,20 @@ void updateParameterDisplay(uint8_t idx, int knobValue) {
     case 2:  // D1 Decay
       {
         float decayMs = d1DecayCurve(knobValue);
-        snprintf(displayParameter1, sizeof(displayParameter1), "D1 DECAY");
-        snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
+        if (d1BassKeysMode) {
+          float holdMs = decayMs * 0.75f;
+          snprintf(displayParameter1, sizeof(displayParameter1), "DEC %.0fms", decayMs);
+          snprintf(displayParameter2, sizeof(displayParameter2), "HLD %.0fms", holdMs);
+        } else {
+          snprintf(displayParameter1, sizeof(displayParameter1), "D1 DECAY");
+          snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
+        }
         break;
       }
 
     case 3:  // D1 Pitch
       {
+        if (d1BassKeysMode) break;  // octave shown in scope area, suppress freq display
         if (d1ChromaMode) {
           if (d1ChromaHeldStep >= 0) {
             uint8_t note = d1ChromaKnobToNote(knobValue);
@@ -2467,9 +2482,8 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
           else                       newOct = 2;  // OCT 4 (C4)
           if (newOct != d1BassKeysOctave) {
             d1BassKeysOctave = newOct;
-            snprintf(displayParameter1, sizeof(displayParameter1), "OCT %d", newOct + 2);
-            displayParameter2[0] = '\0';
-            parameterOverlayStartTick = sysTickMs;
+            d1BassKeysShowOctave = true;
+            d1BassKeysOctaveShowStart = sysTickMs;
           }
           break;
         }
@@ -3551,10 +3565,62 @@ void updateDisplay() {
     display.drawBitmap(118, 4, image_stop_bits, 10, 10, 1);
   }
 
+  // BASS KEYS — large note name while key held, or large octave on knob change
+  bool bassKeysDisplayActive = false;
+  if (d1BassKeysMode) {
+    if (d1BassKeysActiveKey >= 0) {
+      // Key held — show note name in large font
+      uint8_t midiNote = (36 + d1BassKeysOctave * 12) + d1BassKeysActiveKey;
+      if (midiNote > 75) midiNote = 75;
+      char noteName[8];
+      formatChromaNote(midiNote, noteName);
+
+      display.setTextSize(1);
+      int16_t sx1, sy1;
+      uint16_t sw, sh;
+      display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
+      display.setCursor((128 - sw) / 2, 24);
+      display.print("BASS KEYS");
+
+      display.setTextSize(3);
+      int16_t nx1, ny1;
+      uint16_t nw, nh;
+      display.getTextBounds(noteName, 0, 0, &nx1, &ny1, &nw, &nh);
+      display.setCursor((128 - nw) / 2, 35);
+      display.print(noteName);
+      display.setTextSize(1);
+      bassKeysDisplayActive = true;
+    } else if (d1BassKeysShowOctave && (sysTickMs - d1BassKeysOctaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
+      // Octave knob changed — show large octave
+      char octLabel[8];
+      snprintf(octLabel, sizeof(octLabel), "OCT %d", d1BassKeysOctave + 2);
+
+      display.setTextSize(1);
+      int16_t sx1, sy1;
+      uint16_t sw, sh;
+      display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
+      display.setCursor((128 - sw) / 2, 24);
+      display.print("BASS KEYS");
+
+      display.setTextSize(3);
+      int16_t nx1, ny1;
+      uint16_t nw, nh;
+      display.getTextBounds(octLabel, 0, 0, &nx1, &ny1, &nw, &nh);
+      display.setCursor((128 - nw) / 2, 35);
+      display.print(octLabel);
+      display.setTextSize(1);
+      bassKeysDisplayActive = true;
+    } else {
+      d1BassKeysShowOctave = false;  // expired
+    }
+  }
+
   // When a CHROMA step-note is held, show large note name instead of scope
   bool noteSelectActive = (d1ChromaHeldStep >= 0) || (d2ChromaHeldStep >= 0) || (d3ChromaHeldStep >= 0);
 
-  if (noteSelectActive) {
+  if (bassKeysDisplayActive) {
+    // Already drawn above — skip scope
+  } else if (noteSelectActive) {
     int stepNum;
     uint8_t midiNote;
     if (d1ChromaHeldStep >= 0) {
