@@ -44,7 +44,7 @@ static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
 static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
 static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-#define FIRMWARE_VERSION "1.03.1"
+#define FIRMWARE_VERSION "1.04"
 #define FIRMWARE_DATE_FMT "%02d.%02d.%02d - %02d:%02d"
 #define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
 
@@ -86,7 +86,7 @@ static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_
 bool d1ChromaMode = false;
 static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 1500;
 
-// BASS KEYS mode — see bass_keys.h (included after forward declarations).
+// MONOBASS mode — see monobass.h (included after forward declarations).
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
@@ -460,11 +460,11 @@ void applyD3Decay();
 void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 
-// BASS KEYS — struct, constants, entry/exit, keyboard handler, display renderer.
+// MONOBASS — struct, constants, entry/exit, keyboard handler, display renderer.
 // Included here because it depends on forward declarations above and state
 // variables like D1_ATTACK_MS, TransportState, d1EffectiveDecay, etc.
-#include "bass_keys.h"
-BassKeysState bassKeys;
+#include "monobass.h"
+MonoBassState monoBass;
 
 // Accent pattern bitmask — single source of truth for all 15 accent modes (OFF + 14 patterns).
 // Bit 15 = step 0, bit 0 = step 15.  Used by triggerD3() and LED preview.
@@ -1076,8 +1076,8 @@ void playSequence() {
 // so this function only fires audio — no step counter mutation.
 // Called from main loop context via playSequence().
 void playSequenceCore(uint8_t step) {
-  // BASS KEYS mode: entire sequencer suppressed — D1 is live keyboard only
-  if (bassKeys.active) return;
+  // MONOBASS mode: entire sequencer suppressed — D1 is live keyboard only
+  if (monoBass.active) return;
 
   if (d1Sequence[step]) {
     if (d1ChromaMode) {
@@ -1104,11 +1104,11 @@ void triggerD1() {
   // Retrigger guard — uint32_t reads/writes are atomic on ARM Cortex-M7.
   // Called from main loop context via playSequenceCore().
   uint32_t now = micros();
-  bool skipNoteOff = !bassKeys.active && (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
+  bool skipNoteOff = !monoBass.active && (now - lastD1TriggerUs) < MIN_RETRIGGER_US;
   lastD1TriggerUs = now;
 
   AudioNoInterrupts();
-  if (bassKeys.active) {
+  if (monoBass.active) {
     // Gate-style: retrigger amp envelope + snap, no pitch sweep
     d1AmpEnv.noteOff();
     d1AmpEnv.noteOn();
@@ -1268,23 +1268,23 @@ void handlePlayStop() {
 struct ButtonHandler {
   uint32_t pressTick = 0;
   bool enteredMode = false;   // first-tier hold (chroma / PPQN)
-  bool enteredMode2 = false;  // second-tier hold (D1 BASS KEYS only)
+  bool enteredMode2 = false;  // second-tier hold (D1 MONOBASS only)
 
   void (*onPress)(ButtonHandler& self, uint32_t nowTick);
   void (*onRelease)(ButtonHandler& self, uint32_t nowTick);
   void (*onHoldCheck)(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs);
 };
 
-// --- D1 button (index 0): short=selectD1, hold 1.5s=chroma, hold 6s=BASS KEYS ---
+// --- D1 button (index 0): short=selectD1, hold 1.5s=chroma, hold 6s=MONOBASS ---
 
 static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
   self.enteredMode = false;   // chroma
-  self.enteredMode2 = false;  // BASS KEYS
+  self.enteredMode2 = false;  // MONOBASS
 }
 
 static void btnD1Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (!self.enteredMode && !self.enteredMode2 && !bassKeys.active) {
+  if (!self.enteredMode && !self.enteredMode2 && !monoBass.active) {
     selectTrack(TRACK_D1);
   }
   self.enteredMode = false;
@@ -1309,16 +1309,16 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
     displayParameter2[0] = '\0';
     parameterOverlayStartTick = nowTick;
   }
-  // Tier 2: BASS KEYS at 6s
-  if (!self.enteredMode2 && heldMs >= D1_BASS_KEYS_LONG_PRESS_MS) {
+  // Tier 2: MONOBASS at 6s
+  if (!self.enteredMode2 && heldMs >= D1_MONOBASS_LONG_PRESS_MS) {
     self.enteredMode2 = true;
-    if (!bassKeys.active) {
-      enterBassKeysMode();
+    if (!monoBass.active) {
+      enterMonoBassMode();
     } else {
-      exitBassKeysMode();
+      exitMonoBassMode();
     }
     snprintf(displayParameter1, sizeof(displayParameter1),
-             bassKeys.active ? "BASS KEYS ON" : "BASS KEYS OFF");
+             monoBass.active ? "MONOBASS ON" : "MONOBASS OFF");
     displayParameter2[0] = '\0';
     parameterOverlayStartTick = nowTick;
     updateLEDs();
@@ -1328,19 +1328,19 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
 // --- D2 button (index 1): short=selectD2, hold 2s=chroma ---
 
 static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
-  if (bassKeys.active) return;
+  if (monoBass.active) return;
   self.pressTick = nowTick;
   self.enteredMode = false;
 }
 
 static void btnD2Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (bassKeys.active) return;
+  if (monoBass.active) return;
   if (!self.enteredMode) selectTrack(TRACK_D2);
   self.enteredMode = false;
 }
 
 static void btnD2Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  if (bassKeys.active || self.enteredMode) return;
+  if (monoBass.active || self.enteredMode) return;
   if (heldMs >= D2_CHROMA_LONG_PRESS_MS) {
     d2ChromaMode = !d2ChromaMode;
     self.enteredMode = true;
@@ -1360,19 +1360,19 @@ static void btnD2Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
 // --- D3 button (index 2): short=selectD3, hold 2s=chroma ---
 
 static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
-  if (bassKeys.active) return;
+  if (monoBass.active) return;
   self.pressTick = nowTick;
   self.enteredMode = false;
 }
 
 static void btnD3Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (bassKeys.active) return;
+  if (monoBass.active) return;
   if (!self.enteredMode) selectTrack(TRACK_D3);
   self.enteredMode = false;
 }
 
 static void btnD3Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  if (bassKeys.active || self.enteredMode) return;
+  if (monoBass.active || self.enteredMode) return;
   if (heldMs >= D3_CHROMA_LONG_PRESS_MS) {
     d3ChromaMode = !d3ChromaMode;
     self.enteredMode = true;
@@ -1392,19 +1392,19 @@ static void btnD3Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
 // --- PLAY button (index 6): short=play/stop, hold 2s=WF chroma ---
 
 static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
-  if (bassKeys.active) return;
+  if (monoBass.active) return;
   self.pressTick = nowTick;
   self.enteredMode = false;
 }
 
 static void btnPlayRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (bassKeys.active) return;
+  if (monoBass.active) return;
   if (!self.enteredMode) handlePlayStop();
   self.enteredMode = false;
 }
 
 static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  if (bassKeys.active || self.enteredMode) return;
+  if (monoBass.active || self.enteredMode) return;
   if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
     wfChromaMode = !wfChromaMode;
     self.enteredMode = true;
@@ -1418,11 +1418,19 @@ static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) 
 // --- MEMORY button (index 7): short=cycle slot, hold 2s=PPQN mode ---
 
 static void btnMemoryPress(ButtonHandler& self, uint32_t nowTick) {
+  if (monoBass.active) {
+    snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    parameterOverlayStartTick = nowTick;
+    activeRail = RAIL_NONE;
+    return;
+  }
   self.pressTick = nowTick;
   self.enteredMode = false;
 }
 
 static void btnMemoryRelease(ButtonHandler& self, uint32_t nowTick) {
+  if (monoBass.active) return;
   if (self.enteredMode) {
     // Hold entered PPQN mode — suppress slot cycle
   } else if (ppqnModeActive) {
@@ -1443,9 +1451,9 @@ static void btnMemoryRelease(ButtonHandler& self, uint32_t nowTick) {
   self.enteredMode = false;
 }
 
-static void btnMemoryHold(ButtonHandler& self, uint32_t nowTick, uint32_t /*heldMs*/) {
+static void btnMemoryHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+  if (monoBass.active) return;
   if (self.enteredMode) return;
-  uint32_t heldMs = (uint32_t)(nowTick - self.pressTick);
   if (heldMs < PPQN_LONG_PRESS_MS) return;
 
   if (ppqnModeActive) {
@@ -1458,8 +1466,10 @@ static void btnMemoryHold(ButtonHandler& self, uint32_t nowTick, uint32_t /*held
     activeRail = RAIL_NONE;
   } else {
     if (sequencePlaying) {
+      noInterrupts();
       sequencePlaying = false;
       setTransport(STOPPED);
+      interrupts();
       resetExternalClockState();
       applyMasterGain();
     }
@@ -1474,6 +1484,13 @@ static void btnMemoryHold(ButtonHandler& self, uint32_t nowTick, uint32_t /*held
 
 static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
+  if (monoBass.active) {
+    snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    parameterOverlayStartTick = nowTick;
+    activeRail = RAIL_NONE;
+    return;
+  }
   if (!loadStateFromEEPROM(activeSaveSlot)) {
     for (int step = 0; step < numSteps; step++) {
       d1Sequence[step] = 0;
@@ -1496,6 +1513,13 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
 
 static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
+  if (monoBass.active) {
+    snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
+    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS MODE");
+    parameterOverlayStartTick = nowTick;
+    activeRail = RAIL_NONE;
+    return;
+  }
   activeRail = RAIL_NONE;
   if (patternDirty) {
     saveStateToEEPROM(activeSaveSlot);
@@ -1576,10 +1600,10 @@ void selectTrack(Track t) {
 void updateLEDs() {
   // Main-loop only — no ISR access to accentPreview*, no guards needed
 
-  // BASS KEYS mode — all LEDs off (active key lit in updateStepButtons on press)
-  if (bassKeys.active) {
+  // MONOBASS mode — all LEDs off (active key lit in updateStepButtons on press)
+  if (monoBass.active) {
     for (int i = 0; i < numSteps; i++) {
-      ledShiftReg.set(i, i == bassKeys.activeKey);
+      ledShiftReg.set(i, i == monoBass.activeKey);
     }
     return;
   }
@@ -1662,8 +1686,8 @@ void updateStepButtons() {
 
       btnState[i] = rawPressed;
 
-      // BASS KEYS mode — buttons trigger D1 directly, skip all sequence editing
-      if (handleBassKeysButton(i, btnState[i])) {
+      // MONOBASS mode — buttons trigger D1 directly, skip all sequence editing
+      if (handleMonoBassButton(i, btnState[i])) {
         btnLastState[i] = rawPressed;
         continue;
       }
@@ -1698,7 +1722,7 @@ void updateStepButtons() {
     }
 
     // Chroma note-select: after holding a step button for 300ms, enter note-select
-    if (!bassKeys.active) {
+    if (!monoBass.active) {
       int8_t* heldStep = activeChromaHeldStep();
       if (heldStep && btnState[i]) {
         if (*heldStep == i) {
@@ -1895,6 +1919,12 @@ static inline float d2DecayCurve(int knobValue) {
     float t = (norm - 0.75f) / 0.25f;  // 0..1 over 75–100%
     return 225.0f + t * 275.0f;        // 225 -> 500ms
   }
+}
+
+// D3 Filter curve: 800–7500 Hz exponential (log-spaced for natural feel)
+static inline float d3FilterCurve(int knobValue) {
+  float norm = normalizeKnob(knobValue);
+  return 800.0f * expf(norm * 2.239f);  // ln(7500/800) ≈ 2.239
 }
 
 // BPM curve: 60–400 (first 85%) then 900–999 (remaining 15%, hyperspeed), rounded to 0.5
@@ -2175,6 +2205,18 @@ inline bool isSafeToPushOled(uint32_t nowMs) {
 // Top bar: BPM/EXT, track digit, choke, MEM slot, transport icon.
 void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
                   uint8_t slotSnap, bool playingSnap) {
+  // MONOBASS mode: replace entire toolbar with centered "MONOBASS" text
+  if (monoBass.active) {
+    display.setTextSize(2);
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds("MONOBASS", 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((128 - w) / 2, 2);
+    display.print("MONOBASS");
+    display.setTextSize(1);
+    return;
+  }
+
   // BPM / EXT clock state
   display.setCursor(0, 0);
   if (extBpmDisplay > 0.0f) {
@@ -2226,7 +2268,7 @@ void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
   }
 }
 
-// renderBassKeysScope() is now in bass_keys.h
+// renderMonoBassScope() is now in monobass.h
 
 // Chroma note select: large note name when a chroma step is held.
 // Returns true if it drew content (suppresses oscilloscope).
@@ -2273,7 +2315,7 @@ bool renderChromaNoteSelect() {
 
 // Chroma dot indicator — bottom bar dots for active chroma channels.
 void renderChromaDots() {
-  bool anyChroma = !bassKeys.active && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
+  bool anyChroma = !monoBass.active && (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
   if (!anyChroma) return;
 
   // Clear strip so dots sit on black, not on scope pixels.
@@ -2422,11 +2464,8 @@ void updateDisplay() {
   overlayStartSnap = parameterOverlayStartTick;
   railSnap = activeRail;
 
-  strncpy(param1Snap, displayParameter1, sizeof(param1Snap) - 1);
-  param1Snap[sizeof(param1Snap) - 1] = 0;
-
-  strncpy(param2Snap, displayParameter2, sizeof(param2Snap) - 1);
-  param2Snap[sizeof(param2Snap) - 1] = 0;
+  snprintf(param1Snap, sizeof(param1Snap), "%s", displayParameter1);
+  snprintf(param2Snap, sizeof(param2Snap), "%s", displayParameter2);
 
   // Overlay state
   bool overlayActiveNow =
@@ -2448,17 +2487,17 @@ void updateDisplay() {
 
   renderTopBar(bpmSnap, trackSnap, chokeSnap, slotSnap, playingSnap);
 
-  // Scope area: BASS KEYS display > chroma note select > oscilloscope
-  bool bassKeysDisplayActive = renderBassKeysScope(nowMs);
+  // Scope area: MONOBASS display > chroma note select > oscilloscope
+  bool monoBassDisplayActive = renderMonoBassScope(nowMs);
   bool noteSelectActive = renderChromaNoteSelect();
-  if (!bassKeysDisplayActive && !noteSelectActive) {
+  if (!monoBassDisplayActive && !noteSelectActive) {
     drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
   }
 
   renderChromaDots();
 
   // Suppress small parameter overlay when scope area owns the display
-  if (noteSelectActive || bassKeysDisplayActive) overlayActiveNow = false;
+  if (noteSelectActive || monoBassDisplayActive) overlayActiveNow = false;
   if (overlayActiveNow) {
     renderParameterOverlay(railSnap, param1Snap, param2Snap);
   }

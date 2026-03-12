@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.03.1.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.04.
 
 ## Features
 
@@ -34,7 +34,7 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - **MCU:** Teensy 4.0 (ARM Cortex-M7 @ 600 MHz)
 - **Audio:** Teensy Audio Library -> SGTL5000 codec (headphone + line out) + USB audio
 - **Display:** 128x64 OLED (software SPI)
-- **Controls:** 32 knobs (2x 16-ch analog mux), 16 step buttons, 7 control buttons
+- **Controls:** 32 knobs (2x 16-ch analog mux), 16 step buttons, 10 control buttons
 - **LEDs:** 16 step LEDs (74HC595 shift register)
 - **Clock:** Internal BPM with external pulse clock sync
 - **Storage:** EEPROM with wear-leveling -- 10 pattern slots storing drum steps + CHROMA notes
@@ -49,8 +49,25 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 | `hw_setup.h` | Pin assignments, mux/LED/OLED hardware config |
 | `ext_sync.h` | External clock sync -- ISRs, glitch filter, lock-in, subdivisions |
 | `eeprom.h` | Pattern save/load, CHROMA notes + PPQN persistence |
+| `knob_handlers.h` | Table-driven knob dispatch -- 32 display + 32 engine functions |
+| `monobass.h` | MONOBASS live keyboard mode -- entry/exit, button handler, scope |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
+
+## Changes (v1.04)
+
+- **MONOBASS mode** -- hold D1 for 6 seconds to enter a live mono keyboard using the step buttons as keys, with oscilloscope waveform display. D2/D3 knobs, BPM, choke, and memory/load/save are disabled during MONOBASS mode.
+- D2 and D3 wavefolder carrier frequencies lowered to sub-bass range (32-110 Hz for D3, 32-440 Hz for D2)
+- Table-driven knob dispatch replaces switch blocks -- all 32 knobs handled via `knobTable[]` with paired display/engine function pointers
+- Table-driven button dispatch replaces `updateOtherButtons()` -- 10 control buttons handled via `btnHandlers[]` with press/release/hold callbacks
+- Display rendering extracted into focused sub-renderers (`renderTopBar`, `renderStepRow`, etc.)
+- Accent preview and MONOBASS UI state grouped into structs
+- Unified MIDI-to-Hz lookup across all voices
+- D3 filter curve unified between display and engine (was showing wrong range on display)
+- Choke display type corrected from float to int
+- Replaced `strncpy` with `snprintf` throughout for safe string handling
+- CHROMA note-select state cleared on MONOBASS mode entry to prevent stale state
+- EEPROM backward compatibility preserved across format changes
 
 ## Changes (v1.03.1)
 

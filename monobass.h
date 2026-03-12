@@ -1,7 +1,7 @@
-#ifndef BASS_KEYS_H
-#define BASS_KEYS_H
+#ifndef MONOBASS_H
+#define MONOBASS_H
 // ============================================================================
-//  BASS KEYS — bass_keys.h
+//  MONOBASS — monobass.h
 //
 //  D1 live keyboard mode: step buttons play chromatic notes through D1 voice,
 //  sequencer fully suppressed. Gate-style envelope with configurable release.
@@ -17,15 +17,15 @@
 //  Constants
 // ============================================================================
 
-static constexpr uint32_t D1_BASS_KEYS_LONG_PRESS_MS = 6000;
-static constexpr uint32_t BASS_KEYS_OCT_DISPLAY_MS   = 1200;
-static constexpr uint32_t BASS_KEYS_PARAM_DISPLAY_MS  = 1500;
+static constexpr uint32_t D1_MONOBASS_LONG_PRESS_MS = 6000;
+static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS   = 1200;
+static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1500;
 
 // ============================================================================
 //  State
 // ============================================================================
 
-struct BassKeysState {
+struct MonoBassState {
   bool active = false;
   uint8_t octave = 0;           // 0=OCT2 (C2), 1=OCT3 (C3), 2=OCT4 (C4)
   int8_t activeKey = -1;        // currently pressed key index (-1 = none)
@@ -37,7 +37,7 @@ struct BassKeysState {
   uint32_t paramShowStart = 0;  // when param display started
 };
 
-extern BassKeysState bassKeys;
+extern MonoBassState monoBass;
 
 // ============================================================================
 //  External dependencies — defined in main .ino
@@ -58,6 +58,9 @@ extern char displayParameter1[24];
 extern char displayParameter2[24];
 extern uint32_t parameterOverlayStartTick;
 extern ShiftRegister74HC595<2> ledShiftReg;
+extern int8_t d1ChromaHeldStep;
+extern int8_t d2ChromaHeldStep;
+extern int8_t d3ChromaHeldStep;
 
 // Functions defined in .ino
 extern void formatChromaNote(uint8_t midiNote, char* outName);
@@ -71,9 +74,9 @@ extern void updateLEDs();
 //  Entry / exit
 // ============================================================================
 
-// Enter BASS KEYS mode: stop transport, configure gate envelope.
-void enterBassKeysMode() {
-  bassKeys.active = true;
+// Enter MONOBASS mode: stop transport, configure gate envelope.
+void enterMonoBassMode() {
+  monoBass.active = true;
   // Stop transport if running
   noInterrupts();
   sequencePlaying = false;
@@ -83,21 +86,25 @@ void enterBassKeysMode() {
   pendingStepCount = 0;
   wantSwitchToExt = false;
   interrupts();
-  bassKeys.activeKey = -1;
-  bassKeys.showOctave = false;
+  monoBass.activeKey = -1;
+  monoBass.showOctave = false;
+  // Clear any chroma note-select state so it doesn't persist across mode switch
+  d1ChromaHeldStep = -1;
+  d2ChromaHeldStep = -1;
+  d3ChromaHeldStep = -1;
   // Gate-style bass synth envelope: fast attack, full sustain, short release
   AudioNoInterrupts();
   d1AmpEnv.attack(2.0f);       // Moog-like punch (~2ms)
   d1AmpEnv.hold(0.0f);         // no hold phase — sustain takes over
   d1AmpEnv.decay(0.0f);        // no decay — sustain at full level
   d1AmpEnv.sustain(1.0f);      // hold at full amplitude while key pressed
-  d1AmpEnv.release(bassKeys.releaseMs);
+  d1AmpEnv.release(monoBass.releaseMs);
   AudioInterrupts();
 }
 
-// Exit BASS KEYS mode: restore drum envelope.
-void exitBassKeysMode() {
-  bassKeys.active = false;
+// Exit MONOBASS mode: restore drum envelope.
+void exitMonoBassMode() {
+  monoBass.active = false;
   AudioNoInterrupts();
   d1AmpEnv.attack(D1_ATTACK_MS);
   d1AmpEnv.hold(d1CachedHoldMs);
@@ -112,28 +119,28 @@ void exitBassKeysMode() {
 //  Keyboard handler — call from updateStepButtons() for each button
 // ============================================================================
 
-// Handle a step button press/release in BASS KEYS mode.
+// Handle a step button press/release in MONOBASS mode.
 // Returns true if handled (caller should skip normal step logic).
-bool handleBassKeysButton(int buttonIndex, bool pressed) {
-  if (!bassKeys.active) return false;
+bool handleMonoBassButton(int buttonIndex, bool pressed) {
+  if (!monoBass.active) return false;
 
   if (pressed) {
     // Press — play note
-    uint8_t midiNote = (36 + bassKeys.octave * 12) + buttonIndex;
+    uint8_t midiNote = (36 + monoBass.octave * 12) + buttonIndex;
     if (midiNote > 75) midiNote = 75;  // clamp to D#5 (table max)
     d1BaseFreq = d1ChromaFreq(midiNote);
     applyD1Freq();
     triggerD1();
-    bassKeys.activeKey = buttonIndex;
+    monoBass.activeKey = buttonIndex;
     // Light only the pressed key
     for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, j == buttonIndex);
   } else {
     // Release — gate off, clear active key and LED
-    if (bassKeys.activeKey == buttonIndex) {
+    if (monoBass.activeKey == buttonIndex) {
       AudioNoInterrupts();
       d1AmpEnv.noteOff();
       AudioInterrupts();
-      bassKeys.activeKey = -1;
+      monoBass.activeKey = -1;
       for (int j = 0; j < numSteps; j++) ledShiftReg.set(j, LOW);
     }
   }
@@ -144,14 +151,14 @@ bool handleBassKeysButton(int buttonIndex, bool pressed) {
 //  Display — scope area renderer
 // ============================================================================
 
-// Render BASS KEYS display in scope area (note name, octave, or param).
+// Render MONOBASS display in scope area (note name, octave, or param).
 // Returns true if it drew content (suppresses oscilloscope).
-bool renderBassKeysScope(uint32_t nowMs) {
-  if (!bassKeys.active) return false;
+bool renderMonoBassScope(uint32_t nowMs) {
+  if (!monoBass.active) return false;
 
-  if (bassKeys.activeKey >= 0) {
+  if (monoBass.activeKey >= 0) {
     // Key held — show note name
-    uint8_t midiNote = (36 + bassKeys.octave * 12) + bassKeys.activeKey;
+    uint8_t midiNote = (36 + monoBass.octave * 12) + monoBass.activeKey;
     if (midiNote > 75) midiNote = 75;
     char noteName[8];
     formatChromaNote(midiNote, noteName);
@@ -159,9 +166,9 @@ bool renderBassKeysScope(uint32_t nowMs) {
     display.setTextSize(1);
     int16_t sx1, sy1;
     uint16_t sw, sh;
-    display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
+    display.getTextBounds("MONOBASS", 0, 0, &sx1, &sy1, &sw, &sh);
     display.setCursor((128 - sw) / 2, 24);
-    display.print("BASS KEYS");
+    display.print("MONOBASS");
 
     display.setTextSize(3);
     int16_t nx1, ny1;
@@ -173,36 +180,36 @@ bool renderBassKeysScope(uint32_t nowMs) {
     return true;
   }
 
-  if (bassKeys.paramLabel[0] && (nowMs - bassKeys.paramShowStart < BASS_KEYS_PARAM_DISPLAY_MS)) {
+  if (monoBass.paramLabel[0] && (nowMs - monoBass.paramShowStart < MONOBASS_PARAM_DISPLAY_MS)) {
     // Parameter knob changed — show label + value
     display.setTextSize(1);
     int16_t sx1, sy1;
     uint16_t sw, sh;
-    display.getTextBounds(bassKeys.paramLabel, 0, 0, &sx1, &sy1, &sw, &sh);
+    display.getTextBounds(monoBass.paramLabel, 0, 0, &sx1, &sy1, &sw, &sh);
     display.setCursor((128 - sw) / 2, 24);
-    display.print(bassKeys.paramLabel);
+    display.print(monoBass.paramLabel);
 
     display.setTextSize(3);
     int16_t nx1, ny1;
     uint16_t nw, nh;
-    display.getTextBounds(bassKeys.paramValue, 0, 0, &nx1, &ny1, &nw, &nh);
+    display.getTextBounds(monoBass.paramValue, 0, 0, &nx1, &ny1, &nw, &nh);
     display.setCursor((128 - nw) / 2, 35);
-    display.print(bassKeys.paramValue);
+    display.print(monoBass.paramValue);
     display.setTextSize(1);
     return true;
   }
 
-  if (bassKeys.showOctave && (nowMs - bassKeys.octaveShowStart < BASS_KEYS_OCT_DISPLAY_MS)) {
+  if (monoBass.showOctave && (nowMs - monoBass.octaveShowStart < MONOBASS_OCT_DISPLAY_MS)) {
     // Octave knob changed — show large octave
     char octLabel[8];
-    snprintf(octLabel, sizeof(octLabel), "OCT %d", bassKeys.octave + 2);
+    snprintf(octLabel, sizeof(octLabel), "OCT %d", monoBass.octave + 2);
 
     display.setTextSize(1);
     int16_t sx1, sy1;
     uint16_t sw, sh;
-    display.getTextBounds("BASS KEYS", 0, 0, &sx1, &sy1, &sw, &sh);
+    display.getTextBounds("MONOBASS", 0, 0, &sx1, &sy1, &sw, &sh);
     display.setCursor((128 - sw) / 2, 24);
-    display.print("BASS KEYS");
+    display.print("MONOBASS");
 
     display.setTextSize(3);
     int16_t nx1, ny1;
@@ -214,10 +221,10 @@ bool renderBassKeysScope(uint32_t nowMs) {
     return true;
   }
 
-  // All BASS KEYS displays expired
-  bassKeys.showOctave = false;
-  bassKeys.paramLabel[0] = '\0';
+  // All MONOBASS displays expired
+  monoBass.showOctave = false;
+  monoBass.paramLabel[0] = '\0';
   return false;
 }
 
-#endif // BASS_KEYS_H
+#endif // MONOBASS_H
