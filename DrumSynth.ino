@@ -2352,10 +2352,12 @@ bool renderChromaNoteSelect() {
 
 // Chroma dot indicator — bottom bar dots for active chroma channels.
 void renderChromaDots() {
-  // In MONOBASS, only WF chroma dot is relevant (D1/D2/D3 sequencer chroma suppressed)
-  bool showD1 = d1ChromaMode && !monoBass.active;
-  bool showD2 = d2ChromaMode && !monoBass.active;
-  bool showD3 = d3ChromaMode && !monoBass.active;
+  // All dots suppressed during MONOBASS — WF chroma is always on there and the
+  // idle grid / scope uses the full display area without room for the dot bar.
+  if (monoBass.active) return;
+  bool showD1 = d1ChromaMode;
+  bool showD2 = d2ChromaMode;
+  bool showD3 = d3ChromaMode;
   bool showWF = wfChromaMode;
   if (!showD1 && !showD2 && !showD3 && !showWF) return;
 
