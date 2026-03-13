@@ -78,7 +78,7 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - EEPROM safety: `loadStateFromEEPROM()` and `saveStateToEEPROM()` cleaned up—unnecessary `noInterrupts()` wrappers removed (ISR does not access EEPROM)
 - Display robustness: D1/D2/D3 decay display functions confirmed not to factor in choke knob (show base decay only)
 - WF Chromatic mode state now persisted in EEPROM pattern slots (backward-compatible with V1/V2 slots)
-- MONOBASS mode now persists across power cycles and pattern save/load (EEPROM flags bit 4)
+- MONOBASS mode persists across power cycles (dedicated EEPROM address, independent of pattern slots)
 - MONOBASS chroma dot display: only WF dot shown during MONOBASS (D1/D2/D3 sequencer dots suppressed)
 - MONOBASS parameter display: WF Intensity/Frequency, Delay Time/Amount, Master Volume, and Master LPF now route through scope overlay instead of being suppressed
 - D1 oscillator Shape rail now renders during MONOBASS mode

@@ -73,7 +73,8 @@ extern ShiftRegister74HC595<2> ledShiftReg;
 extern int8_t d1ChromaHeldStep;
 extern int8_t d2ChromaHeldStep;
 extern int8_t d3ChromaHeldStep;
-extern bool monoBassActiveFlag;
+// Functions defined in eeprom.h (included before monobass.h)
+extern void saveMonoBassToEEPROM(bool active);
 
 // Functions defined in .ino
 extern void formatChromaNote(uint8_t midiNote, char* outName);
@@ -91,7 +92,7 @@ extern void drawOutlinedText(int x, int y, const char* text);
 // Enter MONOBASS mode: stop transport, configure gate envelope.
 void enterMonoBassMode() {
   monoBass.active = true;
-  monoBassActiveFlag = true;
+  saveMonoBassToEEPROM(true);
   // Stop transport if running
   noInterrupts();
   sequencePlaying = false;
@@ -131,7 +132,7 @@ void enterMonoBassMode() {
 // Exit MONOBASS mode: restore drum envelope.
 void exitMonoBassMode() {
   monoBass.active = false;
-  monoBassActiveFlag = false;
+  saveMonoBassToEEPROM(false);
   AudioNoInterrupts();
   d1AmpEnv.attack(D1_ATTACK_MS);
   d1AmpEnv.hold(d1CachedHoldMs);

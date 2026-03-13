@@ -48,12 +48,6 @@ extern bool wfChromaMode;
 extern float d1BaseFreq;
 extern float d1FreqBeforeChroma;
 
-// MONOBASS state — eeprom.h can't see MonoBassState (included later),
-// so we use a simple bool mirror that the .ino keeps in sync.
-extern bool monoBassActiveFlag;
-// Restore flag — set by loadStateFromEEPROM, consumed after monobass.h is loaded.
-static bool eepromWantMonoBass = false;
-
 // PPQN (ppqn is extern; PPQN_OPTIONS, PPQN_OPTION_COUNT, PPQN_DEFAULT are
 // constexpr in .ino — visible because this header is included after them)
 extern volatile uint8_t ppqn;
@@ -79,7 +73,7 @@ struct PatternStore {
   uint8_t d1Chroma[numSteps];     // Per-step MIDI note for D1 chroma mode
   uint8_t d2Chroma[numSteps];     // Per-step MIDI note for D2 chroma mode
   uint8_t d3Chroma[numSteps];     // Per-step MIDI note for D3 chroma mode
-  uint8_t flags;                  // bit 0: d1ChromaMode, bit 1: d2ChromaMode, bit 2: d3ChromaMode, bit 3: wfChromaMode, bit 4: monoBass.active
+  uint8_t flags;                  // bit 0: d1ChromaMode, bit 1: d2ChromaMode, bit 2: d3ChromaMode, bit 3: wfChromaMode
 };
 
 struct EepromSlot {
@@ -95,12 +89,14 @@ struct EepromSlot {
 
 static constexpr uint16_t EEPROM_MAGIC_V1    = 0x4247;  // V1 magic (D1 chroma 33–69)
 static constexpr uint16_t EEPROM_MAGIC_V2   = 0x4248;  // V2 magic (D1 chroma 33–75)
-static constexpr uint16_t EEPROM_MAGIC_V3   = 0x4249;  // V3 magic (+ wfChromaMode in flags)
-static constexpr uint16_t EEPROM_MAGIC      = 0x424A;  // Current magic (+ monoBass.active in flags)
+static constexpr uint16_t EEPROM_MAGIC      = 0x4249;  // Current magic (+ wfChromaMode in flags)
 static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
 // PPQN stored after all save slots
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
 static constexpr uint8_t  EEPROM_PPQN_MAGIC = 0xAA;
+// MONOBASS global state stored after PPQN (2 bytes: magic + bool)
+static constexpr int      EEPROM_MONOBASS_ADDR  = EEPROM_PPQN_ADDR + 2;
+static constexpr uint8_t  EEPROM_MONOBASS_MAGIC = 0xBB;
 
 // ============================================================================
 //  State
@@ -125,10 +121,9 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   EepromSlot slot;
   EEPROM.get((int)addr, slot);
 
-  // Verify magic number — accept current and previous versions
-  uint8_t version = 0;  // 1=V1, 2=V2, 3=V3, 4=current
-  if (slot.magic == EEPROM_MAGIC)        version = 4;
-  else if (slot.magic == EEPROM_MAGIC_V3) version = 3;
+  // Verify magic number — accept current and two previous versions
+  uint8_t version = 0;  // 1=V1, 2=V2, 3=current
+  if (slot.magic == EEPROM_MAGIC)       version = 3;
   else if (slot.magic == EEPROM_MAGIC_V2) version = 2;
   else if (slot.magic == EEPROM_MAGIC_V1) version = 1;
   else return false;
@@ -157,7 +152,6 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   d2ChromaMode = (slot.patterns.flags & 0x02) != 0;
   d3ChromaMode = (slot.patterns.flags & 0x04) != 0;
   wfChromaMode = (version >= 3) ? ((slot.patterns.flags & 0x08) != 0) : false;
-  eepromWantMonoBass = (version >= 4) ? ((slot.patterns.flags & 0x10) != 0) : false;
 
   // If D1 chroma was just enabled by load, save current freq for restore on exit
   if (d1ChromaMode && !wasD1Chroma) {
@@ -207,12 +201,11 @@ void saveStateToEEPROM(uint8_t slotIndex) {
     slot.patterns.d3Chroma[step] = d3ChromaNote[step];
   }
 
-  // Pack mode flags
-  slot.patterns.flags = (d1ChromaMode      ? 0x01 : 0)
-                      | (d2ChromaMode      ? 0x02 : 0)
-                      | (d3ChromaMode      ? 0x04 : 0)
-                      | (wfChromaMode      ? 0x08 : 0)
-                      | (monoBassActiveFlag ? 0x10 : 0);
+  // Pack chroma mode flags
+  slot.patterns.flags = (d1ChromaMode ? 0x01 : 0)
+                      | (d2ChromaMode ? 0x02 : 0)
+                      | (d3ChromaMode ? 0x04 : 0)
+                      | (wfChromaMode ? 0x08 : 0);
 
   // CRC8 over pattern data — detects partial writes on load
   slot.crc = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
@@ -249,6 +242,23 @@ void savePpqnToEEPROM(uint8_t val) {
   if (!valid) return;
   EEPROM.update(EEPROM_PPQN_ADDR, EEPROM_PPQN_MAGIC);
   EEPROM.update(EEPROM_PPQN_ADDR + 1, val);
+}
+
+// ============================================================================
+//  MONOBASS global persistence — survives power cycle, independent of patterns
+// ============================================================================
+
+bool loadMonoBassFromEEPROM() {
+  uint8_t magic = EEPROM.read(EEPROM_MONOBASS_ADDR);
+  if (magic == EEPROM_MONOBASS_MAGIC) {
+    return EEPROM.read(EEPROM_MONOBASS_ADDR + 1) != 0;
+  }
+  return false;
+}
+
+void saveMonoBassToEEPROM(bool active) {
+  EEPROM.update(EEPROM_MONOBASS_ADDR, EEPROM_MONOBASS_MAGIC);
+  EEPROM.update(EEPROM_MONOBASS_ADDR + 1, active ? 1 : 0);
 }
 
 #endif // EEPROM_H_DRUMACHINE

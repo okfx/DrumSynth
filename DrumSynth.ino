@@ -89,8 +89,6 @@ bool d1ChromaMode = false;
 static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 1500;
 
 // MONOBASS mode — see monobass.h (included after forward declarations).
-// Mirror flag for eeprom.h (can't see MonoBassState before monobass.h include).
-bool monoBassActiveFlag = false;
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
@@ -863,9 +861,7 @@ void setup() {
 
   initKnobsFromHardware();
   loadStateFromEEPROM(activeSaveSlot);
-  // Deferred MONOBASS restore — eeprom.h sets eepromWantMonoBass but can't
-  // call enterMonoBassMode() (monobass.h not yet included at that point).
-  if (eepromWantMonoBass) enterMonoBassMode();
+  if (loadMonoBassFromEEPROM()) enterMonoBassMode();
   rearmStepTimer();
   applyMasterGain();
 }
