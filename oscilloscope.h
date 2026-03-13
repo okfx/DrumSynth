@@ -34,8 +34,10 @@ bool  scopeBufferReady = false;
 // Smoothed auto-scale state — peak hold with slow release
 float scopePeakRange = 0.05f;  // starts at noise floor
 
-// Refresh timing — hold each snapshot for ~80ms before capturing a new one
-static constexpr uint32_t SCOPE_REFRESH_MS = 80;
+// Refresh timing — matches OLED_FRAME_INTERVAL_MS (42ms) so a fresh triggered
+// snapshot is ready every display frame (~24 FPS). Capture takes ~12ms minimum
+// (4 audio blocks), so 35ms gives a small margin without idle time.
+static constexpr uint32_t SCOPE_REFRESH_MS = 35;
 uint32_t scopeLastCaptureMs = 0;
 
 // ============================================================================
