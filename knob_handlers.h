@@ -32,6 +32,7 @@ extern AudioMixer4              d1OscMixer;
 extern AudioEffectEnvelope      d1AmpEnv;
 extern AudioSynthSimpleDrum     d1Snap;
 extern AudioFilterBiquad        d1EQ;
+extern AudioFilterStateVariable d1LowPass;
 extern AudioSynthWaveformModulated d2Osc;
 extern AudioEffectEnvelope      d2NoiseEnv;
 extern AudioFilterStateVariable d2NoiseFilter;
@@ -190,6 +191,7 @@ static void displayD1Shape(uint8_t idx, int knobValue) {
   displayParameter2[0] = 0;
   activeRail = RAIL_D1_SHAPE;
   uiMixD1Shape = normalizeKnob(knobValue);
+  if (monoBass.active) parameterOverlayStartTick = sysTickMs;
 }
 
 // Case 2: D1 Decay
@@ -247,7 +249,18 @@ static void displayD1Snap(uint8_t idx, int knobValue) {
 // Case 6: D1 EQ/Body
 static void displayD1Body(uint8_t idx, int knobValue) {
   (void)idx;
-  displayMonoBassParam("D1 BODY", "BODY", knobValue);
+  if (monoBass.active) {
+    float norm = normalizeKnob(knobValue);
+    float cutoff = 80.0f * expf(norm * 4.317f);
+    if (cutoff > 6000.0f) cutoff = 6000.0f;
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "FILTER");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d Hz", (int)cutoff);
+    monoBass.paramShowStart = sysTickMs;
+  } else {
+    snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
+    int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+    snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+  }
 }
 
 // Case 7: D1 Delay Send
@@ -496,8 +509,14 @@ static void displayMasterDelayTime(uint8_t idx, int knobValue) {
   (void)idx;
   float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
   int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
-  snprintf(displayParameter1, sizeof(displayParameter1), "DELAY TIME");
-  snprintf(displayParameter2, sizeof(displayParameter2), "%s", ratioLabels[ratioIdx]);
+  if (monoBass.active) {
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "DELAY TIME");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", ratioLabels[ratioIdx]);
+    monoBass.paramShowStart = sysTickMs;
+  } else {
+    snprintf(displayParameter1, sizeof(displayParameter1), "DELAY TIME");
+    snprintf(displayParameter2, sizeof(displayParameter2), "%s", ratioLabels[ratioIdx]);
+  }
 }
 
 // Case 25: Wavefold Frequency
@@ -507,12 +526,24 @@ static void displayWfFreq(uint8_t idx, int knobValue) {
     uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
     char noteName[8];
     formatChromaNote(midiNote, noteName);
-    snprintf(displayParameter1, sizeof(displayParameter1), "WF %s", noteName);
-    snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+    if (monoBass.active) {
+      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF %s", noteName);
+      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "CHROMA");
+      monoBass.paramShowStart = sysTickMs;
+    } else {
+      snprintf(displayParameter1, sizeof(displayParameter1), "WF %s", noteName);
+      snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+    }
   } else {
     int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-    snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
-    snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+    if (monoBass.active) {
+      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF FREQ");
+      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
+      monoBass.paramShowStart = sysTickMs;
+    } else {
+      snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
+      snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+    }
   }
 }
 
@@ -520,8 +551,14 @@ static void displayWfFreq(uint8_t idx, int knobValue) {
 static void displayMasterLowpass(uint8_t idx, int knobValue) {
   (void)idx;
   int freqHz = map(knobValue, 0, 1023, 1000, 7500);
-  snprintf(displayParameter1, sizeof(displayParameter1), "MASTER LOWPASS");
-  snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", freqHz);
+  if (monoBass.active) {
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "LOWPASS");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d Hz", freqHz);
+    monoBass.paramShowStart = sysTickMs;
+  } else {
+    snprintf(displayParameter1, sizeof(displayParameter1), "MASTER LOWPASS");
+    snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", freqHz);
+  }
 }
 
 // Case 27: Master Tempo
@@ -549,7 +586,11 @@ static void displayMasterTempo(uint8_t idx, int knobValue) {
 // Case 28: Master Volume
 static void displayMasterVolume(uint8_t idx, int knobValue) {
   (void)idx;
-  displaySimplePercent("MASTER VOLUME", knobValue);
+  if (monoBass.active) {
+    displayMonoBassParam("MASTER VOLUME", "VOLUME", knobValue);
+  } else {
+    displaySimplePercent("MASTER VOLUME", knobValue);
+  }
 }
 
 // Case 29: Master Choke
@@ -580,20 +621,36 @@ static void displayWfDrive(uint8_t idx, int knobValue) {
 
   // Perceived intensity follows drive^2 curve
   int percent = (int)(active * active * 100.0f + 0.5f);
-  snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD DRIVE");
-  snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+  if (monoBass.active) {
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF DRIVE");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
+    monoBass.paramShowStart = sysTickMs;
+  } else {
+    snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD DRIVE");
+    snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+  }
 }
 
 // Case 31: Master Delay Mix
 static void displayMasterDelayMix(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
-  snprintf(displayParameter1, sizeof(displayParameter1), "DELAY AMOUNT");
+  const char* valStr;
+  char valBuf[12];
   if (norm <= 0.02f) {
-    snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
+    valStr = "OFF";
   } else {
     int percent = (int)(norm * 100.0f + 0.5f);
-    snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+    snprintf(valBuf, sizeof(valBuf), "%d%%", percent);
+    valStr = valBuf;
+  }
+  if (monoBass.active) {
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "DELAY AMT");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", valStr);
+    monoBass.paramShowStart = sysTickMs;
+  } else {
+    snprintf(displayParameter1, sizeof(displayParameter1), "DELAY AMOUNT");
+    snprintf(displayParameter2, sizeof(displayParameter2), "%s", valStr);
   }
 }
 
@@ -692,6 +749,15 @@ static void engineD1Pitch(uint8_t idx, int knobValue) {
       monoBass.octave = newOct;
       monoBass.showOctave = true;
       monoBass.octaveShowStart = sysTickMs;
+      // Live-update frequency of held note so octave changes are immediate
+      int8_t top = monoBass.topKey();
+      if (top >= 0) {
+        uint8_t midiNote = (36 + newOct * 12) + top;
+        if (midiNote > 75) midiNote = 75;
+        d1BaseFreq = d1ChromaFreq(midiNote);
+        applyD1Freq();
+        monoBass.noteShowStart = sysTickMs;
+      }
     }
     return;
   }
@@ -734,10 +800,29 @@ static void engineD1Snap(uint8_t idx, int knobValue) {
   AudioInterrupts();
 }
 
-// Case 6: D1 EQ (Body)
+// Case 6: D1 EQ (Body) — Moog-style filter sweep in MONOBASS
 static void engineD1Body(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
+
+  if (monoBass.active) {
+    // Moog-style LPF sweep: 80 Hz – 6000 Hz exponential, with pitch tracking.
+    // Uses d1LowPass (AudioFilterStateVariable) as the sweep filter.
+    // Resonance at 1.8 gives a conspicuous but stable Moog-like peak.
+    float baseCutoff = 80.0f * expf(norm * 4.317f);  // ln(6000/80) ≈ 4.317
+    // Pitch tracking: shift cutoff up proportionally to playing frequency
+    // so the filter opens with higher notes (classic Moog behavior)
+    float trackRatio = d1BaseFreq / 65.41f;  // ratio relative to C2
+    float cutoff = baseCutoff * (0.5f + 0.5f * trackRatio);
+    if (cutoff > 8000.0f) cutoff = 8000.0f;
+    if (cutoff < 60.0f)   cutoff = 60.0f;
+    AudioNoInterrupts();
+    d1LowPass.frequency(cutoff);
+    d1LowPass.resonance(1.8f);
+    AudioInterrupts();
+    return;
+  }
+
   float eqAmount = 0.4f + 0.6f * norm;
 
   float blend;
@@ -1128,8 +1213,8 @@ static void engineD3Distort(uint8_t idx, int knobValue) {
   // Amplitude: 0.05 -> 0.50 (linear ramp, full range)
   float drive = 0.05f + 0.45f * active;
 
-  // Frequency: 32 -> 110 Hz (exponential, sub-bass waveshaping range)
-  float freqHz = 32.0f * expf(active * 1.234f);  // ln(110/32) ~ 1.234
+  // Frequency: 16.352 -> 110 Hz (exponential, sub-bass waveshaping range — C0 to A2)
+  float freqHz = 16.352f * expf(active * 1.905f);  // ln(110/16.352) ≈ 1.905
 
   // Dry pulls down slightly as drive rises (0.70 -> 0.62, before loudness comp)
   float dryGain = 0.70f - 0.08f * active;

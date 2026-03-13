@@ -34,7 +34,7 @@ float scopeMidpoint = 0.0f;    // smoothed vertical center
 
 void updateScopeData() {
   static uint8_t blockSkipCounter = 0;
-  const uint8_t BLOCKS_TO_SKIP = 18;   // Process every 18th block — slower scroll, easier to see waveshape
+  const uint8_t BLOCKS_TO_SKIP = 24;   // Process every 24th block — slower scroll, easier to see waveshape
   const int SAMPLE_DECIMATION = 16;
   const int SAMPLES_PER_BLOCK = AUDIO_BLOCK_SIZE / SAMPLE_DECIMATION;
 

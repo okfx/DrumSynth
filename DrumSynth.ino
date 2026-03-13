@@ -89,6 +89,8 @@ bool d1ChromaMode = false;
 static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 1500;
 
 // MONOBASS mode — see monobass.h (included after forward declarations).
+// Mirror flag for eeprom.h (can't see MonoBassState before monobass.h include).
+bool monoBassActiveFlag = false;
 
 // D2 chroma mode — latching toggle via D2 button hold
 bool d2ChromaMode = false;
@@ -861,6 +863,9 @@ void setup() {
 
   initKnobsFromHardware();
   loadStateFromEEPROM(activeSaveSlot);
+  // Deferred MONOBASS restore — eeprom.h sets eepromWantMonoBass but can't
+  // call enterMonoBassMode() (monobass.h not yet included at that point).
+  if (eepromWantMonoBass) enterMonoBassMode();
   rearmStepTimer();
   applyMasterGain();
 }
@@ -2348,15 +2353,18 @@ bool renderChromaNoteSelect() {
 
 // Chroma dot indicator — bottom bar dots for active chroma channels.
 void renderChromaDots() {
-  // Show WF chroma dot even during MONOBASS — user can toggle WF chroma while playing
-  bool anyChroma = (d1ChromaMode || d2ChromaMode || d3ChromaMode || wfChromaMode);
-  if (!anyChroma) return;
+  // In MONOBASS, only WF chroma dot is relevant (D1/D2/D3 sequencer chroma suppressed)
+  bool showD1 = d1ChromaMode && !monoBass.active;
+  bool showD2 = d2ChromaMode && !monoBass.active;
+  bool showD3 = d3ChromaMode && !monoBass.active;
+  bool showWF = wfChromaMode;
+  if (!showD1 && !showD2 && !showD3 && !showWF) return;
 
   // Clear strip so dots sit on black, not on scope pixels.
   display.fillRect(2, 58, 126, 6, SH110X_BLACK);
 
   const bool chromaActive[4] = {
-    d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode
+    showD1, showD2, showD3, showWF
   };
   const int dotCenters[4] = { 16, 48, 80, 112 };
   const int dotSize = 4;
@@ -2539,8 +2547,10 @@ void updateDisplay() {
 
   renderChromaDots();
 
-  // Suppress small parameter overlay when scope area owns the display
-  if (noteSelectActive || monoBass.active) overlayActiveNow = false;
+  // Suppress small parameter overlay when scope area owns the display.
+  // In MONOBASS, allow D1 voice rail through (D1 shape knob is still active).
+  if (noteSelectActive) overlayActiveNow = false;
+  if (monoBass.active && railSnap != RAIL_D1_SHAPE) overlayActiveNow = false;
   if (overlayActiveNow) {
     renderParameterOverlay(railSnap, param1Snap, param2Snap);
   }

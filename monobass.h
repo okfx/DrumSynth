@@ -55,6 +55,9 @@ extern MonoBassState monoBass;
 extern Adafruit_SH1106G display;
 extern float d1BaseFreq;
 extern volatile uint32_t sysTickMs;
+extern AudioFilterStateVariable d1LowPass;
+extern AudioFilterStateVariable d1HighPass;
+extern AudioFilterBiquad        d1EQ;
 extern volatile bool sequencePlaying;
 extern volatile bool armed;
 extern volatile uint16_t armPulseCountdown;
@@ -70,6 +73,7 @@ extern ShiftRegister74HC595<2> ledShiftReg;
 extern int8_t d1ChromaHeldStep;
 extern int8_t d2ChromaHeldStep;
 extern int8_t d3ChromaHeldStep;
+extern bool monoBassActiveFlag;
 
 // Functions defined in .ino
 extern void formatChromaNote(uint8_t midiNote, char* outName);
@@ -87,6 +91,7 @@ extern void drawOutlinedText(int x, int y, const char* text);
 // Enter MONOBASS mode: stop transport, configure gate envelope.
 void enterMonoBassMode() {
   monoBass.active = true;
+  monoBassActiveFlag = true;
   // Stop transport if running
   noInterrupts();
   sequencePlaying = false;
@@ -111,12 +116,22 @@ void enterMonoBassMode() {
   d1AmpEnv.decay(0.0f);        // no decay — sustain at full level
   d1AmpEnv.sustain(1.0f);      // hold at full amplitude while key pressed
   d1AmpEnv.release(monoBass.releaseMs);
+  // Retune filters for bass: lower the highpass to preserve sub-bass fundamentals,
+  // open the lowpass wider, and flatten EQ for cleaner bass tone
+  d1HighPass.frequency(30.0f);   // 30 Hz — passes bass fundamentals down to B0
+  d1HighPass.resonance(0.7f);    // flat passband, no resonant peak
+  d1LowPass.frequency(4000.0f);  // open wider so harmonics breathe
+  d1LowPass.resonance(0.8f);     // gentle resonance
+  d1EQ.setNotch(0, 600.0f, 0.5f);          // mild notch — tames boxiness
+  d1EQ.setHighShelf(1, 2000.0f, 0.0f, 1.0f); // flat shelf — no cut
+  d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
   AudioInterrupts();
 }
 
 // Exit MONOBASS mode: restore drum envelope.
 void exitMonoBassMode() {
   monoBass.active = false;
+  monoBassActiveFlag = false;
   AudioNoInterrupts();
   d1AmpEnv.attack(D1_ATTACK_MS);
   d1AmpEnv.hold(d1CachedHoldMs);
@@ -124,6 +139,12 @@ void exitMonoBassMode() {
   d1AmpEnv.sustain(0.0f);      // drum mode — decay to silence
   d1AmpEnv.release(5.0f);      // library default
   d1AmpEnv.noteOff();          // silence any lingering gate note
+  // Restore drum filter settings (match audio_init.h defaults)
+  d1HighPass.frequency(85.0f);
+  d1HighPass.resonance(2.0f);
+  d1LowPass.frequency(1800.0f);
+  d1LowPass.resonance(1.5f);
+  d1EQ.setLowpass(3, 8000.0f, 0.707f);
   AudioInterrupts();
 }
 
@@ -233,14 +254,15 @@ void renderMonoBassScope(uint32_t nowMs) {
     return;
   }
 
-  // Priority 3: Note display (temporary — shown for MONOBASS_NOTE_DISPLAY_MS after key press)
+  // Priority 3: Note display — bottom-left corner to maximize scope visibility
   if (monoBass.topKey() >= 0 && (nowMs - monoBass.noteShowStart < MONOBASS_NOTE_DISPLAY_MS)) {
     int8_t top = monoBass.topKey();
     uint8_t midiNote = (36 + monoBass.octave * 12) + top;
     if (midiNote > 75) midiNote = 75;
     char noteName[8];
     formatChromaNote(midiNote, noteName);
-    monoBassOutlinedCenter(noteName, 34, 2);
+    display.setTextSize(1);
+    drawOutlinedText(3, 54, noteName);
     return;
   }
 
