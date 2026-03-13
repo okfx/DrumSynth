@@ -16,19 +16,19 @@
 // ============================================================================
 
 // OLED SPI pins (software SPI — no CS/RST needed)
-#define OLED_MOSI 4
-#define OLED_CLK  5
-#define OLED_DC   6
-#define OLED_CS   -1
-#define OLED_RST  -1
+static constexpr int OLED_MOSI = 4;
+static constexpr int OLED_CLK  = 5;
+static constexpr int OLED_DC   = 6;
+static constexpr int OLED_CS   = -1;
+static constexpr int OLED_RST  = -1;
 
 // LED shift register pins (2x 74HC595 daisy-chained, 16 LEDs)
-#define LED_DATA  9
-#define LED_CLOCK 10
-#define LED_LATCH 11
+static constexpr int LED_DATA  = 9;
+static constexpr int LED_CLOCK = 10;
+static constexpr int LED_LATCH = 11;
 
 // External clock input (rising-edge interrupt via attachInterrupt)
-#define EXT_CLK_PIN 12
+static constexpr int EXT_CLK_PIN = 12;
 
 // OLED display (128x64 SH1106G, software SPI)
 Adafruit_SH1106G display(128, 64, OLED_MOSI, OLED_CLK, OLED_DC, OLED_RST, OLED_CS);

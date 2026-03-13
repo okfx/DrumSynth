@@ -47,6 +47,7 @@ extern bool d3ChromaMode;
 extern bool wfChromaMode;
 extern float d1BaseFreq;
 extern float d1FreqBeforeChroma;
+extern AudioFilterStateVariable d1HighPass;
 
 // PPQN (ppqn is extern; PPQN_OPTIONS, PPQN_OPTION_COUNT, PPQN_DEFAULT are
 // constexpr in .ino — visible because this header is included after them)
@@ -156,6 +157,17 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   // If D1 chroma was just enabled by load, save current freq for restore on exit
   if (d1ChromaMode && !wasD1Chroma) {
     d1FreqBeforeChroma = d1BaseFreq;
+    // Lower HPF to pass bass fundamentals (C2 = 65 Hz, normal 85 Hz kills it)
+    AudioNoInterrupts();
+    d1HighPass.frequency(30.0f);
+    d1HighPass.resonance(0.7f);
+    AudioInterrupts();
+  } else if (!d1ChromaMode && wasD1Chroma) {
+    // Restore drum HPF on chroma exit via pattern load
+    AudioNoInterrupts();
+    d1HighPass.frequency(85.0f);
+    d1HighPass.resonance(2.0f);
+    AudioInterrupts();
   }
 
   // Refresh step LEDs so they reflect the loaded pattern

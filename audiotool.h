@@ -2,10 +2,6 @@
 #define AUDIOTOOL_H
 
 #include <Audio.h>
-#include <Wire.h>
-#include <SPI.h>
-#include <SD.h>
-#include <SerialFlash.h>
 // GUItool: begin automatically generated code
 AudioSynthWaveformDc     d1PitchDC;           //xy=100,100
 AudioSynthWaveformModulated d2Osc;             //xy=100,350

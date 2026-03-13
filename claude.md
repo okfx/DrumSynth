@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Teensy 4.1 drum synthesizer: 3-voice (kick/snare/hi-hat) step sequencer with
+Teensy 4.0 drum synthesizer: 3-voice (kick/snare/hi-hat) step sequencer with
 chromatic modes, external clock sync, OLED display, and EEPROM pattern storage.
 Hardware: PJRC Audio Library, 128×64 SH1106G OLED (software SPI), 32 knobs via
 2×16 mux, 16 step buttons + 10 control buttons via mux, 2×74HC595 LED shift register.
@@ -19,7 +19,7 @@ as one file. Headers are inline code segments, not independent modules.
 | `audio_init.h` | One-time audio object init | Codec, envelopes, filters, mixer gains |
 | `hw_setup.h` | Pin assignments, peripheral objects | Mux, shift register, OLED, constants |
 | `ext_sync.h` | External clock ISR + helpers | Concurrency contract documented at top |
-| `eeprom.h` | Pattern save/load, PPQN persistence | CRC-8, magic number versioning (0x4248) |
+| `eeprom.h` | Pattern save/load, PPQN persistence | CRC-8, magic number versioning (0x4249) |
 | `knob_handlers.h` | 32 display + 32 engine functions | Table-driven dispatch via `knobTable[32]` |
 | `monobass.h` | MONOBASS mode (live keyboard) | Entry/exit, button handler, scope renderer |
 | `oscilloscope.h` | Scope display | Circular buffer, auto-scale, AC-coupled |
@@ -35,7 +35,7 @@ audiotool.h → audio_init.h → bitmaps.h → hw_setup.h
 ## Build Command
 
 ```bash
-arduino-cli compile --fqbn "teensy:avr:teensy41:usb=audio" \
+arduino-cli compile --fqbn "teensy:avr:teensy40:usb=audio" \
   --build-property "build.flags.optimize=-O2" .
 ```
 
@@ -87,10 +87,10 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
 
 ### EEPROM
 
-- 10 pattern slots × 102 bytes + 2 bytes PPQN = 1022 of 1080 bytes
-- Magic `0x4248` (current), `0x4247` (legacy backward compat)
+- 10 pattern slots × 102 bytes + 2 bytes PPQN + 1 byte MONOBASS = 1023 of 1080 bytes
+- Magic `0x4249` (current), `0x4248`/`0x4247` (legacy backward compat)
 - CRC-8 over `PatternStore` — rejects corrupted slots
-- Stores: 3 sequences + 3 chroma note arrays + chroma mode flags
+- Stores: 3 sequences + 3 chroma note arrays + chroma mode flags + MONOBASS active state
 
 ### Knob Map
 

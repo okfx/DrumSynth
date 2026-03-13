@@ -44,9 +44,9 @@ static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
 static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
 static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-#define FIRMWARE_VERSION "1.04"
-#define FIRMWARE_DATE_FMT "%02d.%02d.%02d - %02d:%02d"
-#define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin
+static constexpr const char* FIRMWARE_VERSION   = "1.04";
+static constexpr const char* FIRMWARE_DATE_FMT  = "%02d.%02d.%02d - %02d:%02d";
+#define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin  // macro: expands to variadic args
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -58,7 +58,7 @@ enum Track : uint8_t {
 // overlay and debounce timing
 static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
-static constexpr uint8_t  MONOBASS_DEBOUNCE_MS = 2;    // 2ms — keyboard feel for MONOBASS live play
+static constexpr uint8_t  MONOBASS_DEBOUNCE_MS = 10;   // 10ms — reliable debounce with fast trill response
 static bool monoBassKeyEvent = false;                   // set by handleMonoBassButton() to skip next OLED frame
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
@@ -1321,10 +1321,22 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
     if (d1ChromaMode) {
       d1FreqBeforeChroma = d1BaseFreq;
       selectTrack(TRACK_D1);
+      // Lower HPF to pass bass fundamentals (C2 = 65 Hz, normal HPF at 85 Hz kills it)
+      AudioNoInterrupts();
+      d1HighPass.frequency(30.0f);
+      d1HighPass.resonance(0.7f);
+      AudioInterrupts();
+      applyKnobToEngine(6, analog[6]->getValue());  // switch Body to filter mode
     } else {
       d1ChromaHeldStep = -1;
       d1BaseFreq = d1FreqBeforeChroma;
       applyD1Freq();
+      // Restore drum HPF and Body EQ
+      AudioNoInterrupts();
+      d1HighPass.frequency(85.0f);
+      d1HighPass.resonance(2.0f);
+      AudioInterrupts();
+      applyKnobToEngine(6, analog[6]->getValue());  // restore normal EQ
     }
     snprintf(displayParameter1, sizeof(displayParameter1),
              d1ChromaMode ? "D1 CHROMA ON" : "D1 CHROMA OFF");
@@ -1627,11 +1639,10 @@ void selectTrack(Track t) {
 void updateLEDs() {
   // Main-loop only — no ISR access to accentPreview*, no guards needed
 
-  // MONOBASS mode — light only the sounding key (single SPI transaction)
+  // MONOBASS mode — first 12 LEDs lit as usable-key indicators (12 notes/octave)
   if (monoBass.active) {
-    int8_t top = monoBass.topKey();
     for (int i = 0; i < numSteps; i++) {
-      ledShiftReg.setNoUpdate(i, i == top);
+      ledShiftReg.setNoUpdate(i, i < 12);
     }
     ledShiftReg.updateRegisters();
     return;
@@ -1760,7 +1771,7 @@ void updateStepButtons() {
         if (*heldStep == i) {
           // Already in note-select — keep overlay alive
           uint8_t* notes = activeChromaNotes();
-          char noteName[5];
+          char noteName[8];
           formatChromaNote(notes[i], noteName);
           snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
           snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
@@ -2541,14 +2552,16 @@ void updateDisplay() {
   }
   renderMonoBassScope(nowMs);  // outlined overlay on top of scope
 
-  renderChromaDots();
-
   // Suppress small parameter overlay when scope area owns the display.
   // In MONOBASS, allow D1 voice rail through (D1 shape knob is still active).
   if (noteSelectActive) overlayActiveNow = false;
   if (monoBass.active && railSnap != RAIL_D1_SHAPE) overlayActiveNow = false;
   if (overlayActiveNow) {
     renderParameterOverlay(railSnap, param1Snap, param2Snap);
+  } else {
+    // Chroma dots share the bottom strip with the parameter overlay —
+    // only draw them when the overlay is not visible.
+    renderChromaDots();
   }
 
   // Fire any steps queued during framebuffer drawing, before the

@@ -121,6 +121,6 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 ## Build
 
 ```bash
-arduino-cli compile --fqbn "teensy:avr:teensy41:usb=audio" --build-property "build.flags.optimize=-O2" .
-arduino-cli upload --fqbn "teensy:avr:teensy41:usb=audio" -p /dev/ttyACM0 .
+arduino-cli compile --fqbn "teensy:avr:teensy40:usb=audio" --build-property "build.flags.optimize=-O2" .
+arduino-cli upload --fqbn "teensy:avr:teensy40:usb=audio" -p /dev/ttyACM0 .
 ```

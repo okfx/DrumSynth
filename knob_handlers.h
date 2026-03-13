@@ -218,7 +218,7 @@ static void displayD1Pitch(uint8_t idx, int knobValue) {
     if (d1ChromaHeldStep >= 0) {
       uint8_t note = d1ChromaKnobToNote(knobValue);
       d1ChromaNote[d1ChromaHeldStep] = note;
-      char noteName[5];
+      char noteName[8];
       formatChromaNote(note, noteName);
       snprintf(displayParameter1, sizeof(displayParameter1),
                "STEP %d", d1ChromaHeldStep + 1);
@@ -246,16 +246,24 @@ static void displayD1Snap(uint8_t idx, int knobValue) {
   displayMonoBassParam("D1 SNAP", "SNAP", knobValue);
 }
 
-// Case 6: D1 EQ/Body
+// Case 6: D1 EQ/Body — becomes FILTER in MONOBASS and D1 Chroma modes
 static void displayD1Body(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) {
+    // MONOBASS: use scope overlay display (paramLabel/paramValue)
     float norm = normalizeKnob(knobValue);
     float cutoff = 80.0f * expf(norm * 4.317f);
     if (cutoff > 6000.0f) cutoff = 6000.0f;
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "FILTER");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d Hz", (int)cutoff);
     monoBass.paramShowStart = sysTickMs;
+  } else if (d1ChromaMode) {
+    // Chroma mode: use normal parameter overlay (displayParameter1/2)
+    float norm = normalizeKnob(knobValue);
+    float cutoff = 80.0f * expf(norm * 4.317f);
+    if (cutoff > 6000.0f) cutoff = 6000.0f;
+    snprintf(displayParameter1, sizeof(displayParameter1), "D1 FILTER");
+    snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoff);
   } else {
     snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
     int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
@@ -271,16 +279,16 @@ static void displayD1DelaySend(uint8_t idx, int knobValue) {
 
 // Case 8: D2 Pitch
 static void displayD2Pitch(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   if (d2ChromaMode) {
     if (d2ChromaHeldStep >= 0) {
       uint8_t note = d2ChromaKnobToNote(knobValue);
-      char noteName[5];
+      char noteName[8];
       formatChromaNote(note, noteName);
       snprintf(displayParameter1, sizeof(displayParameter1),
                "STEP %d", d2ChromaHeldStep + 1);
@@ -298,12 +306,12 @@ static void displayD2Pitch(uint8_t idx, int knobValue) {
 
 // Case 9: D2 Decay
 static void displayD2Decay(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   float decayMs = d2DecayCurve(knobValue);
   snprintf(displayParameter1, sizeof(displayParameter1), "D2 DECAY");
   snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
@@ -311,12 +319,12 @@ static void displayD2Decay(uint8_t idx, int knobValue) {
 
 // Case 10: D2 Voice Mix (uses rail display)
 static void displayD2VoiceMix(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displayParameter1[0] = 0;
   displayParameter2[0] = 0;
   activeRail = RAIL_D2_VOICE;
@@ -325,12 +333,12 @@ static void displayD2VoiceMix(uint8_t idx, int knobValue) {
 
 // Case 11: D2 Wavefolder Drive
 static void displayD2WfDrive(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   float norm = normalizeKnob(knobValue);
   float active = (norm <= WF_DEADBAND) ? 0.0f
                : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
@@ -342,60 +350,60 @@ static void displayD2WfDrive(uint8_t idx, int knobValue) {
 
 // Case 12: D2 Delay Send
 static void displayD2DelaySend(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displaySimplePercent("D2 DELAY SEND", knobValue);
 }
 
 // Case 13: D2 Reverb
 static void displayD2Reverb(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displaySimplePercent("D2 REVERB", knobValue);
 }
 
 // Case 14: D2 Noise
 static void displayD2Noise(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displaySimplePercent("D2 SNARE NOISE", knobValue);
 }
 
 // Case 15: D2 Volume
 static void displayD2Volume(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displaySimplePercent("D2 VOLUME", knobValue);
 }
 
 // Case 16: D3 Pitch
 static void displayD3Pitch(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   if (d3ChromaMode) {
     if (d3ChromaHeldStep >= 0) {
       uint8_t note = d3ChromaKnobToNote(knobValue);
-      char noteName[5];
+      char noteName[8];
       formatChromaNote(note, noteName);
       snprintf(displayParameter1, sizeof(displayParameter1),
                "STEP %d", d3ChromaHeldStep + 1);
@@ -413,12 +421,12 @@ static void displayD3Pitch(uint8_t idx, int knobValue) {
 
 // Case 17: D3 Decay
 static void displayD3Decay(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   float decayMs = mapFloat(knobValue, 0, 1023, 10.0f, 250.0f);
   snprintf(displayParameter1, sizeof(displayParameter1), "D3 DECAY");
   snprintf(displayParameter2, sizeof(displayParameter2), "%.0f ms", decayMs);
@@ -426,12 +434,12 @@ static void displayD3Decay(uint8_t idx, int knobValue) {
 
 // Case 18: D3 Voice Mix (uses rail display)
 static void displayD3VoiceMix(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displayParameter1[0] = 0;
   displayParameter2[0] = 0;
   activeRail = RAIL_D3_VOICE;
@@ -440,12 +448,12 @@ static void displayD3VoiceMix(uint8_t idx, int knobValue) {
 
 // Case 19: D3 Distort
 static void displayD3Distort(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   float norm = normalizeKnob(knobValue);
   float active = (norm <= WF_DEADBAND) ? 0.0f
                : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
@@ -457,23 +465,23 @@ static void displayD3Distort(uint8_t idx, int knobValue) {
 
 // Case 20: D3 Delay Send
 static void displayD3DelaySend(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displaySimplePercent("D3 DELAY SEND", knobValue);
 }
 
 // Case 21: D3 Filter
 static void displayD3Filter(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   float cutoffHz = d3FilterCurve(knobValue);
 
   snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
@@ -482,12 +490,12 @@ static void displayD3Filter(uint8_t idx, int knobValue) {
 
 // Case 22: D3 Accent Pattern
 static void displayD3Accent(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   snprintf(displayParameter1, sizeof(displayParameter1), "D3 ACCENT");
   uint8_t mode = accentModeFromKnob(knobValue);
   snprintf(displayParameter2, sizeof(displayParameter2), "%s", accentNames[mode]);
@@ -495,12 +503,12 @@ static void displayD3Accent(uint8_t idx, int knobValue) {
 
 // Case 23: D3 Volume
 static void displayD3Volume(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   displaySimplePercent("D3 VOLUME", knobValue);
 }
 
@@ -510,7 +518,7 @@ static void displayMasterDelayTime(uint8_t idx, int knobValue) {
   float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
   int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
   if (monoBass.active) {
-    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "DELAY TIME");
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "DLY TIME");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", ratioLabels[ratioIdx]);
     monoBass.paramShowStart = sysTickMs;
   } else {
@@ -527,8 +535,8 @@ static void displayWfFreq(uint8_t idx, int knobValue) {
     char noteName[8];
     formatChromaNote(midiNote, noteName);
     if (monoBass.active) {
-      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF %s", noteName);
-      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "CHROMA");
+      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WAVEFOLD");
+      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", noteName);
       monoBass.paramShowStart = sysTickMs;
     } else {
       snprintf(displayParameter1, sizeof(displayParameter1), "WF %s", noteName);
@@ -563,12 +571,12 @@ static void displayMasterLowpass(uint8_t idx, int knobValue) {
 
 // Case 27: Master Tempo
 static void displayMasterTempo(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   if (ppqnModeActive) return;  // PPQN mode uses button cycling, not knob
 
   if (transportState == RUN_EXT) {
@@ -586,21 +594,17 @@ static void displayMasterTempo(uint8_t idx, int knobValue) {
 // Case 28: Master Volume
 static void displayMasterVolume(uint8_t idx, int knobValue) {
   (void)idx;
-  if (monoBass.active) {
-    displayMonoBassParam("MASTER VOLUME", "VOLUME", knobValue);
-  } else {
-    displaySimplePercent("MASTER VOLUME", knobValue);
-  }
+  displayMonoBassParam("MASTER VOLUME", "VOLUME", knobValue);
 }
 
 // Case 29: Master Choke
 static void displayMasterChoke(uint8_t idx, int knobValue) {
+  (void)idx;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
     return;
   }
-  (void)idx;
   snprintf(displayParameter1, sizeof(displayParameter1), "CHOKE");
   int offset = chokeOffsetFromKnob(knobValue);
   if (offset == 0) {
@@ -805,7 +809,7 @@ static void engineD1Body(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
 
-  if (monoBass.active) {
+  if (monoBass.active || d1ChromaMode) {
     // Moog-style LPF sweep: 80 Hz – 6000 Hz exponential, with pitch tracking.
     // Uses d1LowPass (AudioFilterStateVariable) as the sweep filter.
     // Resonance at 1.8 gives a conspicuous but stable Moog-like peak.
@@ -815,7 +819,7 @@ static void engineD1Body(uint8_t idx, int knobValue) {
     float trackRatio = d1BaseFreq / 65.41f;  // ratio relative to C2
     float cutoff = baseCutoff * (0.5f + 0.5f * trackRatio);
     if (cutoff > 8000.0f) cutoff = 8000.0f;
-    if (cutoff < 60.0f)   cutoff = 60.0f;
+    if (cutoff < 100.0f)  cutoff = 100.0f;
     AudioNoInterrupts();
     d1LowPass.frequency(cutoff);
     d1LowPass.resonance(1.8f);
@@ -854,8 +858,8 @@ static void engineD1DelaySend(uint8_t idx, int knobValue) {
 
 // Case 8: D2 Pitch
 static void engineD2Pitch(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   if (d2ChromaMode) {
     if (d2ChromaHeldStep >= 0) {
       uint8_t note = d2ChromaKnobToNote(knobValue);
@@ -873,8 +877,8 @@ static void engineD2Pitch(uint8_t idx, int knobValue) {
 
 // Case 9: D2 Decay
 static void engineD2Decay(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   d2DecayBase = d2DecayCurve(knobValue);
   d2DecayNorm = normalizeKnob(knobValue);
   applyD2Decay();
@@ -882,8 +886,8 @@ static void engineD2Decay(uint8_t idx, int knobValue) {
 
 // Case 10: D2 Voice Mix - Snare/Clap
 static void engineD2VoiceMix(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
 
   float gainSnare = norm;
@@ -897,8 +901,8 @@ static void engineD2VoiceMix(uint8_t idx, int knobValue) {
 
 // Case 11: D2 Wavefolder Drive
 static void engineD2WfDrive(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
 
   // Default values (off state)
@@ -964,8 +968,8 @@ static void engineD2WfDrive(uint8_t idx, int knobValue) {
 
 // Case 12: D2 Delay Send
 static void engineD2DelaySend(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   // Capped at 75% to prevent feedback runaway
   float delaySend = normalizeKnob(knobValue) * 0.75f;
   d2DelaySend = delaySend;
@@ -974,8 +978,8 @@ static void engineD2DelaySend(uint8_t idx, int knobValue) {
 
 // Case 13: D2 Reverb
 static void engineD2Reverb(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
 
   if (norm <= 0.02f) {
@@ -1005,8 +1009,8 @@ static void engineD2Reverb(uint8_t idx, int knobValue) {
 
 // Case 14: D2 Noise
 static void engineD2Noise(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   if (knobValue >= 10) {
     float norm = normalizeKnob(knobValue);
     // 0-25%: gain/filter ramp, 30-45%: hold/decay ramp, 45-100%: final ramp
@@ -1038,8 +1042,8 @@ static void engineD2Noise(uint8_t idx, int knobValue) {
 
 // Case 15: D2 Volume
 static void engineD2Volume(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
   d2Volume = norm * norm * 1.25f;  // Log taper (square law), max 1.25
   AudioNoInterrupts();
@@ -1050,8 +1054,8 @@ static void engineD2Volume(uint8_t idx, int knobValue) {
 
 // Case 16: D3 Pitch
 static void engineD3Pitch(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
 
   // --- Shared pitch bend curve (all voices use the same shape) ---
@@ -1142,8 +1146,8 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
 
 // Case 17: D3 Decay
 static void engineD3Decay(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float decayMs = mapFloat(knobValue, 0, 1023, 10.0f, 250.0f);
   d3DecayBase = decayMs;
   applyD3Decay();
@@ -1151,8 +1155,8 @@ static void engineD3Decay(uint8_t idx, int knobValue) {
 
 // Case 18: D3 Voice Mix -- 606 / FM / PERC
 static void engineD3VoiceMix(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   // Zone boundaries (pure solo regions for each voice)
   const int ZONE_606_MAX  = int(1023 * 0.06f);
   const int ZONE_FM_MIN   = int(1023 * 0.46f);
@@ -1196,8 +1200,8 @@ static void engineD3VoiceMix(uint8_t idx, int knobValue) {
 
 // Case 19: D3 Distort (sine-driven wavefolder)
 static void engineD3Distort(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
   if (norm <= WF_DEADBAND) {
     AudioNoInterrupts();
@@ -1242,8 +1246,8 @@ static void engineD3Distort(uint8_t idx, int knobValue) {
 
 // Case 20: D3 Delay Send
 static void engineD3DelaySend(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   // Capped at 75% to prevent feedback runaway (same as D1/D2)
   float delaySend = normalizeKnob(knobValue) * 0.75f;
   d3DelaySend = delaySend;
@@ -1252,8 +1256,8 @@ static void engineD3DelaySend(uint8_t idx, int knobValue) {
 
 // Case 21: D3 Filter
 static void engineD3Filter(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
   float cutoffHz = d3FilterCurve(knobValue);
 
@@ -1268,8 +1272,8 @@ static void engineD3Filter(uint8_t idx, int knobValue) {
 
 // Case 22: D3 Accent Pattern
 static void engineD3Accent(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   uint8_t prevMode = d3AccentMode;
   d3AccentMode = accentModeFromKnob(knobValue);
   d3AccentMask = accentMaskFromMode(d3AccentMode);
@@ -1295,8 +1299,8 @@ static void engineD3Accent(uint8_t idx, int knobValue) {
 
 // Case 23: D3 Volume
 static void engineD3Volume(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
   d3Volume = norm * norm * 0.75f;  // Log taper (square law), max 0.75
   AudioNoInterrupts();
@@ -1369,8 +1373,8 @@ static void engineMasterLowpass(uint8_t idx, int knobValue) {
 
 // Case 27: Master Tempo (BPM) -- inactive during external clock / PPQN mode
 static void engineMasterTempo(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   if (ppqnModeActive) return;     // Don't change BPM while selecting PPQN
   if (transportState == RUN_EXT) return;  // Ignore knob when ext clock drives tempo
 
@@ -1395,8 +1399,8 @@ static void engineMasterVolume(uint8_t idx, int knobValue) {
 
 // Case 29: Master Choke Offset
 static void engineMasterChoke(uint8_t idx, int knobValue) {
-  if (monoBass.active) return;
   (void)idx;
+  if (monoBass.active) return;
   chokeOffsetMs = chokeOffsetFromKnob(knobValue);
   if (chokeOffsetMs == 0) {
     chokeDisplayPercent = 0;  // Match engine deadband -- display shows "OFF"

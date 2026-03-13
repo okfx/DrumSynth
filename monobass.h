@@ -34,8 +34,8 @@ struct MonoBassState {
   float releaseMs = 30.0f;      // gate-style release time (knob-controlled)
   bool showOctave = false;      // show large OCT display in scope area
   uint32_t octaveShowStart = 0; // when octave display started (sysTickMs)
-  char paramLabel[12] = "";     // short label for large-font param display
-  char paramValue[12] = "";     // value string for large-font param display
+  char paramLabel[16] = "";     // short label for large-font param display
+  char paramValue[16] = "";     // value string for large-font param display
   uint32_t paramShowStart = 0;  // when param display started
   uint32_t noteShowStart = 0;   // when note display was triggered
 
@@ -84,6 +84,8 @@ extern void triggerD1();
 extern void setTransport(TransportState s);
 extern void updateLEDs();
 extern void drawOutlinedText(int x, int y, const char* text);
+extern void applyKnobToEngine(uint8_t idx, int knobValue);
+extern ResponsiveAnalogRead* analog[];
 
 // ============================================================================
 //  Entry / exit
@@ -127,6 +129,9 @@ void enterMonoBassMode() {
   d1EQ.setHighShelf(1, 2000.0f, 0.0f, 1.0f); // flat shelf — no cut
   d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
   AudioInterrupts();
+  // Light first 12 LEDs as usable-key indicators (12 notes per octave)
+  for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
+  ledShiftReg.updateRegisters();
 }
 
 // Exit MONOBASS mode: restore drum envelope.
@@ -147,6 +152,10 @@ void exitMonoBassMode() {
   d1LowPass.resonance(1.5f);
   d1EQ.setLowpass(3, 8000.0f, 0.707f);
   AudioInterrupts();
+  // Re-apply Body/EQ knob to restore d1EQ stages 0-2 from current knob position.
+  // enterMonoBassMode() flattened these stages — without this, the kick's EQ
+  // stays flat until the user physically moves knob 6.
+  applyKnobToEngine(6, analog[6]->getValue());
 }
 
 // ============================================================================
@@ -159,6 +168,7 @@ void exitMonoBassMode() {
 // Returns true if handled (caller should skip normal step logic).
 bool handleMonoBassButton(int buttonIndex, bool pressed) {
   if (!monoBass.active) return false;
+  if (buttonIndex >= 12) return true;  // only 12 notes per octave — ignore top 4 keys
 
   if (pressed) {
     // Push key onto held-key stack
@@ -180,9 +190,8 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     triggerD1();
     monoBass.noteShowStart = sysTickMs;
 
-    // Light only the sounding key — buffer all 16 then latch once (1 SPI
-    // transaction instead of 16, eliminates ~0.5ms of blocking on key press)
-    for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j == buttonIndex);
+    // Light first 12 LEDs (usable keys) — single SPI transaction
+    for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
     ledShiftReg.updateRegisters();
   } else {
     // Remove released key from stack
@@ -204,14 +213,14 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       applyD1Freq();
       triggerD1();
       monoBass.noteShowStart = sysTickMs;
-      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j == top);
+      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
       ledShiftReg.updateRegisters();
     } else {
       // No keys held — gate off
       AudioNoInterrupts();
       d1AmpEnv.noteOff();
       AudioInterrupts();
-      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, LOW);
+      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
       ledShiftReg.updateRegisters();
     }
   }
@@ -263,7 +272,7 @@ void renderMonoBassScope(uint32_t nowMs) {
     char noteName[8];
     formatChromaNote(midiNote, noteName);
     display.setTextSize(1);
-    drawOutlinedText(3, 54, noteName);
+    drawOutlinedText(8, 50, noteName);
     return;
   }
 
