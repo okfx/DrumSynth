@@ -248,7 +248,7 @@ void savePpqnToEEPROM(uint8_t val) {
 //  MONOBASS global persistence — survives power cycle, independent of patterns
 // ============================================================================
 
-bool loadMonoBassFromEEPROM() {
+bool loadMonoBassStatusFromEEPROM() {
   uint8_t magic = EEPROM.read(EEPROM_MONOBASS_ADDR);
   if (magic == EEPROM_MONOBASS_MAGIC) {
     return EEPROM.read(EEPROM_MONOBASS_ADDR + 1) != 0;
@@ -256,7 +256,7 @@ bool loadMonoBassFromEEPROM() {
   return false;
 }
 
-void saveMonoBassToEEPROM(bool active) {
+void saveMonoBassStatusToEEPROM(bool active) {
   EEPROM.update(EEPROM_MONOBASS_ADDR, EEPROM_MONOBASS_MAGIC);
   EEPROM.update(EEPROM_MONOBASS_ADDR + 1, active ? 1 : 0);
 }

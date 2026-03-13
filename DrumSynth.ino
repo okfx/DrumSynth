@@ -861,7 +861,7 @@ void setup() {
 
   initKnobsFromHardware();
   loadStateFromEEPROM(activeSaveSlot);
-  if (loadMonoBassFromEEPROM()) enterMonoBassMode();
+  if (loadMonoBassStatusFromEEPROM()) enterMonoBassMode();
   rearmStepTimer();
   applyMasterGain();
 }
