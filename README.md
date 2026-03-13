@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.04.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.05.
 
 ## Features
 
@@ -54,7 +54,7 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
 
-## Changes (v1.04)
+## Changes (v1.05)
 
 - **MONOBASS mode** -- hold D1 for 6 seconds to enter a live mono keyboard using the step buttons as keys, with oscilloscope waveform display. D2/D3 knobs, BPM, choke, and memory/load/save are disabled during MONOBASS mode.
 - D2 and D3 wavefolder carrier frequencies lowered to sub-bass range (32-110 Hz for D3, 32-440 Hz for D2)
@@ -94,6 +94,15 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - Oscilloscope rewritten: triggered waveform display with rising zero-crossing lock — sine, saw, and square shapes now visually distinct and stable
 - Chroma indicator dots no longer blank the oscilloscope; each dot clears only the pixels behind itself
 - Chroma indicator dots hidden while parameter overlay is active (no overlap)
+- Fix: D1 chroma HPF state no longer corrupted by MONOBASS entry/exit (HPF stays at 30 Hz when chroma is active)
+- Fix: toggling D1 chroma OFF during MONOBASS no longer overwrites MONOBASS HPF
+- Fix: pattern load now re-applies Body knob engine state on D1 chroma transitions
+- Audio thread safety: `AudioNoInterrupts()` guards added to `engineMasterLowpass()` and `engineMasterDelayTime()`
+- Oscilloscope module variables qualified `static` for single-TU safety
+- Splash animation wavefold uses `floorf()` for well-defined int truncation
+- Knob display: `displayDisabledInMonoBass()` helper replaces 16 duplicate "DISABLED FOR MONOBASS" blocks
+- Knob display: `displayD1Body()` filter cutoff formula deduplicated between MONOBASS and chroma paths
+- `accentModeFromKnob()` simplified from 14-case switch to sequential enum cast
 
 ## Changes (v1.03.1)
 

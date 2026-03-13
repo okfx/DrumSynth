@@ -63,6 +63,10 @@ extern volatile uint32_t sysTickMs;
 // LEDs
 extern void updateLEDs();
 
+// Knob dispatch (for re-applying Body knob on chroma transitions)
+extern void applyKnobToEngine(uint8_t idx, int knobValue);
+extern ResponsiveAnalogRead* analog[];
+
 // ============================================================================
 //  Data structures
 // ============================================================================
@@ -162,12 +166,14 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
     d1HighPass.frequency(30.0f);
     d1HighPass.resonance(0.7f);
     AudioInterrupts();
+    applyKnobToEngine(6, analog[6]->getValue());  // switch Body to filter mode
   } else if (!d1ChromaMode && wasD1Chroma) {
     // Restore drum HPF on chroma exit via pattern load
     AudioNoInterrupts();
     d1HighPass.frequency(85.0f);
     d1HighPass.resonance(2.0f);
     AudioInterrupts();
+    applyKnobToEngine(6, analog[6]->getValue());  // restore normal EQ
   }
 
   // Refresh step LEDs so they reflect the loaded pattern

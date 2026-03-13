@@ -28,21 +28,21 @@ static constexpr int SCOPE_TRIGGER_SEARCH = 128;
 
 // Raw capture buffer — display width plus trigger search headroom
 static constexpr int SCOPE_CAPTURE_LEN = SCOPE_DISPLAY_WIDTH + SCOPE_TRIGGER_SEARCH;
-float scopeCapture[SCOPE_CAPTURE_LEN] = { 0 };
+static float scopeCapture[SCOPE_CAPTURE_LEN] = { 0 };
 
 // Display-ready buffer — trigger-aligned samples for rendering
-float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
-bool  scopeBufferReady = false;
+static float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
+static bool  scopeBufferReady = false;
 
 // Smoothed auto-scale — peak hold with slow release
 static constexpr float SCOPE_NOISE_FLOOR = 0.05f;
-float scopePeakRange = SCOPE_NOISE_FLOOR;
+static float scopePeakRange = SCOPE_NOISE_FLOOR;
 
 // Refresh timing — matches OLED_FRAME_INTERVAL_MS (42ms) so a fresh triggered
 // snapshot is ready every display frame (~24 FPS). Capture takes ~12ms minimum
 // (4 audio blocks), so 35ms gives a small margin without idle time.
 static constexpr uint32_t SCOPE_REFRESH_MS = 35;
-uint32_t scopeLastCaptureMs = 0;
+static uint32_t scopeLastCaptureMs = 0;
 
 // ============================================================================
 //  findTrigger() — rising zero-crossing search

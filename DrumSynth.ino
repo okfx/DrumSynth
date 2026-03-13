@@ -44,7 +44,7 @@ static constexpr int fwYear = (__DATE__[9] - '0') * 10 + (__DATE__[10] - '0');
 static constexpr int fwHour = (__TIME__[0] - '0') * 10 + (__TIME__[1] - '0');
 static constexpr int fwMin  = (__TIME__[3] - '0') * 10 + (__TIME__[4] - '0');
 
-static constexpr const char* FIRMWARE_VERSION   = "1.04";
+static constexpr const char* FIRMWARE_VERSION   = "1.05";
 static constexpr const char* FIRMWARE_DATE_FMT  = "%02d.%02d.%02d - %02d:%02d";
 #define FIRMWARE_DATE_ARGS fwMonth, fwDay, fwYear, fwHour, fwMin  // macro: expands to variadic args
 
@@ -684,7 +684,7 @@ void splashAnimation() {
         // Wavefold transfer function
         float v = value * foldAmount;
         v = v - floorf(v);
-        if ((int)(value * foldAmount) % 2 == 1) v = 1.0f - v;
+        if ((int)floorf(value * foldAmount) % 2 == 1) v = 1.0f - v;
         float folded = v * 2.0f - 1.0f;
 
         int y = Y_CENTER - (int)(folded * amplitude);
@@ -1331,11 +1331,14 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
       d1ChromaHeldStep = -1;
       d1BaseFreq = d1FreqBeforeChroma;
       applyD1Freq();
-      // Restore drum HPF and Body EQ
-      AudioNoInterrupts();
-      d1HighPass.frequency(85.0f);
-      d1HighPass.resonance(2.0f);
-      AudioInterrupts();
+      // Restore drum HPF and Body EQ — but not during MONOBASS,
+      // which has its own HPF at 30 Hz that must not be overwritten.
+      if (!monoBass.active) {
+        AudioNoInterrupts();
+        d1HighPass.frequency(85.0f);
+        d1HighPass.resonance(2.0f);
+        AudioInterrupts();
+      }
       applyKnobToEngine(6, analog[6]->getValue());  // restore normal EQ
     }
     snprintf(displayParameter1, sizeof(displayParameter1),
@@ -1989,30 +1992,13 @@ static inline float bpmFromKnob(int knobValue) {
   return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
 }
 
-// Accent mode from knob position — maps knob to one of 15 accent modes (OFF + 14 patterns)
+// Accent mode from knob position — maps knob to one of 15 accent modes (OFF + 14 patterns).
+// AccentMode enum values are sequential (0=OFF, 1=PICKUP ... 14=CASCADE).
 static inline uint8_t accentModeFromKnob(int knobValue) {
   const int ACCENT_DEADBAND = 24;
-  if (knobValue <= ACCENT_DEADBAND) {
-    return ACCENT_OFF;
-  }
+  if (knobValue <= ACCENT_DEADBAND) return ACCENT_OFF;
   int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 14);
-  switch (zone) {
-    case 1:  return ACCENT_PICKUP;
-    case 2:  return ACCENT_HALF;
-    case 3:  return ACCENT_QUARTER;
-    case 4:  return ACCENT_EIGHTH_DOWN;
-    case 5:  return ACCENT_EIGHTH_UP;
-    case 6:  return ACCENT_BOSSA;
-    case 7:  return ACCENT_OFFBEAT;
-    case 8:  return ACCENT_CLAVE;
-    case 9:  return ACCENT_THREE_TWO;
-    case 10: return ACCENT_PAIRS;
-    case 11: return ACCENT_TRIPLET;
-    case 12: return ACCENT_DOTTED_EIGHTH;
-    case 13: return ACCENT_BACK_HALF;
-    case 14: return ACCENT_CASCADE;
-    default: return ACCENT_CASCADE;
-  }
+  return (uint8_t)constrain(zone, 1, (int)ACCENT_CASCADE);
 }
 
 // Delay ratio index from knob — finds the closest beat-synced ratio within delay limit

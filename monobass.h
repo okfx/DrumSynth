@@ -145,9 +145,15 @@ void exitMonoBassMode() {
   d1AmpEnv.sustain(0.0f);      // drum mode — decay to silence
   d1AmpEnv.release(5.0f);      // library default
   d1AmpEnv.noteOff();          // silence any lingering gate note
-  // Restore drum filter settings (match audio_init.h defaults)
-  d1HighPass.frequency(85.0f);
-  d1HighPass.resonance(2.0f);
+  // Restore HPF: chroma mode keeps 30 Hz for bass fundamentals,
+  // normal drum mode uses 85 Hz with resonant peak for body.
+  if (d1ChromaMode) {
+    d1HighPass.frequency(30.0f);
+    d1HighPass.resonance(0.7f);
+  } else {
+    d1HighPass.frequency(85.0f);
+    d1HighPass.resonance(2.0f);
+  }
   d1LowPass.frequency(1800.0f);
   d1LowPass.resonance(1.5f);
   d1EQ.setLowpass(3, 8000.0f, 0.707f);
