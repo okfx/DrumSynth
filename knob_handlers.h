@@ -213,7 +213,13 @@ static void displayD1Decay(uint8_t idx, int knobValue) {
 // Case 3: D1 Pitch
 static void displayD1Pitch(uint8_t idx, int knobValue) {
   (void)idx;
-  if (monoBass.active) return;  // octave shown in scope area, suppress freq display
+  if (monoBass.active) {
+    // Show current octave in scope overlay on any knob movement —
+    // lets user jiggle knob to confirm position without crossing a threshold
+    monoBass.showOctave = true;
+    monoBass.octaveShowStart = sysTickMs;
+    return;
+  }
   if (d1ChromaMode) {
     if (d1ChromaHeldStep >= 0) {
       uint8_t note = d1ChromaKnobToNote(knobValue);
@@ -751,10 +757,11 @@ static void engineD1Pitch(uint8_t idx, int knobValue) {
     if (knobValue < 341)       newOct = 0;  // OCT 2 (C2)
     else if (knobValue < 682)  newOct = 1;  // OCT 3 (C3)
     else                       newOct = 2;  // OCT 4 (C4)
+    // Always show octave on any knob movement (display handles the timer)
+    monoBass.showOctave = true;
+    monoBass.octaveShowStart = sysTickMs;
     if (newOct != monoBass.octave) {
       monoBass.octave = newOct;
-      monoBass.showOctave = true;
-      monoBass.octaveShowStart = sysTickMs;
       // Live-update frequency of held note so octave changes are immediate
       int8_t top = monoBass.topKey();
       if (top >= 0) {
