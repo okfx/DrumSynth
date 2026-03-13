@@ -85,8 +85,15 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - MONOBASS note display moved to bottom-left corner for more scope visibility
 - MONOBASS octave changes now apply immediately to held notes (live pitch update)
 - MONOBASS bass filter retuning: highpass lowered to 30 Hz, lowpass opened to 4 kHz, EQ flattened to preserve sub-bass energy
-- MONOBASS BODY knob retuned as Moog-style resonant low-pass filter sweep (80-6000 Hz) with pitch tracking
+- MONOBASS BODY knob retuned as Moog-style resonant low-pass filter sweep (100-6000 Hz) with pitch tracking
+- D1 CHROMA mode: highpass lowered to 30 Hz to match MONOBASS; BODY knob becomes FILTER sweep (same Moog LPF curve)
 - D3 wavefolder frequency range extended down to 16.352 Hz (C0) for deeper sub-bass waveshaping
+- MONOBASS keyboard limited to 12 keys (buttons 13-16 dead); first 12 step LEDs stay lit as usable-key indicators
+- MONOBASS filter display floor corrected to 100 Hz (matches engine)
+- MONOBASS note display repositioned to avoid bottom border occlusion
+- Oscilloscope rewritten: triggered waveform display with rising zero-crossing lock — sine, saw, and square shapes now visually distinct and stable
+- Chroma indicator dots no longer blank the oscilloscope; each dot clears only the pixels behind itself
+- Chroma indicator dots hidden while parameter overlay is active (no overlap)
 
 ## Changes (v1.03.1)
 

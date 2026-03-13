@@ -2367,20 +2367,22 @@ void renderChromaDots() {
   bool showWF = wfChromaMode;
   if (!showD1 && !showD2 && !showD3 && !showWF) return;
 
-  // Clear strip so dots sit on black, not on scope pixels.
-  display.fillRect(2, 58, 126, 6, SH110X_BLACK);
-
   const bool chromaActive[4] = {
     showD1, showD2, showD3, showWF
   };
   const int dotCenters[4] = { 16, 48, 80, 112 };
   const int dotSize = 4;
+  const int padSize = dotSize + 2;  // 1px black border around each dot
   const int dotY = 59;
+  const int padY = dotY - 1;
 
   for (int i = 0; i < 4; i++) {
     if (chromaActive[i]) {
-      int x = dotCenters[i] - dotSize / 2;
-      display.fillRect(x, dotY, dotSize, dotSize, SH110X_WHITE);
+      // Clear only behind this dot (not a full-width strip)
+      int px = dotCenters[i] - padSize / 2;
+      display.fillRect(px, padY, padSize, padSize, SH110X_BLACK);
+      int dx = dotCenters[i] - dotSize / 2;
+      display.fillRect(dx, dotY, dotSize, dotSize, SH110X_WHITE);
     }
   }
 }

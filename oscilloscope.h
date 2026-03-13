@@ -3,10 +3,10 @@
 // ============================================================================
 //  Oscilloscope — oscilloscope.h
 //
-//  Phase-coherent waveform display from AudioRecordQueue.
-//  Captures a contiguous snapshot of audio samples, then holds it until
-//  the next refresh interval. This preserves waveshape (sine looks like
-//  sine, square looks like square) unlike a scrolling decimated view.
+//  Triggered waveform display from AudioRecordQueue.
+//  Captures a contiguous buffer of audio samples, finds a rising zero-
+//  crossing to lock the phase, then renders from that trigger point.
+//  This makes sine/saw/square shapes visually distinct and stable.
 //
 //  Include AFTER: audiotool.h (scopeQueue), hw_setup.h (display)
 // ============================================================================
@@ -21,7 +21,13 @@ static constexpr int SCOPE_DISPLAY_HEIGHT = 40;
 static constexpr int   AUDIO_BLOCK_SIZE   = 128;   // Teensy audio library block size
 static constexpr float INV_32768          = 1.0f / 32768.0f;
 
-// Snapshot buffer — filled with contiguous samples, then frozen for display
+// Raw capture buffer — oversized to allow trigger search room.
+// We need SCOPE_DISPLAY_WIDTH samples after the trigger point,
+// plus headroom to search for a zero-crossing in the first portion.
+static constexpr int SCOPE_CAPTURE_LEN = SCOPE_DISPLAY_WIDTH + 128;
+float scopeCapture[SCOPE_CAPTURE_LEN] = { 0 };
+
+// Display-ready buffer — trigger-aligned samples for rendering
 float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
 bool  scopeBufferReady = false;
 
@@ -33,25 +39,39 @@ static constexpr uint32_t SCOPE_REFRESH_MS = 80;
 uint32_t scopeLastCaptureMs = 0;
 
 // ============================================================================
+//  findTrigger() — rising zero-crossing search
+//
+//  Scans the first `searchLen` samples for a rising zero-crossing
+//  (negative→positive transition). Returns the index of the first
+//  positive sample, or 0 if no crossing found (free-running fallback).
+// ============================================================================
+
+static int findTrigger(const float* buf, int searchLen) {
+  for (int i = 1; i < searchLen; i++) {
+    if (buf[i - 1] <= 0.0f && buf[i] > 0.0f) {
+      return i;
+    }
+  }
+  return 0;  // no crossing — show from start
+}
+
+// ============================================================================
 //  updateScopeData() — call from main loop to consume audio samples
 //
-//  Strategy: accumulate samples from consecutive audio blocks into a
-//  contiguous snapshot. Decimate by 4 (not 16) so waveform shape is
-//  preserved. Each 128-sample block yields 32 display samples; we need
-//  4 consecutive blocks (4×32=128 > 124) to fill the display width.
-//  After filling, freeze the buffer until the refresh interval elapses.
+//  Captures contiguous samples into an oversized buffer, then finds a
+//  trigger point and copies SCOPE_DISPLAY_WIDTH samples starting there
+//  into the display buffer. Decimation by 2 gives 22 kHz effective
+//  sample rate — good detail for all waveform shapes.
 // ============================================================================
 
 void updateScopeData() {
-  static int fillIndex = 0;        // how many samples written so far
-  static bool capturing = false;   // true while accumulating blocks
+  static int fillIndex = 0;
+  static bool capturing = false;
 
-  // Drain the queue — always free buffers to prevent backup
   while (scopeQueue.available() >= 1) {
     int16_t* samples = scopeQueue.readBuffer();
 
     if (!capturing) {
-      // Check if it's time for a new snapshot
       uint32_t now = sysTickMs;
       if ((uint32_t)(now - scopeLastCaptureMs) >= SCOPE_REFRESH_MS) {
         capturing = true;
@@ -63,18 +83,23 @@ void updateScopeData() {
     }
 
     if (capturing) {
-      // Decimate by 4: take every 4th sample from the 128-sample block
-      // Effective sample rate: 44100/4 = 11025 Hz — plenty for bass waveforms
-      const int DECIMATE = 4;
-      for (int i = 0; i < AUDIO_BLOCK_SIZE && fillIndex < SCOPE_DISPLAY_WIDTH; i += DECIMATE) {
-        scopeBuffer[fillIndex++] = samples[i] * INV_32768;
+      // Decimate by 2: effective 22050 Hz — preserves sharp edges on square waves
+      const int DECIMATE = 2;
+      for (int i = 0; i < AUDIO_BLOCK_SIZE && fillIndex < SCOPE_CAPTURE_LEN; i += DECIMATE) {
+        scopeCapture[fillIndex++] = samples[i] * INV_32768;
       }
 
-      if (fillIndex >= SCOPE_DISPLAY_WIDTH) {
-        // Snapshot complete — freeze for display
+      if (fillIndex >= SCOPE_CAPTURE_LEN) {
         capturing = false;
-        scopeBufferReady = true;
         scopeLastCaptureMs = sysTickMs;
+
+        // Find rising zero-crossing in the first 128 samples (search window)
+        int trigIdx = findTrigger(scopeCapture, SCOPE_CAPTURE_LEN - SCOPE_DISPLAY_WIDTH);
+
+        // Copy trigger-aligned samples into display buffer
+        memcpy(scopeBuffer, &scopeCapture[trigIdx],
+               SCOPE_DISPLAY_WIDTH * sizeof(float));
+        scopeBufferReady = true;
       }
     }
 
@@ -101,22 +126,19 @@ void drawScopeWaveform(int x, int y, int h) {
 
   // Noise floor — keeps the scope visually quiet during silence
   const float NOISE_FLOOR = 0.05f;
-  if (range < 0.001f) return;              // nothing to draw
+  if (range < 0.001f) return;
 
-  // Smoothed auto-scale with attack/release.
-  // Fast attack keeps transients from jolting the scale;
-  // slow release lets drum tails decay gracefully.
+  // Smoothed auto-scale with attack/release
   if (range > scopePeakRange) {
-    scopePeakRange += (range - scopePeakRange) * 0.5f;  // fast attack
+    scopePeakRange += (range - scopePeakRange) * 0.5f;
   } else {
-    scopePeakRange *= 0.97f;               // slow release
+    scopePeakRange *= 0.97f;
     if (scopePeakRange < NOISE_FLOOR) scopePeakRange = NOISE_FLOOR;
   }
 
   float vScale = (h * 0.9f) / scopePeakRange;
 
-  // AC-couple: center on this snapshot's midpoint (no smoothing needed
-  // since the buffer is a contiguous capture, not a scrolling mix)
+  // AC-couple: center on this snapshot's midpoint
   float mid = (minVal + maxVal) * 0.5f;
 
   // Precompute y-coordinates for all samples
@@ -131,10 +153,10 @@ void drawScopeWaveform(int x, int y, int h) {
     int px = x + i;
     display.drawLine(px, ys[i], px + 1, ys[i + 1], 1);
 
-    // Fill vertical gaps on sharp transients (>5px jump).
-    // Makes square waves and drum attacks look bold.
+    // Fill vertical gaps on sharp transients (>3px jump).
+    // Makes square waves and drum attacks look bold and solid.
     int gap = abs(ys[i + 1] - ys[i]);
-    if (gap > 5) {
+    if (gap > 3) {
       int top = min(ys[i], ys[i + 1]);
       int bot = max(ys[i], ys[i + 1]);
       display.drawLine(px + 1, top, px + 1, bot, 1);

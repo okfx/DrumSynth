@@ -254,6 +254,7 @@ static void displayD1Body(uint8_t idx, int knobValue) {
     float norm = normalizeKnob(knobValue);
     float cutoff = 80.0f * expf(norm * 4.317f);
     if (cutoff > 6000.0f) cutoff = 6000.0f;
+    if (cutoff < 100.0f)  cutoff = 100.0f;   // match engine floor
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "FILTER");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d Hz", (int)cutoff);
     monoBass.paramShowStart = sysTickMs;
@@ -262,6 +263,7 @@ static void displayD1Body(uint8_t idx, int knobValue) {
     float norm = normalizeKnob(knobValue);
     float cutoff = 80.0f * expf(norm * 4.317f);
     if (cutoff > 6000.0f) cutoff = 6000.0f;
+    if (cutoff < 100.0f)  cutoff = 100.0f;   // match engine floor
     snprintf(displayParameter1, sizeof(displayParameter1), "D1 FILTER");
     snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoff);
   } else {
