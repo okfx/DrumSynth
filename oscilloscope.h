@@ -21,18 +21,22 @@ static constexpr int SCOPE_DISPLAY_HEIGHT = 40;
 static constexpr int   AUDIO_BLOCK_SIZE   = 128;   // Teensy audio library block size
 static constexpr float INV_32768          = 1.0f / 32768.0f;
 
-// Raw capture buffer — oversized to allow trigger search room.
-// We need SCOPE_DISPLAY_WIDTH samples after the trigger point,
-// plus headroom to search for a zero-crossing in the first portion.
-static constexpr int SCOPE_CAPTURE_LEN = SCOPE_DISPLAY_WIDTH + 128;
+// Trigger search window — how many samples to scan for a rising zero-crossing
+// before falling back to free-running. 128 samples at 22 kHz ≈ 5.8ms, enough
+// to find a crossing for any frequency above ~170 Hz within one period.
+static constexpr int SCOPE_TRIGGER_SEARCH = 128;
+
+// Raw capture buffer — display width plus trigger search headroom
+static constexpr int SCOPE_CAPTURE_LEN = SCOPE_DISPLAY_WIDTH + SCOPE_TRIGGER_SEARCH;
 float scopeCapture[SCOPE_CAPTURE_LEN] = { 0 };
 
 // Display-ready buffer — trigger-aligned samples for rendering
 float scopeBuffer[SCOPE_DISPLAY_WIDTH] = { 0 };
 bool  scopeBufferReady = false;
 
-// Smoothed auto-scale state — peak hold with slow release
-float scopePeakRange = 0.05f;  // starts at noise floor
+// Smoothed auto-scale — peak hold with slow release
+static constexpr float SCOPE_NOISE_FLOOR = 0.05f;
+float scopePeakRange = SCOPE_NOISE_FLOOR;
 
 // Refresh timing — matches OLED_FRAME_INTERVAL_MS (42ms) so a fresh triggered
 // snapshot is ready every display frame (~24 FPS). Capture takes ~12ms minimum
@@ -86,8 +90,8 @@ void updateScopeData() {
 
     if (capturing) {
       // Decimate by 2: effective 22050 Hz — preserves sharp edges on square waves
-      const int DECIMATE = 2;
-      for (int i = 0; i < AUDIO_BLOCK_SIZE && fillIndex < SCOPE_CAPTURE_LEN; i += DECIMATE) {
+      static constexpr int SCOPE_DECIMATE = 2;
+      for (int i = 0; i < AUDIO_BLOCK_SIZE && fillIndex < SCOPE_CAPTURE_LEN; i += SCOPE_DECIMATE) {
         scopeCapture[fillIndex++] = samples[i] * INV_32768;
       }
 
@@ -95,8 +99,8 @@ void updateScopeData() {
         capturing = false;
         scopeLastCaptureMs = sysTickMs;
 
-        // Find rising zero-crossing in the first 128 samples (search window)
-        int trigIdx = findTrigger(scopeCapture, SCOPE_CAPTURE_LEN - SCOPE_DISPLAY_WIDTH);
+        // Find rising zero-crossing in the trigger search window
+        int trigIdx = findTrigger(scopeCapture, SCOPE_TRIGGER_SEARCH);
 
         // Copy trigger-aligned samples into display buffer
         memcpy(scopeBuffer, &scopeCapture[trigIdx],
@@ -126,16 +130,14 @@ void drawScopeWaveform(int x, int y, int h) {
 
   float range = maxVal - minVal;
 
-  // Noise floor — keeps the scope visually quiet during silence
-  const float NOISE_FLOOR = 0.05f;
-  if (range < 0.001f) return;
+  if (range < 0.001f) return;  // nothing to draw
 
   // Smoothed auto-scale with attack/release
   if (range > scopePeakRange) {
     scopePeakRange += (range - scopePeakRange) * 0.5f;
   } else {
     scopePeakRange *= 0.97f;
-    if (scopePeakRange < NOISE_FLOOR) scopePeakRange = NOISE_FLOOR;
+    if (scopePeakRange < SCOPE_NOISE_FLOOR) scopePeakRange = SCOPE_NOISE_FLOOR;
   }
 
   float vScale = (h * 0.9f) / scopePeakRange;
