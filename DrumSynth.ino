@@ -23,6 +23,8 @@ struct ButtonHandler;
 // Format: "MM.DD.YY" (e.g., "03.04.26" for March 4, 2026).
 // Uses a constexpr lookup to convert the __DATE__ month abbreviation to a 2-digit number.
 // __DATE__ format: "Mar  4 2026" (month abbreviation, day, 4-digit year)
+// Months: Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec
+// Ambiguous firsts resolved by [1] or [2]: J+a→Jan, J+n→Jun, J+l→Jul; M+r→Mar, M+y→May; A+p→Apr, A+u→Aug
 static constexpr int fwMonth =
     (__DATE__[0] == 'J' && __DATE__[1] == 'a') ? 1  :
     (__DATE__[0] == 'F')                        ? 2  :
@@ -383,7 +385,7 @@ static inline float normalizeKnob(int rawKnobValue) {
 float d1BaseFreq = 100.0f;
 float d1FreqBeforeChroma = 100.0f;  // saved on D1 chroma entry, restored on exit
 
-inline void applyD1Freq() {
+void applyD1Freq() {
   AudioNoInterrupts();
   d1OscSine.frequency(d1BaseFreq);
   d1OscSaw.frequency(d1BaseFreq);
@@ -405,7 +407,7 @@ static inline int chokeOffsetFromKnob(int knobVal) {
 
   // Left of deadband: full CCW → -55ms
   if (knobVal < CENTER - DEADBAND) {
-    int lowEnd = CENTER - DEADBAND;
+    int lowEnd = CENTER - DEADBAND;  // also the full range [0, lowEnd]
     float blend = float(lowEnd - knobVal) / float(lowEnd);
     return (int)(MAX_NEG * blend);
   }
@@ -427,7 +429,7 @@ static inline float computeD3Decay() {
 
 
 // sequence routing
-inline uint8_t* sequenceForTrack(Track t) {
+uint8_t* sequenceForTrack(Track t) {
   switch (t) {
     case TRACK_D1: return d1Sequence;
     case TRACK_D2: return d2Sequence;
@@ -832,8 +834,12 @@ void setup() {
   analogReadAveraging(KNOB_HW_AVG);
 
   // Initialize knob smoothing filters
-  for (uint8_t i = 0; i < knobCount; i++) {
+  for (int i = 0; i < knobCount; i++) {
     analog[i] = new ResponsiveAnalogRead(0, true);
+    if (!analog[i]) {
+      Serial.println("[ERROR] Failed to allocate ResponsiveAnalogRead");
+      while (true) { /* halt */ }
+    }
     analog[i]->setActivityThreshold(KNOB_ACTIVITY_THRESH);
     analog[i]->setSnapMultiplier(KNOB_SNAP_MULTI);
   }
@@ -1240,7 +1246,7 @@ void handlePlayStop() {
     if (hasRecentPulse) {
       // External sync — count-in for one full cycle, then fire step 0.
       armed = true;
-      armPulseCountdown = (uint16_t)numSteps * ppqn / STEPS_PER_BEAT;
+      armPulseCountdown = (uint32_t)numSteps * ppqn / STEPS_PER_BEAT;
 
       // Grace window: snap to nearest pulse.
       // If the user pressed PLAY just after a pulse (within the first
@@ -1478,7 +1484,7 @@ static void btnMemoryRelease(ButtonHandler& self, uint32_t nowTick) {
   } else if (ppqnModeActive) {
     // Short press in PPQN mode — cycle to next value
     uint8_t idx = 0;
-    for (uint8_t j = 0; j < PPQN_OPTION_COUNT; j++) {
+    for (int j = 0; j < PPQN_OPTION_COUNT; j++) {
       if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
     }
     ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
@@ -1794,7 +1800,7 @@ int readKnobRaw(uint8_t idx) {
   mux.channel(idx < 16 ? idx : idx - 16);
   delayMicroseconds(KNOB_MUX_SETTLE_US);
   int sum = 0;
-  for (uint8_t i = 0; i < KNOB_OVERSAMPLE; i++) {
+  for (int i = 0; i < KNOB_OVERSAMPLE; i++) {
     sum += mux.read();
   }
   int raw = sum / KNOB_OVERSAMPLE;
@@ -1864,12 +1870,12 @@ static_assert(sizeof(MIDI_FREQ) / sizeof(MIDI_FREQ[0]) == (MIDI_FREQ_MAX - MIDI_
               "MIDI_FREQ must have one entry per MIDI note in range");
 
 // Clamp-and-lookup: safe for any uint8_t input.
-inline float midiToFreq(uint8_t midiNote) {
+float midiToFreq(uint8_t midiNote) {
   uint8_t idx = constrain(midiNote, MIDI_FREQ_MIN, MIDI_FREQ_MAX) - MIDI_FREQ_MIN;
   return MIDI_FREQ[idx];
 }
 
-inline float d1ChromaFreq(uint8_t midiNote) {
+float d1ChromaFreq(uint8_t midiNote) {
   return midiToFreq(midiNote);
 }
 
@@ -1902,7 +1908,7 @@ static inline uint8_t d2ChromaKnobToNote(int knobValue) {
 
 // Sets d2Osc frequency from MIDI note. Called per-step during playback
 // when D2 chroma mode is active. Only d2Osc is pitched — d2Body stays fixed.
-inline void applyD2ChromaFreq(uint8_t midiNote) {
+void applyD2ChromaFreq(uint8_t midiNote) {
   AudioNoInterrupts();
   d2Osc.frequency(midiToFreq(midiNote));
   AudioInterrupts();
@@ -1932,7 +1938,7 @@ static inline uint8_t d3ChromaKnobToNote(int knobValue) {
 // Sets all D3 oscillators (606 bank, FM, perc) to harmonic ratios for a given
 // MIDI note.  Called per-step during playback when D3 chroma mode is active.
 // Filter tracking is handled separately by the knob handler — not per-step.
-inline void applyD3ChromaFreq(uint8_t midiNote) {
+void applyD3ChromaFreq(uint8_t midiNote) {
   float baseHz = midiToFreq(midiNote);
   AudioNoInterrupts();
   // 606 bank: power chord spacing
@@ -2044,7 +2050,7 @@ void applyKnobToEngine(uint8_t idx, int knobValue) {
 void initKnobsFromHardware() {
   // Read all knobs, settle filters, apply to engine, and store boot values.
   // Boot-lock prevents ADC drift from changing params until the user moves a knob.
-  for (uint8_t idx = 0; idx < knobCount; idx++) {
+  for (int idx = 0; idx < knobCount; idx++) {
     int rawValue = readKnobRaw(idx);
 
     // Update filter multiple times to settle it
@@ -2068,10 +2074,10 @@ void initKnobsFromHardware() {
 // instead of all 32, reducing per-loop delayMicroseconds overhead by 4x
 void updateKnobs() {
   static uint8_t knobScanGroup = 0;
-  uint8_t start = knobScanGroup * 8;
-  uint8_t end = start + 8;
+  int start = knobScanGroup * 8;
+  int end = start + 8;
 
-  for (uint8_t idx = start; idx < end; idx++) {
+  for (int idx = start; idx < end; idx++) {
     int rawValue = readKnobRaw(idx);
     analog[idx]->update(rawValue);
 
@@ -2187,7 +2193,7 @@ void renderVoiceRails() {
 // transfer (~15-25ms). Returns false if audio timing work is pending or
 // imminent. Musical timing always wins over display updates.
 // Called from updateDisplay() for both the PPQN mode and normal display paths.
-inline bool isSafeToPushOled(uint32_t nowMs) {
+bool isSafeToPushOled(uint32_t nowMs) {
   // Steps waiting: consume them first, never block with pending audio work
   if (pendingStepCount > 0) return false;
 

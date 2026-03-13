@@ -244,7 +244,7 @@ void loadPpqnFromEEPROM() {
   if (magic == EEPROM_PPQN_MAGIC) {
     uint8_t val = EEPROM.read(EEPROM_PPQN_ADDR + 1);
     // Validate: must be one of the allowed values
-    for (uint8_t i = 0; i < PPQN_OPTION_COUNT; i++) {
+    for (int i = 0; i < PPQN_OPTION_COUNT; i++) {
       if (PPQN_OPTIONS[i] == val) { ppqn = val; return; }
     }
   }
@@ -254,7 +254,7 @@ void loadPpqnFromEEPROM() {
 void savePpqnToEEPROM(uint8_t val) {
   // Only save values from the valid PPQN set
   bool valid = false;
-  for (uint8_t i = 0; i < PPQN_OPTION_COUNT; i++) {
+  for (int i = 0; i < PPQN_OPTION_COUNT; i++) {
     if (PPQN_OPTIONS[i] == val) { valid = true; break; }
   }
   if (!valid) return;

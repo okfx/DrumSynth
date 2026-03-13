@@ -56,6 +56,10 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 
 ## Changes (v1.05)
 
+- **MONOBASS idle display** -- when no note is held, the scope area shows a knob reference grid: 4 rows labeling all 8 MONOBASS-active knobs (Octave, Volume, Decay, Attack, Osc, Filter, Wavefolder, Delay Send) with small knob icons between each pair
+- MONOBASS automatically enables WF CHROMA mode on entry and restores the previous WF CHROMA state on exit — wavefolder always tracks chromatic pitch while in MONOBASS
+- MONOBASS note display repositioned to sit 4 px lower for better border clearance
+- **Codebase audit:** null check + halt on failed knob allocator (`new`), `uint32_t` promotion on `armPulseCountdown` multiplication, `extern` declaration added for `monoBassKeyEvent`, `memset` replaced with range-for on key stack init, `static constexpr` on FM synthesis constants, loop counters standardized to `int` across all files, redundant `inline` removed from 7 single-TU functions, clarifying comments added to date-parsing chain and choke knob range math
 - **MONOBASS mode** -- hold D1 for 6 seconds to enter a live mono keyboard using the step buttons as keys, with oscilloscope waveform display. D2/D3 knobs, BPM, choke, and memory/load/save are disabled during MONOBASS mode.
 - D2 and D3 wavefolder carrier frequencies lowered to sub-bass range (32-110 Hz for D3, 32-440 Hz for D2)
 - Table-driven knob dispatch replaces switch blocks -- all 32 knobs handled via `knobTable[]` with paired display/engine function pointers

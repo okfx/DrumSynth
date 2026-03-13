@@ -38,6 +38,7 @@ struct MonoBassState {
   char paramValue[16] = "";     // value string for large-font param display
   uint32_t paramShowStart = 0;  // when param display started
   uint32_t noteShowStart = 0;   // when note display was triggered
+  bool savedWfChroma = false;   // wfChromaMode state before entering MONOBASS
 
   // Last-note-priority key stack for polyphonic trill
   int8_t heldKeys[kMaxHeldKeys];
@@ -70,6 +71,7 @@ extern char displayParameter1[24];
 extern char displayParameter2[24];
 extern uint32_t parameterOverlayStartTick;
 extern ShiftRegister74HC595<2> ledShiftReg;
+extern bool wfChromaMode;
 extern int8_t d1ChromaHeldStep;
 extern int8_t d2ChromaHeldStep;
 extern int8_t d3ChromaHeldStep;
@@ -86,6 +88,7 @@ extern void updateLEDs();
 extern void drawOutlinedText(int x, int y, const char* text);
 extern void applyKnobToEngine(uint8_t idx, int knobValue);
 extern ResponsiveAnalogRead* analog[];
+extern bool monoBassKeyEvent;
 
 // ============================================================================
 //  Entry / exit
@@ -95,6 +98,9 @@ extern ResponsiveAnalogRead* analog[];
 void enterMonoBassMode() {
   monoBass.active = true;
   saveMonoBassStatusToEEPROM(true);
+  // Force wavefolder into chroma mode (save previous state for exit)
+  monoBass.savedWfChroma = wfChromaMode;
+  wfChromaMode = true;
   // Stop transport if running
   noInterrupts();
   sequencePlaying = false;
@@ -105,7 +111,7 @@ void enterMonoBassMode() {
   wantSwitchToExt = false;
   interrupts();
   monoBass.heldCount = 0;
-  memset(monoBass.heldKeys, -1, sizeof(monoBass.heldKeys));
+  for (auto& k : monoBass.heldKeys) k = -1;
   monoBass.showOctave = false;
   monoBass.noteShowStart = 0;
   // Clear any chroma note-select state so it doesn't persist across mode switch
@@ -130,7 +136,7 @@ void enterMonoBassMode() {
   d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
   AudioInterrupts();
   // Light first 12 LEDs as usable-key indicators (12 notes per octave)
-  for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
+  for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
   ledShiftReg.updateRegisters();
 }
 
@@ -138,6 +144,8 @@ void enterMonoBassMode() {
 void exitMonoBassMode() {
   monoBass.active = false;
   saveMonoBassStatusToEEPROM(false);
+  // Restore wavefolder chroma mode to pre-MONOBASS state
+  wfChromaMode = monoBass.savedWfChroma;
   AudioNoInterrupts();
   d1AmpEnv.attack(D1_ATTACK_MS);
   d1AmpEnv.hold(d1CachedHoldMs);
@@ -182,7 +190,7 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       monoBass.heldKeys[monoBass.heldCount++] = buttonIndex;
     } else {
       // Stack full — drop oldest, shift left, push new at end
-      for (uint8_t k = 1; k < MonoBassState::kMaxHeldKeys; k++) {
+      for (int k = 1; k < MonoBassState::kMaxHeldKeys; k++) {
         monoBass.heldKeys[k - 1] = monoBass.heldKeys[k];
       }
       monoBass.heldKeys[MonoBassState::kMaxHeldKeys - 1] = buttonIndex;
@@ -197,12 +205,12 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     monoBass.noteShowStart = sysTickMs;
 
     // Light first 12 LEDs (usable keys) — single SPI transaction
-    for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
+    for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
     ledShiftReg.updateRegisters();
   } else {
     // Remove released key from stack
     bool found = false;
-    for (uint8_t k = 0; k < monoBass.heldCount; k++) {
+    for (int k = 0; k < monoBass.heldCount; k++) {
       if (monoBass.heldKeys[k] == buttonIndex) found = true;
       if (found && k + 1 < monoBass.heldCount) {
         monoBass.heldKeys[k] = monoBass.heldKeys[k + 1];
@@ -219,14 +227,14 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       applyD1Freq();
       triggerD1();
       monoBass.noteShowStart = sysTickMs;
-      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
+      for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
       ledShiftReg.updateRegisters();
     } else {
       // No keys held — gate off
       AudioNoInterrupts();
       d1AmpEnv.noteOff();
       AudioInterrupts();
-      for (int j = 0; j < numSteps; j++) ledShiftReg.setNoUpdate(j, j < 12);
+      for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
       ledShiftReg.updateRegisters();
     }
   }
@@ -237,6 +245,67 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
 // ============================================================================
 //  Display — scope area renderer
 // ============================================================================
+
+// Helper: draw a 7×7 pixel knob icon centered at (cx, cy).
+static inline void drawKnobIcon(int cx, int cy) {
+  // Top/bottom arcs
+  display.drawPixel(cx - 1, cy - 3, 1);
+  display.drawPixel(cx,     cy - 3, 1);
+  display.drawPixel(cx + 1, cy - 3, 1);
+  display.drawPixel(cx - 1, cy + 3, 1);
+  display.drawPixel(cx,     cy + 3, 1);
+  display.drawPixel(cx + 1, cy + 3, 1);
+  // Corner pixels
+  display.drawPixel(cx - 2, cy - 2, 1);
+  display.drawPixel(cx + 2, cy - 2, 1);
+  display.drawPixel(cx - 2, cy + 2, 1);
+  display.drawPixel(cx + 2, cy + 2, 1);
+  // Side columns
+  display.drawPixel(cx - 3, cy - 1, 1);
+  display.drawPixel(cx - 3, cy,     1);
+  display.drawPixel(cx - 3, cy + 1, 1);
+  display.drawPixel(cx + 3, cy - 1, 1);
+  display.drawPixel(cx + 3, cy,     1);
+  display.drawPixel(cx + 3, cy + 1, 1);
+  // Center dot + indicator line up
+  display.drawPixel(cx, cy,     1);
+  display.drawPixel(cx, cy - 1, 1);
+  display.drawPixel(cx, cy - 2, 1);
+}
+
+// Draw the 4×2 knob reference grid in the scope area (idle state).
+static void renderMonoBassIdleGrid() {
+  static constexpr int kRowStartY  = 24;
+  static constexpr int kRowHeight  = 10;
+  static constexpr int kLeftX      = 4;
+  static constexpr int kRightEdge  = 125;
+  static constexpr int kLeftKnobCx = 56;
+  static constexpr int kRightKnobCx = 68;
+
+  static const char* const leftLabels[]  = { "OCTAVE", "DECAY", "OSC", "WAVFLDR" };
+  static const char* const rightLabels[] = { "VOLUME", "ATTACK", "FILTER", "DLY SND" };
+
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
+
+  for (int row = 0; row < 4; row++) {
+    int rowY = kRowStartY + row * kRowHeight;
+
+    // Left label — left-justified
+    display.setCursor(kLeftX, rowY);
+    display.print(leftLabels[row]);
+
+    // Right label — right-justified
+    int rLen = strlen(rightLabels[row]);
+    display.setCursor(kRightEdge - rLen * 6, rowY);
+    display.print(rightLabels[row]);
+
+    // Two knob icons per row, vertically centered with text
+    int knobCy = rowY + 3;
+    drawKnobIcon(kLeftKnobCx, knobCy);
+    drawKnobIcon(kRightKnobCx, knobCy);
+  }
+}
 
 // Helper: draw centered outlined text at given y position and text size.
 static inline void monoBassOutlinedCenter(const char* text, int y, uint8_t textSize) {
@@ -278,13 +347,19 @@ void renderMonoBassScope(uint32_t nowMs) {
     char noteName[8];
     formatChromaNote(midiNote, noteName);
     display.setTextSize(1);
-    drawOutlinedText(8, 50, noteName);
+    drawOutlinedText(8, 54, noteName);
     return;
   }
 
   // All displays expired — clear flags
   monoBass.showOctave = false;
   monoBass.paramLabel[0] = '\0';
+
+  // Priority 4: note still playing → let scope waveform show through
+  if (monoBass.topKey() >= 0) return;
+
+  // Priority 5: idle — no note, no overlays → draw knob reference grid
+  renderMonoBassIdleGrid();
 }
 
 #endif // MONOBASS_H

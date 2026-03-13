@@ -270,7 +270,7 @@ void audioInit() {
 
   // --- D3 "606" voice: 6-oscillator square bank ---
 
-  const float d3606baseFreq = 350.0f;
+  static constexpr float d3606baseFreq = 350.0f;
 
   d3606Osc1.begin(0.5f, d3606baseFreq * 1.00f, WAVEFORM_SQUARE);  // 350.0
   d3606Osc2.begin(0.5f, d3606baseFreq * 1.08f, WAVEFORM_SQUARE);  // 378.0
@@ -311,12 +311,12 @@ void audioInit() {
   // High modulation depth (0.65/0.55) fills the spectrum with dense
   // metallic partials — two aggressive pairs rival six mild ones.
 
-  const float carrier1Freq = 500.0f;
-  const float carrier2Freq = 1050.0f;
-  const float ratio1       = 2.236f;   // √5 — maximally inharmonic
-  const float ratio2       = 1.414f;   // √2 — classic metallic ratio
-  const float mod1Freq     = carrier1Freq * ratio1;  // ≈ 1118 Hz
-  const float mod2Freq     = carrier2Freq * ratio2;  // ≈ 1484.7 Hz
+  static constexpr float carrier1Freq = 500.0f;
+  static constexpr float carrier2Freq = 1050.0f;
+  static constexpr float ratio1       = 2.236f;   // √5 — maximally inharmonic
+  static constexpr float ratio2       = 1.414f;   // √2 — classic metallic ratio
+  static constexpr float mod1Freq     = carrier1Freq * ratio1;  // ≈ 1118 Hz
+  static constexpr float mod2Freq     = carrier2Freq * ratio2;  // ≈ 1484.7 Hz
 
   d3FmCarrier1.begin(0.30f, carrier1Freq, WAVEFORM_SINE);  // carrier 1
   d3FmCarrier1.frequencyModulation(8);  // wide FM bandwidth for dense sidebands
