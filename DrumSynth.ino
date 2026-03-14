@@ -86,10 +86,10 @@ static constexpr uint32_t PPQN_LONG_PRESS_MS = 1500;
 static constexpr uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
 static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_OPTIONS[0]);
 
-// X button (MEM) timing
-static constexpr uint32_t X_SHORT_PRESS_MS   = 500;   // held less = short press (slot cycle)
-static constexpr uint32_t X_MONO_ANIM_MS     = 1750;  // MONOBASS warning animation starts
-static constexpr uint32_t X_MONO_ENTER_MS    = 3000;  // MONOBASS mode enters/exits
+// Combo button (MEM) timing
+static constexpr uint32_t COMBO_SHORT_PRESS_MS   = 500;   // held less = short press (slot cycle)
+static constexpr uint32_t COMBO_MONO_ANIM_MS     = 1750;  // MONOBASS warning animation starts
+static constexpr uint32_t COMBO_MONO_ENTER_MS    = 3000;  // MONOBASS mode enters/exits
 
 // D1 chroma mode state — main-loop only
 bool d1ChromaMode = false;
@@ -1505,8 +1505,8 @@ struct ButtonHandler {
   void (*onHoldCheck)(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs);
 };
 
-// X (MEM) button modifier state machine
-struct XModifierState {
+// Combo button (MEM) modifier state machine
+struct ComboModState {
   bool held;               // true while X is physically held
   uint32_t pressTick;      // when X was pressed
   bool comboFired;         // true if any combo triggered during this hold
@@ -1514,13 +1514,13 @@ struct XModifierState {
   bool monoAnimStarted;    // true if MONOBASS warning animation has begun
   bool monoFired;          // true if MONOBASS mode was entered/exited
 };
-static XModifierState xMod = {};
+static ComboModState comboMod = {};
 
 // Track active combo for hold-duration combos (e.g. X+SAVE for PPQN)
 static int8_t activeComboIndex = -1;
 static uint32_t comboSecondPressTick = 0;
 
-// --- Combo action functions (X held + second button) ---
+// --- Combo action functions (combo button held + second button) ---
 
 static void comboChromaD1() {
   startChromaRamp(0, !d1ChromaMode);
@@ -1607,7 +1607,7 @@ static void comboPPQN() {
   ppqnModeSelection = ppqn;
 }
 
-// X button combo dispatch table.
+// Combo button dispatch table.
 // holdMs == 0: fires immediately on second button press.
 // holdMs  > 0: arms on press, fires when second button hold reaches threshold.
 //
@@ -1626,7 +1626,7 @@ struct XComboEntry {
   const char* label;
 };
 
-static const XComboEntry xComboTable[] = {
+static const XComboEntry comboTable[] = {
   { 0, 0,                comboChromaD1, "D1 CHROMA" },
   { 1, 0,                comboChromaD2, "D2 CHROMA" },
   { 2, 0,                comboChromaD3, "D3 CHROMA" },
@@ -1634,19 +1634,20 @@ static const XComboEntry xComboTable[] = {
   { 8, 0,                comboShuffle,  "SHUFFLE"   },
   { 9, PPQN_LONG_PRESS_MS, comboPPQN,  "PPQN"      },
 };
-static constexpr int X_COMBO_COUNT = (int)(sizeof(xComboTable) / sizeof(xComboTable[0]));
+static constexpr int COMBO_COUNT = (int)(sizeof(comboTable) / sizeof(comboTable[0]));
 
 // Dispatch X+button combo. Returns true if a combo was fired or armed.
-// Sets xMod.comboFired and cancels the MONOBASS animation automatically.
+// Sets comboMod.comboFired and cancels the MONOBASS animation automatically.
+// Call from any button's press handler when combo button is held.
 // For holdMs>0 entries, arms activeComboIndex — caller must set self.pressTick.
-static bool dispatchXCombo(uint8_t btnIdx, uint32_t nowTick) {
-  if (!xMod.held || (nowTick - xMod.pressTick) < X_SHORT_PRESS_MS) return false;
-  for (int i = 0; i < X_COMBO_COUNT; i++) {
-    if (xComboTable[i].buttonIndex != btnIdx) continue;
-    xMod.comboFired = true;
+static bool dispatchCombo(uint8_t btnIdx, uint32_t nowTick) {
+  if (!comboMod.held || (nowTick - comboMod.pressTick) < COMBO_SHORT_PRESS_MS) return false;
+  for (int i = 0; i < COMBO_COUNT; i++) {
+    if (comboTable[i].buttonIndex != btnIdx) continue;
+    comboMod.comboFired = true;
     cancelMonoAnim();
-    if (xComboTable[i].holdMs == 0) {
-      xComboTable[i].onTrigger();
+    if (comboTable[i].holdMs == 0) {
+      comboTable[i].onTrigger();
     } else {
       activeComboIndex = i;
       comboSecondPressTick = nowTick;
@@ -1660,7 +1661,7 @@ static bool dispatchXCombo(uint8_t btnIdx, uint32_t nowTick) {
 
 static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) return;
-  if (dispatchXCombo(0, nowTick)) return;
+  if (dispatchCombo(0, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D1);
 }
@@ -1677,7 +1678,7 @@ static void btnD1Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*held
 
 static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) return;
-  if (dispatchXCombo(1, nowTick)) return;
+  if (dispatchCombo(1, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D2);
 }
@@ -1694,7 +1695,7 @@ static void btnD2Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*held
 
 static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) return;
-  if (dispatchXCombo(2, nowTick)) return;
+  if (dispatchCombo(2, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D3);
 }
@@ -1710,8 +1711,8 @@ static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*held
 // --- PLAY button (index 6): short=play/stop, X+PLAY=WF chroma ---
 
 static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
-  // X+PLAY combo fires before the MONOBASS guard — WF chroma works in MONOBASS
-  if (dispatchXCombo(6, nowTick)) return;
+  // Combo+PLAY fires before the MONOBASS guard — WF chroma works in MONOBASS
+  if (dispatchCombo(6, nowTick)) return;
   if (monoBass.active) return;
   self.pressTick = nowTick;
   handlePlayStop();
@@ -1725,33 +1726,33 @@ static void btnPlayHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*he
   (void)self;
 }
 
-// --- X button (index 7, formerly MEM) ---
+// --- Combo button (index 7, MEM) ---
 //
 // Short press (<500ms, no combo): cycle memory slot
 // Hold alone 1750ms: MONOBASS warning animation begins
 // Hold alone 3000ms: enter/exit MONOBASS mode
-// Hold >500ms + second button: combo dispatch
+// Hold >500ms + second button: combo dispatch (see comboTable)
 
-static void btnXPress(ButtonHandler& self, uint32_t nowTick) {
+static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
   self.enteredMode = false;
   self.enteredMode2 = false;
 
-  xMod.held = true;
-  xMod.pressTick = nowTick;
-  xMod.comboFired = false;
-  xMod.slotCycled = false;
-  xMod.monoAnimStarted = false;
-  xMod.monoFired = false;
+  comboMod.held = true;
+  comboMod.pressTick = nowTick;
+  comboMod.comboFired = false;
+  comboMod.slotCycled = false;
+  comboMod.monoAnimStarted = false;
+  comboMod.monoFired = false;
 
   monoAnimPhase = MONO_ANIM_NONE;
 }
 
-static void btnXRelease(ButtonHandler& self, uint32_t nowTick) {
-  uint32_t heldMs = nowTick - xMod.pressTick;
+static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {
+  uint32_t heldMs = nowTick - comboMod.pressTick;
 
   // Short press: cycle slot (only if no combo fired and held < threshold)
-  if (heldMs < X_SHORT_PRESS_MS && !xMod.comboFired) {
+  if (heldMs < COMBO_SHORT_PRESS_MS && !comboMod.comboFired) {
     if (monoBass.active) {
       snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
       snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
@@ -1776,33 +1777,33 @@ static void btnXRelease(ButtonHandler& self, uint32_t nowTick) {
   }
 
   // Cancel MONOBASS animation if it was in progress but didn't fire
-  if (xMod.monoAnimStarted && !xMod.monoFired) {
+  if (comboMod.monoAnimStarted && !comboMod.monoFired) {
     cancelMonoAnim();
   }
 
   // Cancel any pending hold-combo (e.g. X+SAVE that didn't reach 1500ms)
   activeComboIndex = -1;
 
-  xMod.held = false;
+  comboMod.held = false;
   self.enteredMode = false;
   self.enteredMode2 = false;
 }
 
-static void btnXHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
   (void)self;
-  if (xMod.comboFired) return;
+  if (comboMod.comboFired) return;
 
-  // MONOBASS warning animation at 1750ms (only if no combo, X held alone)
-  if (!xMod.monoAnimStarted && heldMs >= X_MONO_ANIM_MS) {
+  // MONOBASS warning animation at 1750ms (only if no combo fired, combo button held alone)
+  if (!comboMod.monoAnimStarted && heldMs >= COMBO_MONO_ANIM_MS) {
     monoAnimPhase = monoBass.active ? MONO_ANIM_EXITING : MONO_ANIM_ENTERING;
-    monoAnimStart = nowTick - (heldMs - X_MONO_ANIM_MS);
-    xMod.monoAnimStarted = true;
+    monoAnimStart = nowTick - (heldMs - COMBO_MONO_ANIM_MS);
+    comboMod.monoAnimStarted = true;
   }
 
   // MONOBASS mode entry/exit at 3000ms
-  if (!xMod.monoFired && heldMs >= X_MONO_ENTER_MS) {
-    xMod.monoFired = true;
-    xMod.comboFired = true;
+  if (!comboMod.monoFired && heldMs >= COMBO_MONO_ENTER_MS) {
+    comboMod.monoFired = true;
+    comboMod.comboFired = true;
     cancelMonoAnim();
     cancelChromaAnim();
     if (!monoBass.active) {
@@ -1818,7 +1819,7 @@ static void btnXHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
 
 static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
-  if (dispatchXCombo(8, nowTick)) return;
+  if (dispatchCombo(8, nowTick)) return;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
@@ -1849,7 +1850,7 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
 
 static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;  // always record for hold timing
-  if (dispatchXCombo(9, nowTick)) return;
+  if (dispatchCombo(9, nowTick)) return;
 
   // In PPQN mode: SAVE = save and exit
   if (ppqnModeActive) {
@@ -1891,10 +1892,10 @@ static void btnSaveRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
 
 static void btnSaveHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
   (void)self;
-  if (activeComboIndex >= 0 && heldMs >= xComboTable[activeComboIndex].holdMs) {
+  if (activeComboIndex >= 0 && heldMs >= comboTable[activeComboIndex].holdMs) {
     int idx = activeComboIndex;
     activeComboIndex = -1;
-    xComboTable[idx].onTrigger();
+    comboTable[idx].onTrigger();
   }
 }
 
@@ -1912,7 +1913,7 @@ static ButtonHandler btnHandlers[otherButtonsCount] = {
   /* 4 n/a    */ { 0, false, false, btnNullPress, btnNullRelease, btnNullHold },
   /* 5 n/a    */ { 0, false, false, btnNullPress, btnNullRelease, btnNullHold },
   /* 6 PLAY   */ { 0, false, false, btnPlayPress, btnPlayRelease, btnPlayHold },
-  /* 7 X(MEM) */ { 0, false, false, btnXPress,    btnXRelease,    btnXHold    },
+  /* 7 COMBO  */ { 0, false, false, btnComboPress,    btnComboRelease,    btnComboHold    },
   /* 8 LOAD   */ { 0, false, false, btnLoadPress, btnNullRelease, btnNullHold },
   /* 9 SAVE   */ { 0, false, false, btnSavePress, btnSaveRelease, btnSaveHold },
 };
