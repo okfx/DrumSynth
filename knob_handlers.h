@@ -254,18 +254,26 @@ static void displayD1Volume(uint8_t idx, int knobValue) {
   displayMonoBassParam("D1 VOLUME", "VOLUME", knobValue);
 }
 
-// Case 5: D1 Snap (repurposed as envelope filter depth in MONOBASS mode)
+// Case 5: D1 Snap (repurposed as envelope filter depth in MONOBASS and D1 chroma modes)
 static void displayD1Snap(uint8_t idx, int knobValue) {
   (void)idx;
-  if (monoBass.active) {
+  if (monoBass.active || d1ChromaMode) {
     float norm = normalizeKnob(knobValue);
     int percent = (int)(norm * 100.0f + 0.5f);
-    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "ENV FLT");
-    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
-    monoBass.paramShowStart = sysTickMs;
+    if (monoBass.active) {
+      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "ENV FLT");
+      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
+      monoBass.paramShowStart = sysTickMs;
+    } else {
+      snprintf(displayParameter1, sizeof(displayParameter1), "D1 ENV FLT");
+      snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+    }
     return;
   }
-  displayMonoBassParam("D1 SNAP", "SNAP", knobValue);
+  // Normal drum mode — show snap transient level
+  snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
+  int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+  snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
 }
 
 // Case 6: D1 EQ/Body — becomes FILTER in MONOBASS and D1 Chroma modes
@@ -750,6 +758,11 @@ static void engineD1Snap(uint8_t idx, int knobValue) {
     return;  // no direct audio change; updateMonoBassEnvFilter() drives the filter
   }
 
+  if (d1ChromaMode) {
+    d1ChromaEnvFiltDepth = norm;
+    return;  // updateD1ChromaEnvFilter() drives the filter
+  }
+
   // Pitch snap depth increases with knob
   float pitchDepth = 0.60f + (0.40f * norm);
   float transientGain = 0.85f + (0.15f * norm);
@@ -780,6 +793,10 @@ static void engineD1Body(uint8_t idx, int knobValue) {
       // Cache base Hz for envelope filter; skip setting filter if env filter is active
       monoBass.envFiltBaseHz = cutoff;
       if (monoBass.envFiltDepth > 0.01f && monoBass.topKey() >= 0) return;
+    } else {
+      // d1ChromaMode: cache base Hz; skip direct write only when env filter is actively decaying
+      d1ChromaEnvFiltBaseHz = cutoff;
+      if (d1ChromaEnvFiltDepth > 0.01f && d1ChromaEnvFiltTrigger != 0) return;
     }
     AudioNoInterrupts();
     d1LowPass.frequency(cutoff);
@@ -997,7 +1014,9 @@ static void engineD2Noise(uint8_t idx, int knobValue) {
 
   } else {
     // Off
+    AudioNoInterrupts();
     d2VoiceMixer.gain(2, 0.0f);
+    AudioInterrupts();
   }
 }
 

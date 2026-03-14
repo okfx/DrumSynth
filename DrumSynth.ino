@@ -385,6 +385,11 @@ static inline float normalizeKnob(int rawKnobValue) {
 float d1BaseFreq = 100.0f;
 float d1FreqBeforeChroma = 100.0f;  // saved on D1 chroma entry, restored on exit
 
+// D1 chroma envelope filter state (snap knob repurposed, mirrors MONOBASS logic)
+float d1ChromaEnvFiltDepth = 0.0f;    // 0–1 from snap knob
+float d1ChromaEnvFiltBaseHz = 100.0f; // resting cutoff cached from body knob
+uint32_t d1ChromaEnvFiltTrigger = 0;  // sysTickMs of last D1 trigger in chroma mode
+
 void applyD1Freq() {
   AudioNoInterrupts();
   d1OscSine.frequency(d1BaseFreq);
@@ -893,6 +898,16 @@ void loop() {
     }
   }
 
+  // D1 chroma envelope filter decay — runs every 5ms when d1ChromaMode active.
+  // Guard: skip during MONOBASS — MONOBASS owns d1LowPass via its own env filter.
+  if (d1ChromaMode && !monoBass.active) {
+    static uint32_t lastChromaEnvFiltTick = 0;
+    if ((uint32_t)(loopNowTick - lastChromaEnvFiltTick) >= 5) {
+      lastChromaEnvFiltTick = loopNowTick;
+      updateD1ChromaEnvFilter(loopNowTick);
+    }
+  }
+
   // Expire accent preview and restore normal LEDs
   if (accentPreview.active) {
     if ((uint32_t)(loopNowTick - accentPreview.startTick) >= ACCENT_PREVIEW_DURATION_MS) {
@@ -1137,6 +1152,41 @@ void playSequenceCore(uint8_t step) {
   }
 }
 
+// Decay d1LowPass from its trigger peak back toward d1ChromaEnvFiltBaseHz.
+// Mirrors updateMonoBassEnvFilter() but uses D1 decay time as the tau source.
+// Call from loop() every ~5ms when d1ChromaMode is active.
+void updateD1ChromaEnvFilter(uint32_t nowMs) {
+  if (!d1ChromaMode) return;
+  if (d1ChromaEnvFiltDepth < 0.01f) return;
+
+  if (d1ChromaEnvFiltTrigger == 0) {
+    // No trigger yet — hold at resting cutoff so body-knob moves are heard.
+    AudioNoInterrupts();
+    d1LowPass.frequency(d1ChromaEnvFiltBaseHz);
+    d1LowPass.resonance(1.5f);
+    AudioInterrupts();
+    return;
+  }
+
+  uint32_t elapsed = nowMs - d1ChromaEnvFiltTrigger;
+  float tauMs = d1EffectiveDecay * 0.6f + 40.0f;
+  float decay = expf(-(float)elapsed / tauMs);
+
+  static constexpr float kEnvFiltCeiling = 5000.0f;
+  float peak = d1ChromaEnvFiltBaseHz
+             + d1ChromaEnvFiltDepth * (kEnvFiltCeiling - d1ChromaEnvFiltBaseHz);
+  if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
+  float cutoff = d1ChromaEnvFiltBaseHz + (peak - d1ChromaEnvFiltBaseHz) * decay;
+  if (cutoff < 20.0f) cutoff = 20.0f;
+
+  float resonance = 1.5f + 2.0f * d1ChromaEnvFiltDepth * decay;
+
+  AudioNoInterrupts();
+  d1LowPass.frequency(cutoff);
+  d1LowPass.resonance(resonance);
+  AudioInterrupts();
+}
+
 void triggerD1() {
   // Retrigger guard — uint32_t reads/writes are atomic on ARM Cortex-M7.
   // Called from main loop context via playSequenceCore().
@@ -1160,6 +1210,14 @@ void triggerD1() {
     d1AmpEnv.noteOn();
     d1PitchEnv.noteOn();
     d1Snap.noteOn();
+    if (d1ChromaMode && d1ChromaEnvFiltDepth > 0.01f) {
+      d1ChromaEnvFiltTrigger = sysTickMs;
+      float peak = d1ChromaEnvFiltBaseHz
+                 + d1ChromaEnvFiltDepth * (5000.0f - d1ChromaEnvFiltBaseHz);
+      if (peak > 5000.0f) peak = 5000.0f;
+      d1LowPass.frequency(peak);
+      d1LowPass.resonance(1.5f + 2.0f * d1ChromaEnvFiltDepth);
+    }
   }
   AudioInterrupts();
 }
@@ -1341,17 +1399,22 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
       d1HighPass.frequency(30.0f);
       d1HighPass.resonance(0.7f);
       AudioInterrupts();
-      applyKnobToEngine(6, analog[6]->getValue());  // switch Body to filter mode
+      applyKnobToEngine(6, analog[6]->getValue());  // switch Body to filter mode (sets d1ChromaEnvFiltBaseHz)
+      d1ChromaEnvFiltDepth = normalizeKnob(analog[5]->getValue());
+      d1ChromaEnvFiltTrigger = 0;
     } else {
       d1ChromaHeldStep = -1;
+      d1ChromaEnvFiltTrigger = 0;
       d1BaseFreq = d1FreqBeforeChroma;
       applyD1Freq();
-      // Restore drum HPF and Body EQ — but not during MONOBASS,
-      // which has its own HPF at 30 Hz that must not be overwritten.
+      // Restore drum HPF, Body EQ, and d1LowPass to drum defaults.
+      // Skip HPF override during MONOBASS (which holds it at 30 Hz).
       if (!monoBass.active) {
         AudioNoInterrupts();
         d1HighPass.frequency(85.0f);
         d1HighPass.resonance(2.0f);
+        d1LowPass.frequency(1800.0f);
+        d1LowPass.resonance(1.5f);
         AudioInterrupts();
       }
       applyKnobToEngine(6, analog[6]->getValue());  // restore normal EQ
@@ -1456,14 +1519,18 @@ static void btnPlayRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
 static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
   if (self.enteredMode) return;
   if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
+    if (monoBass.active) {
+      // WF chroma is force-enabled during MONOBASS — block toggle to avoid
+      // user changes being silently overwritten on exit (savedWfChroma restore).
+      self.enteredMode = true;
+      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF CHROMA");
+      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "LOCKED");
+      monoBass.paramShowStart = sysTickMs;
+      return;
+    }
     wfChromaMode = !wfChromaMode;
     self.enteredMode = true;
-    if (monoBass.active) {
-      // Route through MONOBASS scope overlay (normal overlay is suppressed)
-      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF CHROMA");
-      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", wfChromaMode ? "ON" : "OFF");
-      monoBass.paramShowStart = sysTickMs;
-    } else {
+    {
       snprintf(displayParameter1, sizeof(displayParameter1),
                wfChromaMode ? "WF CHROMA ON" : "WF CHROMA OFF");
       displayParameter2[0] = '\0';

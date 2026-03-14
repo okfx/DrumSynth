@@ -87,7 +87,7 @@ void audioInit() {
   d1PitchEnv.sustain(0.0f);
 
   // D1 amplitude envelope
-  d1AmpEnv.attack(1.5f);     // Library default — overridden in setup() after audioInit() with D1_ATTACK_MS
+  d1AmpEnv.attack(0.5f);      // Must match D1_ATTACK_MS (declared later in .ino, not visible here)
   d1AmpEnv.hold(2.5f);       // Library default — overridden per-trigger by cached params (see updateD1HoldCache)
   d1AmpEnv.decay(100.0f);
   d1AmpEnv.sustain(0.0f);
@@ -399,7 +399,7 @@ void audioInit() {
   masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
   // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
-  finalAmp.gain(5.0f);
+  finalAmp.gain(3.5f);
   usbTrim.gain(0.5f);
 
   // Master mixer (dry drums + wavefolder + delay return)

@@ -109,6 +109,12 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - Knob display: `displayDisabledInMonoBass()` helper replaces 16 duplicate "DISABLED FOR MONOBASS" blocks
 - Knob display: `displayD1Body()` filter cutoff formula deduplicated between MONOBASS and chroma paths
 - `accentModeFromKnob()` simplified from 14-case switch to sequential enum cast
+- **D1 Chroma envelope filter** -- Snap knob repurposed as envelope filter depth in D1 Chroma mode (same behavior as MONOBASS). Exponential decay from peak cutoff back to body knob base position, with resonance sweep.
+- **MONOBASS envelope filter** -- legato fallback now uses the same peak formula and resonance as the initial key press (was using a weaker multiplicative formula)
+- MONOBASS WF Chroma toggle locked during MONOBASS mode (shows "LOCKED") to prevent user changes from being silently overwritten on exit
+- `finalAmp` gain reduced from 5.0 to 3.5 to prevent DAC clipping on bright patches with high-shelf EQ boost
+- Audio thread safety: `AudioNoInterrupts()` guard added to `engineD2Noise` off-branch
+- D1 Body knob now responds immediately in Chroma mode when envelope filter is active but no note is decaying
 
 ## Changes (v1.03.1)
 

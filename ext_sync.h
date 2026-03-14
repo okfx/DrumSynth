@@ -455,8 +455,8 @@ void updateExtBpmDisplay() {
   noInterrupts();
   uint32_t emaCopy = extIntervalEMA;
   uint32_t lastPCopy = lastPulseMicros;
-  uint8_t ppqnCopy = ppqn;  // snapshot inside critical section — ppqn is volatile (main loop writes)
   interrupts();
+  uint8_t ppqnCopy = ppqn;  // main-loop only — no critical section needed
 
   // Show ext BPM if we've received pulses recently (within timeout)
   if (lastPCopy != 0 && (micros() - lastPCopy) < EXT_TIMEOUT_US && emaCopy > 0) {

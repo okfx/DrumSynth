@@ -287,14 +287,15 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       applyD1Freq();
       triggerD1();
       monoBass.noteShowStart = sysTickMs;
-      // Envelope filter: re-trigger on legato fallback
+      // Envelope filter: re-trigger on legato fallback (same formula as press)
       monoBass.envFiltTrigger = sysTickMs;
       if (monoBass.envFiltDepth > 0.01f) {
-        float peak = monoBass.envFiltBaseHz * (1.0f + 3.0f * monoBass.envFiltDepth);
-        if (peak > 6000.0f) peak = 6000.0f;
+        float peak = monoBass.envFiltBaseHz
+                   + monoBass.envFiltDepth * (5000.0f - monoBass.envFiltBaseHz);
+        if (peak > 5000.0f) peak = 5000.0f;
         AudioNoInterrupts();
         d1LowPass.frequency(peak);
-        d1LowPass.resonance(1.5f);
+        d1LowPass.resonance(1.5f + 2.0f * monoBass.envFiltDepth);
         AudioInterrupts();
       }
       for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
@@ -388,8 +389,7 @@ static inline void monoBassOutlinedCenter(const char* text, int y, uint8_t textS
 }
 
 // Render MONOBASS overlay in scope area (note, param, or octave).
-// Draws on top of scope waveform using outlined text. Always returns false
-// so the oscilloscope continues to render behind.
+// Draws on top of scope waveform using outlined text.
 void renderMonoBassScope(uint32_t nowMs) {
   if (!monoBass.active) return;
 
