@@ -104,6 +104,41 @@ static constexpr uint32_t D3_CHROMA_LONG_PRESS_MS = 1500;
 bool wfChromaMode = false;
 static constexpr uint32_t WF_CHROMA_LONG_PRESS_MS = 1500;
 
+// Chroma dot animation — progressive ramp during hold (0.5s-1.5s), quick
+// settle on release.  Hash-based pixel scatter fills an 8×8 checkerboard
+// over 1 second as a "you can let go" cue, then shrinks to 6×6 on release.
+enum ChromaAnimPhase : uint8_t {
+  CHROMA_ANIM_NONE = 0,
+  CHROMA_ANIM_RAMPING,    // 0.5s-1.5s: progressive pixel fill during hold
+  CHROMA_ANIM_SETTLING    // on release: 8×8 → 6×6 shrink (or disappear)
+};
+
+static int8_t chromaAnimDot = -1;
+static ChromaAnimPhase chromaAnimPhase = CHROMA_ANIM_NONE;
+static uint32_t chromaAnimStart = 0;
+static bool chromaAnimAppearing = true;
+static constexpr uint32_t CHROMA_RAMP_MS   = 1000;  // 0.5s to 1.5s = 1s ramp
+static constexpr uint32_t CHROMA_SETTLE_MS = 80;    // shrink duration on release
+static constexpr uint32_t CHROMA_RAMP_DELAY_MS = 500;  // hold time before ramp starts
+
+// MONOBASS text pixel-scatter animation — plays during D1 hold from 2s-5s.
+// Entering: "MONOBASS" text pixels randomly appear over 3 seconds.
+// Exiting:  "MONOBASS" text pixels randomly dissolve over 3 seconds.
+enum MonoAnimPhase : uint8_t {
+  MONO_ANIM_NONE = 0,
+  MONO_ANIM_ENTERING,
+  MONO_ANIM_EXITING
+};
+
+static MonoAnimPhase monoAnimPhase = MONO_ANIM_NONE;
+static uint32_t monoAnimStart = 0;
+static constexpr uint32_t MONO_ANIM_DELAY_MS    = 2000;  // hold time before text anim
+static constexpr uint32_t MONO_ANIM_DURATION_MS = 3000;  // 2s to 5s = 3s
+
+static void startChromaRamp(uint8_t dotIndex, bool appearing);
+static void startChromaSettle();
+static void cancelChromaAnim();
+
 static constexpr uint32_t CHROMA_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t d1ChromaHeldStep = -1;  // Which step button is held (-1 = none)
 int8_t d2ChromaHeldStep = -1;  // Which step is in D2 chroma note-select (-1 = none)
@@ -160,6 +195,25 @@ IntervalTimer sysTickTimer;
 IntervalTimer stepTimer;
 
 volatile uint32_t sysTickMs = 0;  // Written by sysTickISR, read by main loop
+
+// Chroma dot animation helpers — placed here because sysTickMs must be declared first.
+static void startChromaRamp(uint8_t dotIndex, bool appearing) {
+  chromaAnimDot = dotIndex;
+  chromaAnimPhase = CHROMA_ANIM_RAMPING;
+  chromaAnimStart = sysTickMs;
+  chromaAnimAppearing = appearing;
+}
+
+static void startChromaSettle() {
+  if (chromaAnimDot < 0) return;
+  chromaAnimPhase = CHROMA_ANIM_SETTLING;
+  chromaAnimStart = sysTickMs;
+}
+
+static void cancelChromaAnim() {
+  chromaAnimDot = -1;
+  chromaAnimPhase = CHROMA_ANIM_NONE;
+}
 
 // bpm: main-loop only — not accessed from any ISR. rearmStepTimer() is only
 // called from setTransport() and setup(), both main-loop context.
@@ -1370,48 +1424,54 @@ struct ButtonHandler {
   void (*onHoldCheck)(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs);
 };
 
-// --- D1 button (index 0): short=selectD1, hold 1.5s=chroma, hold 6s=MONOBASS ---
+// --- D1 button (index 0): short=selectD1, hold 1.5s=chroma, hold 5s=MONOBASS ---
 //
-// Chroma toggle is deferred to release so that continuing to hold past 6s
-// for MONOBASS does not also fire the chroma toggle.
+// Chroma toggle deferred to release.  Progressive animations during hold:
+//   0.5s: chroma dot ramp begins (1s gradual pixel fill)
+//   1.5s: chroma threshold crossed (ramp complete)
+//   2.0s: MONOBASS text pixel-scatter begins (3s random reveal/dissolve)
+//   5.0s: MONOBASS mode enters/exits
+//
 //   enteredMode  = held past D1_CHROMA_LONG_PRESS_MS (chroma pending)
 //   enteredMode2 = MONOBASS fired; chroma toggle suppressed on release
 
 static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
-  self.enteredMode = false;   // chroma threshold crossed
-  self.enteredMode2 = false;  // MONOBASS fired
+  self.enteredMode = false;
+  self.enteredMode2 = false;
+  monoAnimPhase = MONO_ANIM_NONE;
 }
 
 static void btnD1Release(ButtonHandler& self, uint32_t nowTick) {
+  monoAnimPhase = MONO_ANIM_NONE;
+
   if (!self.enteredMode && !self.enteredMode2 && !monoBass.active) {
     // Short press: select track
+    cancelChromaAnim();
     selectTrack(TRACK_D1);
   } else if (self.enteredMode && !self.enteredMode2) {
-    // Chroma hold released before MONOBASS — perform the deferred toggle now
+    // Chroma hold released before MONOBASS — settle animation + toggle
+    startChromaSettle();
     d1ChromaMode = !d1ChromaMode;
     if (d1ChromaMode) {
       d1FreqBeforeChroma = d1BaseFreq;
       selectTrack(TRACK_D1);
-      // Lower HPF to pass bass fundamentals (C2 = 65 Hz, normal HPF at 85 Hz kills it)
       AudioNoInterrupts();
       d1HighPass.frequency(30.0f);
       d1HighPass.resonance(0.7f);
       AudioInterrupts();
-      applyKnobToEngine(6, analog[6]->getValue());  // switch Body to filter mode (sets d1ChromaEnvFiltBaseHz)
+      applyKnobToEngine(6, analog[6]->getValue());
       float snapNorm = normalizeKnob(analog[5]->getValue());
-      d1ChromaEnvFiltDepth = snapNorm * snapNorm;  // square curve, matches engineD1Snap
+      d1ChromaEnvFiltDepth = snapNorm * snapNorm;
       d1ChromaEnvFiltTrigger = 0;
       AudioNoInterrupts();
-      d1VoiceMixer.gain(1, 0.20f);  // reduce snap transient to 20% in chroma mode
+      d1VoiceMixer.gain(1, 0.20f);
       AudioInterrupts();
     } else {
       d1ChromaHeldStep = -1;
       d1ChromaEnvFiltTrigger = 0;
       d1BaseFreq = d1FreqBeforeChroma;
       applyD1Freq();
-      // Restore drum HPF, Body EQ, and d1LowPass to drum defaults.
-      // Skip HPF override during MONOBASS (which holds it at 30 Hz).
       if (!monoBass.active) {
         AudioNoInterrupts();
         d1HighPass.frequency(85.0f);
@@ -1420,32 +1480,42 @@ static void btnD1Release(ButtonHandler& self, uint32_t nowTick) {
         d1LowPass.resonance(1.5f);
         AudioInterrupts();
       }
-      applyKnobToEngine(5, analog[5]->getValue());  // restore snap transient gain
-      applyKnobToEngine(6, analog[6]->getValue());  // restore normal EQ
+      applyKnobToEngine(5, analog[5]->getValue());
+      applyKnobToEngine(6, analog[6]->getValue());
     }
-    // State indicated by chroma dots — no text overlay needed
+  } else if (self.enteredMode2) {
+    // MONOBASS was fired — cancel any lingering chroma animation
+    cancelChromaAnim();
   }
   self.enteredMode = false;
   self.enteredMode2 = false;
 }
 
 static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  // Tier 1: mark chroma threshold crossed — actual toggle deferred to release
+  // Tier 0: start chroma dot ramp at 0.5s
+  if (!self.enteredMode && heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
+    startChromaRamp(0, !d1ChromaMode);
+  }
+  // Tier 1: chroma threshold at 1.5s (ramp should be complete)
   if (!self.enteredMode && heldMs >= D1_CHROMA_LONG_PRESS_MS) {
     self.enteredMode = true;
   }
-  // Tier 2: MONOBASS at 6s — fires immediately; suppresses chroma toggle on release
+  // Tier 1.5: start MONOBASS text pixel-scatter at 2s
+  if (self.enteredMode && !self.enteredMode2
+      && heldMs >= MONO_ANIM_DELAY_MS && monoAnimPhase == MONO_ANIM_NONE) {
+    monoAnimPhase = monoBass.active ? MONO_ANIM_EXITING : MONO_ANIM_ENTERING;
+    monoAnimStart = nowTick;
+  }
+  // Tier 2: MONOBASS at 5s — fires immediately; suppresses chroma toggle
   if (!self.enteredMode2 && heldMs >= D1_MONOBASS_LONG_PRESS_MS) {
     self.enteredMode2 = true;
+    monoAnimPhase = MONO_ANIM_NONE;
+    cancelChromaAnim();
     if (!monoBass.active) {
       enterMonoBassMode();
     } else {
       exitMonoBassMode();
     }
-    snprintf(displayParameter1, sizeof(displayParameter1),
-             monoBass.active ? "MONOBASS ON" : "MONOBASS OFF");
-    displayParameter2[0] = '\0';
-    parameterOverlayStartTick = nowTick;
     updateLEDs();
   }
 }
@@ -1460,22 +1530,29 @@ static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
 
 static void btnD2Release(ButtonHandler& self, uint32_t /*nowTick*/) {
   if (monoBass.active) return;
-  if (!self.enteredMode) selectTrack(TRACK_D2);
-  self.enteredMode = false;
-}
-
-static void btnD2Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  if (monoBass.active || self.enteredMode) return;
-  if (heldMs >= D2_CHROMA_LONG_PRESS_MS) {
+  if (!self.enteredMode) {
+    cancelChromaAnim();
+    selectTrack(TRACK_D2);
+  } else {
+    startChromaSettle();
     d2ChromaMode = !d2ChromaMode;
-    self.enteredMode = true;
     if (d2ChromaMode) {
       selectTrack(TRACK_D2);
     } else {
       d2ChromaHeldStep = -1;
     }
     applyKnobToEngine(8, analog[8]->getValue());
-    // State indicated by chroma dots — no text overlay needed
+  }
+  self.enteredMode = false;
+}
+
+static void btnD2Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
+  if (monoBass.active || self.enteredMode) return;
+  if (heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
+    startChromaRamp(1, !d2ChromaMode);
+  }
+  if (heldMs >= D2_CHROMA_LONG_PRESS_MS) {
+    self.enteredMode = true;
   }
 }
 
@@ -1489,22 +1566,29 @@ static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
 
 static void btnD3Release(ButtonHandler& self, uint32_t /*nowTick*/) {
   if (monoBass.active) return;
-  if (!self.enteredMode) selectTrack(TRACK_D3);
-  self.enteredMode = false;
-}
-
-static void btnD3Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  if (monoBass.active || self.enteredMode) return;
-  if (heldMs >= D3_CHROMA_LONG_PRESS_MS) {
+  if (!self.enteredMode) {
+    cancelChromaAnim();
+    selectTrack(TRACK_D3);
+  } else {
+    startChromaSettle();
     d3ChromaMode = !d3ChromaMode;
-    self.enteredMode = true;
     if (d3ChromaMode) {
       selectTrack(TRACK_D3);
     } else {
       d3ChromaHeldStep = -1;
     }
     applyKnobToEngine(16, analog[16]->getValue());
-    // State indicated by chroma dots — no text overlay needed
+  }
+  self.enteredMode = false;
+}
+
+static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
+  if (monoBass.active || self.enteredMode) return;
+  if (heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
+    startChromaRamp(2, !d3ChromaMode);
+  }
+  if (heldMs >= D3_CHROMA_LONG_PRESS_MS) {
+    self.enteredMode = true;
   }
 }
 
@@ -1516,25 +1600,30 @@ static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
 }
 
 static void btnPlayRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (!self.enteredMode && !monoBass.active) handlePlayStop();
+  if (!self.enteredMode && !monoBass.active) {
+    cancelChromaAnim();
+    handlePlayStop();
+  } else if (self.enteredMode && !monoBass.active) {
+    startChromaSettle();
+    wfChromaMode = !wfChromaMode;
+  }
   self.enteredMode = false;
 }
 
-static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+static void btnPlayHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
   if (self.enteredMode) return;
-  if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
-    if (monoBass.active) {
-      // WF chroma is force-enabled during MONOBASS — block toggle to avoid
-      // user changes being silently overwritten on exit (savedWfChroma restore).
-      self.enteredMode = true;
-      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF CHROMA");
-      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "LOCKED");
-      monoBass.paramShowStart = sysTickMs;
-      return;
-    }
-    wfChromaMode = !wfChromaMode;
+  if (monoBass.active && heldMs >= WF_CHROMA_LONG_PRESS_MS) {
     self.enteredMode = true;
-    // State indicated by chroma dots — no text overlay needed
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF CHROMA");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "LOCKED");
+    monoBass.paramShowStart = sysTickMs;
+    return;
+  }
+  if (heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
+    startChromaRamp(3, !wfChromaMode);
+  }
+  if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
+    self.enteredMode = true;
   }
 }
 
@@ -2317,8 +2406,9 @@ bool isSafeToPushOled(uint32_t nowMs) {
 // Top bar: BPM/EXT, track digit, choke, MEM slot, transport icon.
 void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
                   uint8_t slotSnap, bool playingSnap) {
-  // MONOBASS mode: replace entire toolbar with centered "MONOBASS" text
-  if (monoBass.active) {
+  // MONOBASS mode: replace entire toolbar with centered "MONOBASS" text.
+  // Skip when exit dissolve animation is running — renderMonoTextAnim owns the text.
+  if (monoBass.active && monoAnimPhase != MONO_ANIM_EXITING) {
     display.setTextSize(2);
     int16_t x1, y1;
     uint16_t w, h;
@@ -2328,6 +2418,7 @@ void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
     display.setTextSize(1);
     return;
   }
+  if (monoBass.active) return;  // exit dissolve active — skip normal toolbar too
 
   // BPM / EXT clock state
   display.setCursor(0, 0);
@@ -2426,34 +2517,137 @@ bool renderChromaNoteSelect() {
 }
 
 // Chroma dot indicator — bottom bar dots for active chroma channels.
+// Animation phases:
+//   RAMPING (0.5s-1.5s hold): hash-based progressive pixel fill of 8×8 checkerboard
+//   SETTLING (on release):    quick 8×8 → 6×6 shrink (appear) or dissolve (disappear)
 void renderChromaDots() {
   // All dots suppressed during MONOBASS — WF chroma is always on there and the
   // idle grid / scope uses the full display area without room for the dot bar.
   if (monoBass.active) return;
-  bool showD1 = d1ChromaMode;
-  bool showD2 = d2ChromaMode;
-  bool showD3 = d3ChromaMode;
-  bool showWF = wfChromaMode;
-  if (!showD1 && !showD2 && !showD3 && !showWF) return;
 
   const bool chromaActive[4] = {
-    showD1, showD2, showD3, showWF
+    d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode
   };
   const int dotCenters[4] = { 16, 48, 80, 112 };
-  const int dotSize = 4;
-  const int padSize = dotSize + 2;  // 1px black border around each dot
-  const int dotY = 59;
-  const int padY = dotY - 1;
+  static constexpr int kSteadySize = 6;
+  static constexpr int kClearSize = 10;
+  static constexpr int kCenterY = 60;
+
+  bool animActive = (chromaAnimDot >= 0 && chromaAnimPhase != CHROMA_ANIM_NONE);
+  uint32_t animElapsed = animActive ? (sysTickMs - chromaAnimStart) : 0;
+
+  // Auto-expire settling animation
+  if (animActive && chromaAnimPhase == CHROMA_ANIM_SETTLING
+      && animElapsed >= CHROMA_SETTLE_MS) {
+    cancelChromaAnim();
+    animActive = false;
+  }
+
+  // Early exit if no dots active and no animation running
+  if (!chromaActive[0] && !chromaActive[1] && !chromaActive[2]
+      && !chromaActive[3] && !animActive) return;
 
   for (int i = 0; i < 4; i++) {
-    if (chromaActive[i]) {
-      // Clear only behind this dot (not a full-width strip)
-      int px = dotCenters[i] - padSize / 2;
-      display.fillRect(px, padY, padSize, padSize, SH110X_BLACK);
-      int dx = dotCenters[i] - dotSize / 2;
-      display.fillRect(dx, dotY, dotSize, dotSize, SH110X_WHITE);
+    int cx = dotCenters[i];
+
+    if (animActive && i == chromaAnimDot) {
+      // Clear area around dot
+      display.fillRect(cx - kClearSize / 2, kCenterY - kClearSize / 2,
+                       kClearSize, kClearSize, SH110X_BLACK);
+
+      if (chromaAnimPhase == CHROMA_ANIM_RAMPING) {
+        // Progressive fill over CHROMA_RAMP_MS (1 second)
+        float progress = (float)animElapsed / (float)CHROMA_RAMP_MS;
+        if (progress > 1.0f) progress = 1.0f;
+        uint8_t threshold = (uint8_t)(progress * 255.0f);
+
+        if (chromaAnimAppearing) {
+          // Pixels scatter in over checkerboard positions → full checkerboard at 100%
+          for (int py = kCenterY - 4; py < kCenterY + 4; py++) {
+            for (int px = cx - 4; px < cx + 4; px++) {
+              if ((px + py) % 2 != 0) continue;  // checkerboard only
+              uint8_t h = (uint8_t)((px * 7 + py * 13 + px * py * 3) & 0xFF);
+              if (h <= threshold)
+                display.drawPixel(px, py, SH110X_WHITE);
+            }
+          }
+        } else {
+          // Disappearing: start with steady 6×6, progressively erase pixels
+          display.fillRect(cx - 3, kCenterY - 3, kSteadySize, kSteadySize, SH110X_WHITE);
+          for (int py = kCenterY - 3; py < kCenterY + 3; py++) {
+            for (int px = cx - 3; px < cx + 3; px++) {
+              uint8_t h = (uint8_t)((px * 7 + py * 13 + px * py * 3) & 0xFF);
+              if (h <= threshold)
+                display.drawPixel(px, py, SH110X_BLACK);
+            }
+          }
+        }
+      } else {
+        // SETTLING phase — quick transition on release
+        if (chromaAnimAppearing) {
+          // Shrink: checkerboard 8×8 → hollow 6×6 (white border, black center)
+          float t = (float)animElapsed / (float)CHROMA_SETTLE_MS;
+          if (t > 1.0f) t = 1.0f;
+          int halfSize = 4 - (int)(t + 0.5f);  // 4 → 3
+          if (halfSize < 3) halfSize = 3;
+          display.fillRect(cx - halfSize, kCenterY - halfSize,
+                           halfSize * 2, halfSize * 2, SH110X_WHITE);
+          if (halfSize <= 3) {
+            // Punch out center for hollow look
+            display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
+          }
+        }
+        // Disappearing settle: area already cleared, nothing to draw
+      }
+    } else if (chromaActive[i]) {
+      // Steady state: hollow 6×6 (white border, black center = "toggle on")
+      display.fillRect(cx - 4, kCenterY - 4, kSteadySize + 2, kSteadySize + 2, SH110X_BLACK);
+      display.fillRect(cx - 3, kCenterY - 3, kSteadySize, kSteadySize, SH110X_WHITE);
+      display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
     }
   }
+}
+
+// MONOBASS text pixel-scatter animation — renders "MONOBASS" with random pixel
+// reveal (entering) or dissolve (exiting) over the display.  Uses draw-then-erase:
+// text is rendered fully, then pixels not yet revealed are cleared to black.
+void renderMonoTextAnim() {
+  if (monoAnimPhase == MONO_ANIM_NONE) return;
+
+  uint32_t elapsed = sysTickMs - monoAnimStart;
+  if (elapsed >= MONO_ANIM_DURATION_MS) return;
+
+  float progress = (float)elapsed / (float)MONO_ANIM_DURATION_MS;
+  uint8_t threshold = (uint8_t)(progress * 255.0f);
+
+  // "MONOBASS" at textSize 2: 8 chars × 12px = 96px wide, 16px tall
+  // Matches the top-bar title in renderTopBar() (textSize 2, y=2, centered)
+  static constexpr int kTextW = 96;
+  static constexpr int kTextH = 16;
+  static constexpr int kTextX = (128 - kTextW) / 2;  // 16
+  static constexpr int kTextY = 2;
+
+  // Clear text region and draw the full text
+  display.fillRect(kTextX, kTextY, kTextW, kTextH, SH110X_BLACK);
+  display.setTextSize(2);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(kTextX, kTextY);
+  display.print("MONOBASS");
+
+  // Selectively erase pixels based on hash and progress
+  for (int py = kTextY; py < kTextY + kTextH; py++) {
+    for (int px = kTextX; px < kTextX + kTextW; px++) {
+      uint8_t h = (uint8_t)((px * 17 + py * 31 + (px ^ py) * 7) & 0xFF);
+      if (monoAnimPhase == MONO_ANIM_ENTERING) {
+        if (h > threshold)
+          display.drawPixel(px, py, SH110X_BLACK);
+      } else {
+        if (h <= threshold)
+          display.drawPixel(px, py, SH110X_BLACK);
+      }
+    }
+  }
+  display.setTextSize(1);
 }
 
 // Parameter overlay — bottom text or voice rails.
@@ -2634,6 +2828,9 @@ void updateDisplay() {
     // only draw them when the overlay is not visible.
     renderChromaDots();
   }
+
+  // MONOBASS text pixel-scatter overlay (during D1 hold, 2s-5s)
+  renderMonoTextAnim();
 
   // Fire any steps queued during framebuffer drawing, before the
   // blocking SPI transfer adds another 15-25ms of latency.

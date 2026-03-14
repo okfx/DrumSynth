@@ -17,7 +17,7 @@
 //  Constants
 // ============================================================================
 
-static constexpr uint32_t D1_MONOBASS_LONG_PRESS_MS  = 4000;
+static constexpr uint32_t D1_MONOBASS_LONG_PRESS_MS  = 5000;
 static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS    = 1200;
 static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1200;
 static constexpr uint32_t MONOBASS_NOTE_DISPLAY_MS   = 1200;
@@ -405,7 +405,8 @@ void renderMonoBassScope(uint32_t nowMs) {
   if (monoBass.showOctave && (nowMs - monoBass.octaveShowStart < MONOBASS_OCT_DISPLAY_MS)) {
     char octLabel[8];
     snprintf(octLabel, sizeof(octLabel), "OCT %d", monoBass.octave + 2);
-    monoBassOutlinedCenter("MONOBASS", 24, 1);
+    if (monoAnimPhase != MONO_ANIM_EXITING)
+      monoBassOutlinedCenter("MONOBASS", 24, 1);
     monoBassOutlinedCenter(octLabel, 37, 2);
     return;
   }
