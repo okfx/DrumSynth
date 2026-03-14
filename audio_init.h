@@ -352,6 +352,10 @@ void audioInit() {
   d3Perc.frequency(700.0f);
   d3Perc.length(15.0f);
 
+  // Perc dedicated low-pass filter (AudioFilterStateVariable, lowpass output)
+  d3PercFilter.frequency(6000.0f);   // open at boot — knob overrides from EEPROM
+  d3PercFilter.resonance(0.8f);
+
   // --- D3 output mixing ---
 
   d3WfOsc.begin(0.0f, 400.0f, WAVEFORM_SINE);  // fold-depth modulator — off at boot, knob 19 sets amplitude + freq
@@ -366,8 +370,8 @@ void audioInit() {
   d3MasterMixer.gain(1, 0.0f);   // d3Wavefolder (wet) — off at boot, knob 19 enables
   // inputs 2–3: unconnected
 
-  // D3 master filter
-  d3MasterFilter.frequency(8000.0f);   // mostly open at boot (knob overrides from EEPROM)
+  // D3 master filter (1200–12000 Hz range, controlled by D3 Filter knob)
+  d3MasterFilter.frequency(12000.0f);  // open at boot (knob overrides from EEPROM)
   d3MasterFilter.resonance(0.4f);
 
   // ============================================================================

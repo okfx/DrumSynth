@@ -254,9 +254,17 @@ static void displayD1Volume(uint8_t idx, int knobValue) {
   displayMonoBassParam("D1 VOLUME", "VOLUME", knobValue);
 }
 
-// Case 5: D1 Snap
+// Case 5: D1 Snap (repurposed as Attack in MONOBASS mode)
 static void displayD1Snap(uint8_t idx, int knobValue) {
   (void)idx;
+  if (monoBass.active) {
+    float norm = normalizeKnob(knobValue);
+    float attackMs = 0.5f * expf(norm * 4.605f);  // 0.5–50 ms
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "ATTACK");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d ms", (int)(attackMs + 0.5f));
+    monoBass.paramShowStart = sysTickMs;
+    return;
+  }
   displayMonoBassParam("D1 SNAP", "SNAP", knobValue);
 }
 
@@ -266,9 +274,9 @@ static void displayD1Body(uint8_t idx, int knobValue) {
   if (monoBass.active || d1ChromaMode) {
     // Filter mode: compute cutoff (same formula as engine, without pitch tracking)
     float norm = normalizeKnob(knobValue);
-    float cutoff = 80.0f * expf(norm * 4.317f);
-    if (cutoff > 6000.0f) cutoff = 6000.0f;
-    if (cutoff < 100.0f)  cutoff = 100.0f;   // match engine floor
+    float cutoff = 40.0f * expf(norm * 4.605f);  // 40–4000 Hz
+    if (cutoff > 4000.0f) cutoff = 4000.0f;
+    if (cutoff < 40.0f)   cutoff = 40.0f;
     if (monoBass.active) {
       snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "FILTER");
       snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d Hz", (int)cutoff);
@@ -736,6 +744,15 @@ static void engineD1Snap(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
 
+  if (monoBass.active) {
+    // Repurposed as attack control: 0.5–50 ms exponential
+    float attackMs = 0.5f * expf(norm * 4.605f);  // ln(50/0.5) ≈ 4.605
+    AudioNoInterrupts();
+    d1AmpEnv.attack(attackMs);
+    AudioInterrupts();
+    return;
+  }
+
   // Pitch snap depth increases with knob
   float pitchDepth = 0.60f + (0.40f * norm);
   float transientGain = 0.85f + (0.15f * norm);
@@ -752,19 +769,19 @@ static void engineD1Body(uint8_t idx, int knobValue) {
   float norm = normalizeKnob(knobValue);
 
   if (monoBass.active || d1ChromaMode) {
-    // Moog-style LPF sweep: 80 Hz – 6000 Hz exponential, with pitch tracking.
+    // Moog-style LPF sweep: 40–4000 Hz exponential, with gentle pitch tracking.
     // Uses d1LowPass (AudioFilterStateVariable) as the sweep filter.
-    // Resonance at 1.8 gives a conspicuous but stable Moog-like peak.
-    float baseCutoff = 80.0f * expf(norm * 4.317f);  // ln(6000/80) ≈ 4.317
-    // Pitch tracking: shift cutoff up proportionally to playing frequency
-    // so the filter opens with higher notes (classic Moog behavior)
+    float baseCutoff = 40.0f * expf(norm * 4.605f);  // ln(4000/40) ≈ 4.605
+    // Pitch tracking: shift cutoff proportionally to playing frequency
+    // so the filter opens with higher notes (classic Moog behavior).
+    // Softened ratio (0.6 + 0.4×) keeps low octaves usable.
     float trackRatio = d1BaseFreq / 65.41f;  // ratio relative to C2
-    float cutoff = baseCutoff * (0.5f + 0.5f * trackRatio);
-    if (cutoff > 8000.0f) cutoff = 8000.0f;
-    if (cutoff < 100.0f)  cutoff = 100.0f;
+    float cutoff = baseCutoff * (0.6f + 0.4f * trackRatio);
+    if (cutoff > 6000.0f) cutoff = 6000.0f;
+    if (cutoff < 20.0f)   cutoff = 20.0f;
     AudioNoInterrupts();
     d1LowPass.frequency(cutoff);
-    d1LowPass.resonance(1.8f);
+    d1LowPass.resonance(1.5f);
     AudioInterrupts();
     return;
   }
@@ -1206,9 +1223,14 @@ static void engineD3Filter(uint8_t idx, int knobValue) {
   // Resonance: gentle bump at low cutoffs for volume compensation, clean when open
   float resonance = 0.35f + 0.15f * (1.0f - norm);  // 0.50 -> 0.35
 
+  // Perc voice filter: lower range to match perc's frequency band (300–6000 Hz)
+  float percCutoff = 300.0f * expf(norm * 2.996f);  // ln(6000/300) ≈ 2.996
+
   AudioNoInterrupts();
   d3MasterFilter.frequency(cutoffHz);
   d3MasterFilter.resonance(resonance);
+  d3PercFilter.frequency(percCutoff);
+  d3PercFilter.resonance(0.8f);
   AudioInterrupts();
 }
 

@@ -1978,7 +1978,7 @@ static inline float d2DecayCurve(int knobValue) {
 // D3 Filter curve: 800–7500 Hz exponential (log-spaced for natural feel)
 static inline float d3FilterCurve(int knobValue) {
   float norm = normalizeKnob(knobValue);
-  return 800.0f * expf(norm * 2.239f);  // ln(7500/800) ≈ 2.239
+  return 1200.0f * expf(norm * 2.303f);  // ln(12000/1200) ≈ 2.303
 }
 
 // BPM curve: 60–400 (first 85%) then 900–999 (remaining 15%, hyperspeed), rounded to 0.5

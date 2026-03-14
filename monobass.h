@@ -39,6 +39,7 @@ struct MonoBassState {
   uint32_t paramShowStart = 0;  // when param display started
   uint32_t noteShowStart = 0;   // when note display was triggered
   bool savedWfChroma = false;   // wfChromaMode state before entering MONOBASS
+  uint32_t modeEnteredAt = 0;   // sysTickMs when MONOBASS was entered (for splash grid)
 
   // Last-note-priority key stack for polyphonic trill
   int8_t heldKeys[kMaxHeldKeys];
@@ -97,6 +98,7 @@ extern bool monoBassKeyEvent;
 // Enter MONOBASS mode: stop transport, configure gate envelope.
 void enterMonoBassMode() {
   monoBass.active = true;
+  monoBass.modeEnteredAt = sysTickMs;
   saveMonoBassStatusToEEPROM(true);
   // Force wavefolder into chroma mode (save previous state for exit)
   monoBass.savedWfChroma = wfChromaMode;
@@ -134,7 +136,10 @@ void enterMonoBassMode() {
   d1EQ.setNotch(0, 600.0f, 0.5f);          // mild notch — tames boxiness
   d1EQ.setHighShelf(1, 2000.0f, 0.0f, 1.0f); // flat shelf — no cut
   d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
+  d1VoiceMixer.gain(1, 0.0f);  // mute snap transient — knob 5 becomes attack
   AudioInterrupts();
+  // Apply snap knob as attack control (reads current knob position)
+  applyKnobToEngine(5, analog[5]->getValue());
   // Light first 12 LEDs as usable-key indicators (12 notes per octave)
   for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
   ledShiftReg.updateRegisters();
@@ -170,6 +175,8 @@ void exitMonoBassMode() {
   // enterMonoBassMode() flattened these stages — without this, the kick's EQ
   // stays flat until the user physically moves knob 6.
   applyKnobToEngine(6, analog[6]->getValue());
+  // Re-apply snap knob to restore snap transient (was repurposed as attack)
+  applyKnobToEngine(5, analog[5]->getValue());
 }
 
 // ============================================================================
@@ -358,8 +365,8 @@ void renderMonoBassScope(uint32_t nowMs) {
   // Priority 4: note still playing → let scope waveform show through
   if (monoBass.topKey() >= 0) return;
 
-  // Priority 5: idle — no note, no overlays → draw knob reference grid
-  renderMonoBassIdleGrid();
+  // Priority 5: idle — show knob reference grid for 4 seconds after mode entry
+  if (nowMs - monoBass.modeEnteredAt < 4000) renderMonoBassIdleGrid();
 }
 
 #endif // MONOBASS_H
