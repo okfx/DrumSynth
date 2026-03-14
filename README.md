@@ -121,6 +121,8 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - Envelope filter minimum sweep time clamped to 100ms so the wah is always audible on short-decay kicks
 - Envelope filter depth knob uses a square curve — sweet spot is in the mid-range, full sweep still accessible at top
 - D1 Chroma snap transient reduced to 20% on chroma entry, restored to knob position on exit
+- D1 chroma toggle deferred to button release so holding past 6s for MONOBASS no longer also fires the chroma toggle
+- Chroma mode text overlays removed — state is already indicated by the dot indicators at the bottom of the display
 
 ## Changes (v1.03.1)
 

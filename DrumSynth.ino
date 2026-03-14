@@ -1371,26 +1371,25 @@ struct ButtonHandler {
 };
 
 // --- D1 button (index 0): short=selectD1, hold 1.5s=chroma, hold 6s=MONOBASS ---
+//
+// Chroma toggle is deferred to release so that continuing to hold past 6s
+// for MONOBASS does not also fire the chroma toggle.
+//   enteredMode  = held past D1_CHROMA_LONG_PRESS_MS (chroma pending)
+//   enteredMode2 = MONOBASS fired; chroma toggle suppressed on release
 
 static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
-  self.enteredMode = false;   // chroma
-  self.enteredMode2 = false;  // MONOBASS
+  self.enteredMode = false;   // chroma threshold crossed
+  self.enteredMode2 = false;  // MONOBASS fired
 }
 
-static void btnD1Release(ButtonHandler& self, uint32_t /*nowTick*/) {
+static void btnD1Release(ButtonHandler& self, uint32_t nowTick) {
   if (!self.enteredMode && !self.enteredMode2 && !monoBass.active) {
+    // Short press: select track
     selectTrack(TRACK_D1);
-  }
-  self.enteredMode = false;
-  self.enteredMode2 = false;
-}
-
-static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  // Tier 1: CHROMA at 1.5s
-  if (!self.enteredMode && !self.enteredMode2 && heldMs >= D1_CHROMA_LONG_PRESS_MS) {
+  } else if (self.enteredMode && !self.enteredMode2) {
+    // Chroma hold released before MONOBASS — perform the deferred toggle now
     d1ChromaMode = !d1ChromaMode;
-    self.enteredMode = true;
     if (d1ChromaMode) {
       d1FreqBeforeChroma = d1BaseFreq;
       selectTrack(TRACK_D1);
@@ -1424,12 +1423,18 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
       applyKnobToEngine(5, analog[5]->getValue());  // restore snap transient gain
       applyKnobToEngine(6, analog[6]->getValue());  // restore normal EQ
     }
-    snprintf(displayParameter1, sizeof(displayParameter1),
-             d1ChromaMode ? "D1 CHROMA ON" : "D1 CHROMA OFF");
-    displayParameter2[0] = '\0';
-    parameterOverlayStartTick = nowTick;
+    // State indicated by chroma dots — no text overlay needed
   }
-  // Tier 2: MONOBASS at 6s
+  self.enteredMode = false;
+  self.enteredMode2 = false;
+}
+
+static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+  // Tier 1: mark chroma threshold crossed — actual toggle deferred to release
+  if (!self.enteredMode && heldMs >= D1_CHROMA_LONG_PRESS_MS) {
+    self.enteredMode = true;
+  }
+  // Tier 2: MONOBASS at 6s — fires immediately; suppresses chroma toggle on release
   if (!self.enteredMode2 && heldMs >= D1_MONOBASS_LONG_PRESS_MS) {
     self.enteredMode2 = true;
     if (!monoBass.active) {
@@ -1470,10 +1475,7 @@ static void btnD2Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
       d2ChromaHeldStep = -1;
     }
     applyKnobToEngine(8, analog[8]->getValue());
-    snprintf(displayParameter1, sizeof(displayParameter1),
-             d2ChromaMode ? "D2 CHROMA ON" : "D2 CHROMA OFF");
-    displayParameter2[0] = '\0';
-    parameterOverlayStartTick = nowTick;
+    // State indicated by chroma dots — no text overlay needed
   }
 }
 
@@ -1502,10 +1504,7 @@ static void btnD3Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
       d3ChromaHeldStep = -1;
     }
     applyKnobToEngine(16, analog[16]->getValue());
-    snprintf(displayParameter1, sizeof(displayParameter1),
-             d3ChromaMode ? "D3 CHROMA ON" : "D3 CHROMA OFF");
-    displayParameter2[0] = '\0';
-    parameterOverlayStartTick = nowTick;
+    // State indicated by chroma dots — no text overlay needed
   }
 }
 
@@ -1535,12 +1534,7 @@ static void btnPlayHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) 
     }
     wfChromaMode = !wfChromaMode;
     self.enteredMode = true;
-    {
-      snprintf(displayParameter1, sizeof(displayParameter1),
-               wfChromaMode ? "WF CHROMA ON" : "WF CHROMA OFF");
-      displayParameter2[0] = '\0';
-      parameterOverlayStartTick = nowTick;
-    }
+    // State indicated by chroma dots — no text overlay needed
   }
 }
 
