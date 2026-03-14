@@ -884,6 +884,15 @@ void loop() {
   loopNowTick = sysTickMs;  // sysTickMs is ISR-written, needs guard
   interrupts();
 
+  // MONOBASS envelope filter decay — runs every 5ms when active
+  if (monoBass.active) {
+    static uint32_t lastEnvFiltTick = 0;
+    if ((uint32_t)(loopNowTick - lastEnvFiltTick) >= 5) {
+      lastEnvFiltTick = loopNowTick;
+      updateMonoBassEnvFilter(loopNowTick);
+    }
+  }
+
   // Expire accent preview and restore normal LEDs
   if (accentPreview.active) {
     if ((uint32_t)(loopNowTick - accentPreview.startTick) >= ACCENT_PREVIEW_DURATION_MS) {
