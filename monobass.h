@@ -145,7 +145,8 @@ void enterMonoBassMode() {
   d1AmpEnv.noteOff();          // kill any note held over from the sequencer
   AudioInterrupts();
   // Init envelope filter depth from current snap knob position
-  monoBass.envFiltDepth = normalizeKnob(analog[5]->getValue());
+  float snapNorm = normalizeKnob(analog[5]->getValue());
+  monoBass.envFiltDepth = snapNorm * snapNorm;  // square curve, matches engineD1Snap
   monoBass.envFiltTrigger = 0;
   // Light first 12 LEDs as usable-key indicators (12 notes per octave)
   for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
@@ -199,8 +200,8 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   if (monoBass.envFiltTrigger == 0) return;
 
   uint32_t elapsed = nowMs - monoBass.envFiltTrigger;
-  // Time constant: 0.6× release time, minimum 40ms — faster decay for punchier sweep
-  float tauMs = monoBass.releaseMs * 0.6f + 40.0f;
+  // Time constant: 0.6× release time, minimum 100ms — floor ensures audible wah sweep
+  float tauMs = fmaxf(monoBass.releaseMs * 0.6f + 40.0f, 100.0f);
   float decay = expf(-(float)elapsed / tauMs);  // 1.0 at trigger → 0.0 as time → ∞
 
   // Fixed ceiling: always sweep to 8000 Hz at full depth regardless of base position.

@@ -753,13 +753,13 @@ static void engineD1Snap(uint8_t idx, int knobValue) {
   float norm = normalizeKnob(knobValue);
 
   if (monoBass.active) {
-    // Repurposed as envelope filter depth — 0 = no effect, 1 = opens to 3× base cutoff
-    monoBass.envFiltDepth = norm;
+    // Repurposed as envelope filter depth — square curve keeps sweet spot in mid-range
+    monoBass.envFiltDepth = norm * norm;
     return;  // no direct audio change; updateMonoBassEnvFilter() drives the filter
   }
 
   if (d1ChromaMode) {
-    d1ChromaEnvFiltDepth = norm;
+    d1ChromaEnvFiltDepth = norm * norm;
     return;  // updateD1ChromaEnvFilter() drives the filter
   }
 

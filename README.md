@@ -118,6 +118,9 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - Envelope filter sweep range widened: ceiling raised from 5000 Hz to 8000 Hz for more pronounced wah character
 - Envelope filter resonance peak raised from 3.5 to 4.0 at full depth (applies to both D1 Chroma and MONOBASS)
 - Master lowpass raised from 7500 Hz to 9000 Hz for a slightly brighter overall mix
+- Envelope filter minimum sweep time clamped to 100ms so the wah is always audible on short-decay kicks
+- Envelope filter depth knob uses a square curve — sweet spot is in the mid-range, full sweep still accessible at top
+- D1 Chroma snap transient reduced to 20% on chroma entry, restored to knob position on exit
 
 ## Changes (v1.03.1)
 

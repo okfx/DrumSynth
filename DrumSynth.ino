@@ -1169,7 +1169,7 @@ void updateD1ChromaEnvFilter(uint32_t nowMs) {
   }
 
   uint32_t elapsed = nowMs - d1ChromaEnvFiltTrigger;
-  float tauMs = d1EffectiveDecay * 0.6f + 40.0f;
+  float tauMs = fmaxf(d1EffectiveDecay * 0.6f + 40.0f, 100.0f);
   float decay = expf(-(float)elapsed / tauMs);
 
   static constexpr float kEnvFiltCeiling = 8000.0f;
@@ -1400,8 +1400,12 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
       d1HighPass.resonance(0.7f);
       AudioInterrupts();
       applyKnobToEngine(6, analog[6]->getValue());  // switch Body to filter mode (sets d1ChromaEnvFiltBaseHz)
-      d1ChromaEnvFiltDepth = normalizeKnob(analog[5]->getValue());
+      float snapNorm = normalizeKnob(analog[5]->getValue());
+      d1ChromaEnvFiltDepth = snapNorm * snapNorm;  // square curve, matches engineD1Snap
       d1ChromaEnvFiltTrigger = 0;
+      AudioNoInterrupts();
+      d1VoiceMixer.gain(1, 0.20f);  // reduce snap transient to 20% in chroma mode
+      AudioInterrupts();
     } else {
       d1ChromaHeldStep = -1;
       d1ChromaEnvFiltTrigger = 0;
@@ -1417,6 +1421,7 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
         d1LowPass.resonance(1.5f);
         AudioInterrupts();
       }
+      applyKnobToEngine(5, analog[5]->getValue());  // restore snap transient gain
       applyKnobToEngine(6, analog[6]->getValue());  // restore normal EQ
     }
     snprintf(displayParameter1, sizeof(displayParameter1),
