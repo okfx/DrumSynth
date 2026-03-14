@@ -1095,9 +1095,9 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
     d3606HighPass.frequency(hpfHz);
     d3606BandPass.frequency(bpfHz);
 
-    // PERC voice -- A3(220) -> A6(1760), independent of FM carriers
-    static const float LOG_NOISE_RATIO = logf(1760.0f / 220.0f);  // A3->A6
-    d3Perc.frequency(220.0f * expf(pitchBend * LOG_NOISE_RATIO));
+    // PERC voice -- A4(440) -> A6(1760), independent of FM carriers
+    static const float LOG_NOISE_RATIO = logf(1760.0f / 440.0f);  // A4->A6
+    d3Perc.frequency(440.0f * expf(pitchBend * LOG_NOISE_RATIO));
 
     AudioInterrupts();
   }
@@ -1223,14 +1223,14 @@ static void engineD3Filter(uint8_t idx, int knobValue) {
   // Resonance: gentle bump at low cutoffs for volume compensation, clean when open
   float resonance = 0.35f + 0.15f * (1.0f - norm);  // 0.50 -> 0.35
 
-  // Perc voice filter: lower range to match perc's frequency band (300–6000 Hz)
-  float percCutoff = 300.0f * expf(norm * 2.996f);  // ln(6000/300) ≈ 2.996
+  // Perc voice filter: 400–6000 Hz to suit A4–A6 pitch range
+  float percCutoff = 400.0f * expf(norm * 2.708f);  // ln(6000/400) ≈ 2.708
 
   AudioNoInterrupts();
   d3MasterFilter.frequency(cutoffHz);
   d3MasterFilter.resonance(resonance);
   d3PercFilter.frequency(percCutoff);
-  d3PercFilter.resonance(0.8f);
+  d3PercFilter.resonance(1.2f);  // slight resonance bump for definition
   AudioInterrupts();
 }
 

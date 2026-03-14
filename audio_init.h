@@ -349,12 +349,12 @@ void audioInit() {
   // --- D3 "PERC" voice: noise-based percussion ---
 
   d3Perc.pitchMod(0.5f);
-  d3Perc.frequency(700.0f);
+  d3Perc.frequency(440.0f);   // A4 — matches pitch knob minimum
   d3Perc.length(15.0f);
 
   // Perc dedicated low-pass filter (AudioFilterStateVariable, lowpass output)
   d3PercFilter.frequency(6000.0f);   // open at boot — knob overrides from EEPROM
-  d3PercFilter.resonance(0.8f);
+  d3PercFilter.resonance(1.2f);      // slight bump for definition
 
   // --- D3 output mixing ---
 
