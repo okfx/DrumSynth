@@ -117,9 +117,9 @@ static int8_t chromaAnimDot = -1;
 static ChromaAnimPhase chromaAnimPhase = CHROMA_ANIM_NONE;
 static uint32_t chromaAnimStart = 0;
 static bool chromaAnimAppearing = true;
-static constexpr uint32_t CHROMA_RAMP_MS   = 1000;  // 0.5s to 1.5s = 1s ramp
+static constexpr uint32_t CHROMA_RAMP_MS   = 1500;  // full 1.5s ramp, completes at toggle
 static constexpr uint32_t CHROMA_SETTLE_MS = 80;    // shrink duration on release
-static constexpr uint32_t CHROMA_RAMP_DELAY_MS = 500;  // hold time before ramp starts
+static constexpr uint32_t CHROMA_RAMP_DELAY_MS = 0;  // start immediately on press
 
 // MONOBASS text pixel-scatter animation — plays during D1 hold from 2s-5s.
 // Entering: "MONOBASS" text pixels randomly appear over 3 seconds.
@@ -132,8 +132,8 @@ enum MonoAnimPhase : uint8_t {
 
 static MonoAnimPhase monoAnimPhase = MONO_ANIM_NONE;
 static uint32_t monoAnimStart = 0;
-static constexpr uint32_t MONO_ANIM_DELAY_MS    = 2000;  // hold time before text anim
-static constexpr uint32_t MONO_ANIM_DURATION_MS = 3000;  // 2s to 5s = 3s
+static constexpr uint32_t MONO_ANIM_DELAY_MS    = 2500;  // hold time before text anim
+static constexpr uint32_t MONO_ANIM_DURATION_MS = 2500;  // 2.5s to 5s = 2.5s
 
 static void startChromaRamp(uint8_t dotIndex, bool appearing);
 static void startChromaSettle();
