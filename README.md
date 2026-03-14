@@ -56,11 +56,15 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 
 ## Changes (v1.05)
 
-- **MONOBASS idle display** -- when no note is held, the scope area shows a knob reference grid: 4 rows labeling all 8 MONOBASS-active knobs (Octave, Volume, Decay, Attack, Osc, Filter, Wavefolder, Delay Send) with small knob icons between each pair
-- MONOBASS automatically enables WF CHROMA mode on entry and restores the previous WF CHROMA state on exit — wavefolder always tracks chromatic pitch while in MONOBASS
-- MONOBASS note display repositioned to sit 4 px lower for better border clearance
-- **Codebase audit:** null check + halt on failed knob allocator (`new`), `uint32_t` promotion on `armPulseCountdown` multiplication, `extern` declaration added for `monoBassKeyEvent`, `memset` replaced with range-for on key stack init, `static constexpr` on FM synthesis constants, loop counters standardized to `int` across all files, redundant `inline` removed from 7 single-TU functions, clarifying comments added to date-parsing chain and choke knob range math
 - **MONOBASS mode** -- hold D1 for 6 seconds to enter a live mono keyboard using the step buttons as keys, with oscilloscope waveform display. D2/D3 knobs, BPM, choke, and memory/load/save are disabled during MONOBASS mode.
+- MONOBASS automatically enables WF CHROMA mode on entry; restores previous WF CHROMA state on exit
+- MONOBASS Snap knob repurposed as D1 attack control (0.5–100 ms); snap transient muted for cleaner bass tone. Original snap settings restored on exit.
+- MONOBASS D1 filter retuned: 40–4000 Hz Moog-style LPF sweep, resonance 1.5, softened pitch tracking (0.6+0.4× ratio), floor 20 Hz / ceiling 6000 Hz with modulation
+- MONOBASS idle display: knob reference grid shown for 4 seconds after mode entry, then clears to unobstructed scope view
+- MONOBASS note display repositioned to sit 4 px lower for better border clearance
+- All chroma indicator dots suppressed during MONOBASS mode
+- **D3 perc voice** now has a dedicated low-pass filter (`d3PercFilter`, AudioFilterStateVariable) separate from the shared `d3MasterFilter`. Perc filter range 400–6000 Hz with slight resonance bump; both filters controlled by the same D3 Filter knob. D3 master filter retuned to 1200–12000 Hz (was 800–7500 Hz). Perc pitch range narrowed to A4–A6 (440–1760 Hz).
+- **Codebase audit:** null check + halt on failed knob allocator (`new`), `uint32_t` promotion on `armPulseCountdown` multiplication, `extern` declaration added for `monoBassKeyEvent`, `memset` replaced with range-for on key stack init, `static constexpr` on FM synthesis constants, loop counters standardized to `int` across all files, redundant `inline` removed from 7 single-TU functions, clarifying comments added to date-parsing chain and choke knob range math
 - D2 and D3 wavefolder carrier frequencies lowered to sub-bass range (32-110 Hz for D3, 32-440 Hz for D2)
 - Table-driven knob dispatch replaces switch blocks -- all 32 knobs handled via `knobTable[]` with paired display/engine function pointers
 - Table-driven button dispatch replaces `updateOtherButtons()` -- 10 control buttons handled via `btnHandlers[]` with press/release/hold callbacks
@@ -89,11 +93,9 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - MONOBASS note display moved to bottom-left corner for more scope visibility
 - MONOBASS octave changes now apply immediately to held notes (live pitch update)
 - MONOBASS bass filter retuning: highpass lowered to 30 Hz, lowpass opened to 4 kHz, EQ flattened to preserve sub-bass energy
-- MONOBASS BODY knob retuned as Moog-style resonant low-pass filter sweep (100-6000 Hz) with pitch tracking
-- D1 CHROMA mode: highpass lowered to 30 Hz to match MONOBASS; BODY knob becomes FILTER sweep (same Moog LPF curve)
+- D1 CHROMA mode: highpass lowered to 30 Hz to match MONOBASS; BODY knob becomes FILTER sweep (same Moog LPF curve as MONOBASS)
 - D3 wavefolder frequency range extended down to 16.352 Hz (C0) for deeper sub-bass waveshaping
 - MONOBASS keyboard limited to 12 keys (buttons 13-16 dead); first 12 step LEDs stay lit as usable-key indicators
-- MONOBASS filter display floor corrected to 100 Hz (matches engine)
 - MONOBASS note display repositioned to avoid bottom border occlusion
 - Oscilloscope rewritten: triggered waveform display with rising zero-crossing lock — sine, saw, and square shapes now visually distinct and stable
 - Chroma indicator dots no longer blank the oscilloscope; each dot clears only the pixels behind itself
