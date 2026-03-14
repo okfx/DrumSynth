@@ -17,7 +17,6 @@
 //  Constants
 // ============================================================================
 
-static constexpr uint32_t D1_MONOBASS_LONG_PRESS_MS  = 5000;
 static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS    = 1200;
 static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1200;
 static constexpr uint32_t MONOBASS_NOTE_DISPLAY_MS   = 1200;

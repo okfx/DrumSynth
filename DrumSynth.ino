@@ -86,44 +86,55 @@ static constexpr uint32_t PPQN_LONG_PRESS_MS = 1500;
 static constexpr uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
 static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_OPTIONS[0]);
 
+// X button (MEM) timing
+static constexpr uint32_t X_SHORT_PRESS_MS   = 500;   // held less = short press (slot cycle)
+static constexpr uint32_t X_MONO_ANIM_MS     = 1750;  // MONOBASS warning animation starts
+static constexpr uint32_t X_MONO_ENTER_MS    = 3000;  // MONOBASS mode enters/exits
+
 // D1 chroma mode state — main-loop only
 bool d1ChromaMode = false;
-static constexpr uint32_t D1_CHROMA_LONG_PRESS_MS = 1500;
 
 // MONOBASS mode — see monobass.h (included after forward declarations).
 
-// D2 chroma mode — latching toggle via D2 button hold
+// D2 chroma mode — toggled via X+D2 combo
 bool d2ChromaMode = false;
-static constexpr uint32_t D2_CHROMA_LONG_PRESS_MS = 1500;
 
-// D3 chroma mode — latching toggle via D3 button hold
+// D3 chroma mode — toggled via X+D3 combo
 bool d3ChromaMode = false;
-static constexpr uint32_t D3_CHROMA_LONG_PRESS_MS = 1500;
 
-// Wavefolder CHROMA mode — latching toggle via PLAY button hold
+// Wavefolder CHROMA mode — toggled via X+PLAY combo
 bool wfChromaMode = false;
-static constexpr uint32_t WF_CHROMA_LONG_PRESS_MS = 1500;
 
-// Chroma dot animation — progressive ramp during hold (0.5s-1.5s), quick
-// settle on release.  Hash-based pixel scatter fills an 8×8 checkerboard
-// over 1 second as a "you can let go" cue, then shrinks to 6×6 on release.
+// Shuffle state (909-style, on/off toggle)
+static bool shuffleEnabled = false;
+
+// Bayer 4×4 ordered dithering — returns true if pixel (x,y) should be ON
+// at the given density (0.0 = all off, 1.0 = all on).
+static const uint8_t kBayer4[4][4] = {
+  { 0, 8, 2,10},
+  {12, 4,14, 6},
+  { 3,11, 1, 9},
+  {15, 7,13, 5}
+};
+static inline bool bayerDither(int x, int y, float density) {
+  return density > (float)kBayer4[y & 3][x & 3] / 16.0f;
+}
+
+// Chroma dot animation — Bayer-dithered 8×8 dot during X+button combo.
 enum ChromaAnimPhase : uint8_t {
   CHROMA_ANIM_NONE = 0,
-  CHROMA_ANIM_RAMPING,    // 0.5s-1.5s: progressive pixel fill during hold
-  CHROMA_ANIM_SETTLING    // on release: 8×8 → 6×6 shrink (or disappear)
+  CHROMA_ANIM_RAMPING,    // progressive Bayer dither fill
+  CHROMA_ANIM_SETTLING    // snap to steady state
 };
 
 static int8_t chromaAnimDot = -1;
 static ChromaAnimPhase chromaAnimPhase = CHROMA_ANIM_NONE;
 static uint32_t chromaAnimStart = 0;
 static bool chromaAnimAppearing = true;
-static constexpr uint32_t CHROMA_RAMP_MS   = 1500;  // full 1.5s ramp, completes at toggle
-static constexpr uint32_t CHROMA_SETTLE_MS = 80;    // shrink duration on release
-static constexpr uint32_t CHROMA_RAMP_DELAY_MS = 0;  // start immediately on press
+static constexpr uint32_t CHROMA_COMBO_RAMP_MS = 800;   // fast dither during X+button combo
+static constexpr uint32_t CHROMA_SETTLE_MS     = 80;    // snap duration after ramp
 
-// MONOBASS text pixel-scatter animation — plays during D1 hold from 2s-5s.
-// Entering: "MONOBASS" text pixels randomly appear over 3 seconds.
-// Exiting:  "MONOBASS" text pixels randomly dissolve over 3 seconds.
+// MONOBASS text animation — plays during X hold from 1.75s-3s.
 enum MonoAnimPhase : uint8_t {
   MONO_ANIM_NONE = 0,
   MONO_ANIM_ENTERING,
@@ -132,12 +143,24 @@ enum MonoAnimPhase : uint8_t {
 
 static MonoAnimPhase monoAnimPhase = MONO_ANIM_NONE;
 static uint32_t monoAnimStart = 0;
-static constexpr uint32_t MONO_ANIM_DELAY_MS    = 2500;  // hold time before text anim
-static constexpr uint32_t MONO_ANIM_DURATION_MS = 2500;  // 2.5s to 5s = 2.5s
+static constexpr uint32_t MONO_ANIM_DURATION_MS = 1000;  // fits within 1750→3000 window
+
+// Precomputed pixel masks for MONOBASS Bayer dither animation.
+// Computed once in setup() by rendering text and reading back pixels.
+static constexpr int kMonoTextX = 16;   // (128 - 96) / 2
+static constexpr int kMonoTextY = 2;
+static constexpr int kMonoTextW = 96;   // 8 chars × 12px at size 2
+static constexpr int kMonoTextH = 16;
+static constexpr int kOutlineRadius = 3;
+// Bitmask arrays: 1 bit per pixel in the text region (96×16 = 1536 bits = 192 bytes)
+static uint8_t monoTextMask[192];
+static uint8_t monoOutlineMask[192];
+static bool monoMasksReady = false;
 
 static void startChromaRamp(uint8_t dotIndex, bool appearing);
 static void startChromaSettle();
 static void cancelChromaAnim();
+static void cancelMonoAnim();
 
 static constexpr uint32_t CHROMA_STEP_HOLD_MS = 300;  // Hold step button this long to select note
 int8_t d1ChromaHeldStep = -1;  // Which step button is held (-1 = none)
@@ -213,6 +236,63 @@ static void startChromaSettle() {
 static void cancelChromaAnim() {
   chromaAnimDot = -1;
   chromaAnimPhase = CHROMA_ANIM_NONE;
+}
+
+static void cancelMonoAnim() {
+  monoAnimPhase = MONO_ANIM_NONE;
+}
+
+// Precompute text and outline masks for MONOBASS dither animation.
+// Must be called once in setup() after display.begin() / clearDisplay().
+void precomputeMonoMasks() {
+  memset(monoTextMask, 0, sizeof(monoTextMask));
+  memset(monoOutlineMask, 0, sizeof(monoOutlineMask));
+
+  // Render text to display buffer to capture pixel positions
+  display.fillRect(kMonoTextX, kMonoTextY, kMonoTextW, kMonoTextH, SH110X_BLACK);
+  display.setTextSize(2);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(kMonoTextX, kMonoTextY);
+  display.print("MONOBASS");
+
+  // Read back pixels into text mask
+  for (int y = 0; y < kMonoTextH; y++) {
+    for (int x = 0; x < kMonoTextW; x++) {
+      if (display.getPixel(kMonoTextX + x, kMonoTextY + y)) {
+        int bit = y * kMonoTextW + x;
+        monoTextMask[bit >> 3] |= (1 << (bit & 7));
+      }
+    }
+  }
+
+  // Expand text mask by kOutlineRadius to get outline+text area
+  uint8_t expandedMask[192];
+  memset(expandedMask, 0, sizeof(expandedMask));
+  for (int y = 0; y < kMonoTextH; y++) {
+    for (int x = 0; x < kMonoTextW; x++) {
+      int bit = y * kMonoTextW + x;
+      if (!(monoTextMask[bit >> 3] & (1 << (bit & 7)))) continue;
+      for (int oy = -kOutlineRadius; oy <= kOutlineRadius; oy++) {
+        for (int ox = -kOutlineRadius; ox <= kOutlineRadius; ox++) {
+          int nx = x + ox, ny = y + oy;
+          if (nx >= 0 && nx < kMonoTextW && ny >= 0 && ny < kMonoTextH) {
+            int nbit = ny * kMonoTextW + nx;
+            expandedMask[nbit >> 3] |= (1 << (nbit & 7));
+          }
+        }
+      }
+    }
+  }
+
+  // Outline = expanded minus text
+  for (int i = 0; i < 192; i++) {
+    monoOutlineMask[i] = expandedMask[i] & ~monoTextMask[i];
+  }
+
+  // Clear the rendering we used for mask capture
+  display.fillRect(kMonoTextX, kMonoTextY, kMonoTextW, kMonoTextH, SH110X_BLACK);
+  display.setTextSize(1);
+  monoMasksReady = true;
 }
 
 // bpm: main-loop only — not accessed from any ISR. rearmStepTimer() is only
@@ -853,6 +933,9 @@ void setup() {
 
     // Animated splash screen
     splashAnimation();
+
+    // Precompute MONOBASS dither masks (renders text off-screen, reads back)
+    precomputeMonoMasks();
   }
 
   // ============================================================================
@@ -1408,108 +1491,294 @@ void handlePlayStop() {
   }
 }
 
-// Button index → function mapping:
-//   0 = D1 SEQ SELECT   (short press: selectTrack, long hold: toggle D1 chroma mode)
 // ============================================================================
 //  Button handler state machine
 // ============================================================================
 
 struct ButtonHandler {
   uint32_t pressTick = 0;
-  bool enteredMode = false;   // first-tier hold (chroma / PPQN)
-  bool enteredMode2 = false;  // second-tier hold (D1 MONOBASS only)
+  bool enteredMode = false;
+  bool enteredMode2 = false;
 
   void (*onPress)(ButtonHandler& self, uint32_t nowTick);
   void (*onRelease)(ButtonHandler& self, uint32_t nowTick);
   void (*onHoldCheck)(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs);
 };
 
-// --- D1 button (index 0): short=selectD1, hold 1.5s=chroma, hold 5s=MONOBASS ---
-//
-// Chroma toggle deferred to release.  Progressive animations during hold:
-//   0.5s: chroma dot ramp begins (1s gradual pixel fill)
-//   1.5s: chroma threshold crossed (ramp complete)
-//   2.0s: MONOBASS text pixel-scatter begins (3s random reveal/dissolve)
-//   5.0s: MONOBASS mode enters/exits
-//
-//   enteredMode  = held past D1_CHROMA_LONG_PRESS_MS (chroma pending)
-//   enteredMode2 = MONOBASS fired; chroma toggle suppressed on release
+// X (MEM) button modifier state machine
+struct XModifierState {
+  bool held;               // true while X is physically held
+  uint32_t pressTick;      // when X was pressed
+  bool comboFired;         // true if any combo triggered during this hold
+  bool slotCycled;         // true if slot was cycled (short press on release)
+  bool monoAnimStarted;    // true if MONOBASS warning animation has begun
+  bool monoFired;          // true if MONOBASS mode was entered/exited
+};
+static XModifierState xMod = {};
+
+// Track active combo for hold-duration combos (e.g. X+SAVE for PPQN)
+static int8_t activeComboIndex = -1;
+static uint32_t comboSecondPressTick = 0;
+
+// --- Combo action functions (X held + second button) ---
+
+static void comboChromaD1() {
+  xMod.comboFired = true;
+  cancelMonoAnim();
+  startChromaRamp(0, !d1ChromaMode);
+  d1ChromaMode = !d1ChromaMode;
+  if (d1ChromaMode) {
+    d1FreqBeforeChroma = d1BaseFreq;
+    selectTrack(TRACK_D1);
+    AudioNoInterrupts();
+    d1HighPass.frequency(30.0f);
+    d1HighPass.resonance(0.7f);
+    AudioInterrupts();
+    applyKnobToEngine(6, analog[6]->getValue());
+    float snapNorm = normalizeKnob(analog[5]->getValue());
+    d1ChromaEnvFiltDepth = snapNorm * snapNorm;
+    d1ChromaEnvFiltTrigger = 0;
+    AudioNoInterrupts();
+    d1VoiceMixer.gain(1, 0.20f);
+    AudioInterrupts();
+  } else {
+    d1ChromaHeldStep = -1;
+    d1ChromaEnvFiltTrigger = 0;
+    d1BaseFreq = d1FreqBeforeChroma;
+    applyD1Freq();
+    if (!monoBass.active) {
+      AudioNoInterrupts();
+      d1HighPass.frequency(85.0f);
+      d1HighPass.resonance(2.0f);
+      d1LowPass.frequency(1800.0f);
+      d1LowPass.resonance(1.5f);
+      AudioInterrupts();
+    }
+    applyKnobToEngine(5, analog[5]->getValue());
+    applyKnobToEngine(6, analog[6]->getValue());
+  }
+}
+
+static void comboChromaD2() {
+  xMod.comboFired = true;
+  cancelMonoAnim();
+  startChromaRamp(1, !d2ChromaMode);
+  d2ChromaMode = !d2ChromaMode;
+  if (d2ChromaMode) {
+    selectTrack(TRACK_D2);
+  } else {
+    d2ChromaHeldStep = -1;
+  }
+  applyKnobToEngine(8, analog[8]->getValue());
+}
+
+static void comboChromaD3() {
+  xMod.comboFired = true;
+  cancelMonoAnim();
+  startChromaRamp(2, !d3ChromaMode);
+  d3ChromaMode = !d3ChromaMode;
+  if (d3ChromaMode) {
+    selectTrack(TRACK_D3);
+  } else {
+    d3ChromaHeldStep = -1;
+  }
+  applyKnobToEngine(16, analog[16]->getValue());
+}
+
+static void comboChromaWF() {
+  xMod.comboFired = true;
+  cancelMonoAnim();
+  startChromaRamp(3, !wfChromaMode);
+  wfChromaMode = !wfChromaMode;
+}
+
+static void comboShuffle() {
+  xMod.comboFired = true;
+  cancelMonoAnim();
+  shuffleEnabled = !shuffleEnabled;
+  snprintf(displayParameter1, sizeof(displayParameter1), "SHUFFLE");
+  snprintf(displayParameter2, sizeof(displayParameter2),
+           shuffleEnabled ? "ON" : "OFF");
+  parameterOverlayStartTick = sysTickMs;
+  activeRail = RAIL_NONE;
+}
+
+static void comboPPQN() {
+  xMod.comboFired = true;
+  cancelMonoAnim();
+  if (sequencePlaying) {
+    noInterrupts();
+    sequencePlaying = false;
+    setTransport(STOPPED);
+    interrupts();
+    resetExternalClockState();
+    applyMasterGain();
+  }
+  ppqnModeActive = true;
+  ppqnModeLastActivityTick = sysTickMs;
+  ppqnModeSelection = ppqn;
+}
+
+// --- D1 button (index 0): short=selectD1, X+D1=chroma ---
 
 static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
+  if (monoBass.active) return;
+  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
+    comboChromaD1();
+    return;
+  }
+  self.pressTick = nowTick;
+  selectTrack(TRACK_D1);
+}
+
+static void btnD1Release(ButtonHandler& self, uint32_t /*nowTick*/) {
+  (void)self;
+}
+
+static void btnD1Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) {
+  (void)self;
+}
+
+// --- D2 button (index 1): short=selectD2, X+D2=chroma ---
+
+static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
+  if (monoBass.active) return;
+  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
+    comboChromaD2();
+    return;
+  }
+  self.pressTick = nowTick;
+  selectTrack(TRACK_D2);
+}
+
+static void btnD2Release(ButtonHandler& self, uint32_t /*nowTick*/) {
+  (void)self;
+}
+
+static void btnD2Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) {
+  (void)self;
+}
+
+// --- D3 button (index 2): short=selectD3, X+D3=chroma ---
+
+static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
+  if (monoBass.active) return;
+  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
+    comboChromaD3();
+    return;
+  }
+  self.pressTick = nowTick;
+  selectTrack(TRACK_D3);
+}
+
+static void btnD3Release(ButtonHandler& self, uint32_t /*nowTick*/) {
+  (void)self;
+}
+
+static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) {
+  (void)self;
+}
+
+// --- PLAY button (index 6): short=play/stop, X+PLAY=WF chroma ---
+
+static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
+  // X combo: WF chroma (works even in MONOBASS)
+  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
+    comboChromaWF();
+    return;
+  }
+  if (monoBass.active) return;
+  self.pressTick = nowTick;
+  handlePlayStop();
+}
+
+static void btnPlayRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
+  (void)self;
+}
+
+static void btnPlayHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) {
+  (void)self;
+}
+
+// --- X button (index 7, formerly MEM) ---
+//
+// Short press (<500ms, no combo): cycle memory slot
+// Hold alone 1750ms: MONOBASS warning animation begins
+// Hold alone 3000ms: enter/exit MONOBASS mode
+// Hold >500ms + second button: combo dispatch
+
+static void btnXPress(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
   self.enteredMode = false;
   self.enteredMode2 = false;
+
+  xMod.held = true;
+  xMod.pressTick = nowTick;
+  xMod.comboFired = false;
+  xMod.slotCycled = false;
+  xMod.monoAnimStarted = false;
+  xMod.monoFired = false;
+
   monoAnimPhase = MONO_ANIM_NONE;
 }
 
-static void btnD1Release(ButtonHandler& self, uint32_t nowTick) {
-  monoAnimPhase = MONO_ANIM_NONE;
+static void btnXRelease(ButtonHandler& self, uint32_t nowTick) {
+  uint32_t heldMs = nowTick - xMod.pressTick;
 
-  if (!self.enteredMode && !self.enteredMode2 && !monoBass.active) {
-    // Short press: select track
-    cancelChromaAnim();
-    selectTrack(TRACK_D1);
-  } else if (self.enteredMode && !self.enteredMode2) {
-    // Chroma hold released before MONOBASS — settle animation + toggle
-    startChromaSettle();
-    d1ChromaMode = !d1ChromaMode;
-    if (d1ChromaMode) {
-      d1FreqBeforeChroma = d1BaseFreq;
-      selectTrack(TRACK_D1);
-      AudioNoInterrupts();
-      d1HighPass.frequency(30.0f);
-      d1HighPass.resonance(0.7f);
-      AudioInterrupts();
-      applyKnobToEngine(6, analog[6]->getValue());
-      float snapNorm = normalizeKnob(analog[5]->getValue());
-      d1ChromaEnvFiltDepth = snapNorm * snapNorm;
-      d1ChromaEnvFiltTrigger = 0;
-      AudioNoInterrupts();
-      d1VoiceMixer.gain(1, 0.20f);
-      AudioInterrupts();
-    } else {
-      d1ChromaHeldStep = -1;
-      d1ChromaEnvFiltTrigger = 0;
-      d1BaseFreq = d1FreqBeforeChroma;
-      applyD1Freq();
-      if (!monoBass.active) {
-        AudioNoInterrupts();
-        d1HighPass.frequency(85.0f);
-        d1HighPass.resonance(2.0f);
-        d1LowPass.frequency(1800.0f);
-        d1LowPass.resonance(1.5f);
-        AudioInterrupts();
+  // Short press: cycle slot (only if no combo fired and held < threshold)
+  if (heldMs < X_SHORT_PRESS_MS && !xMod.comboFired) {
+    if (monoBass.active) {
+      snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
+      snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
+      parameterOverlayStartTick = nowTick;
+      activeRail = RAIL_NONE;
+    } else if (ppqnModeActive) {
+      // In PPQN mode: cycle PPQN value
+      uint8_t idx = 0;
+      for (int j = 0; j < PPQN_OPTION_COUNT; j++) {
+        if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
       }
-      applyKnobToEngine(5, analog[5]->getValue());
-      applyKnobToEngine(6, analog[6]->getValue());
+      ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
+      ppqnModeLastActivityTick = nowTick;
+    } else {
+      // Normal: cycle memory slot
+      activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
+      snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d",
+               activeSaveSlot + 1);
+      snprintf(displayParameter2, sizeof(displayParameter2), "SELECT");
+      parameterOverlayStartTick = nowTick;
     }
-  } else if (self.enteredMode2) {
-    // MONOBASS was fired — cancel any lingering chroma animation
-    cancelChromaAnim();
   }
+
+  // Cancel MONOBASS animation if it was in progress but didn't fire
+  if (xMod.monoAnimStarted && !xMod.monoFired) {
+    cancelMonoAnim();
+  }
+
+  // Cancel any pending hold-combo (e.g. X+SAVE that didn't reach 1500ms)
+  activeComboIndex = -1;
+
+  xMod.held = false;
   self.enteredMode = false;
   self.enteredMode2 = false;
 }
 
-static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  // Tier 0: start chroma dot ramp at 0.5s
-  if (!self.enteredMode && heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
-    startChromaRamp(0, !d1ChromaMode);
-  }
-  // Tier 1: chroma threshold at 1.5s (ramp should be complete)
-  if (!self.enteredMode && heldMs >= D1_CHROMA_LONG_PRESS_MS) {
-    self.enteredMode = true;
-  }
-  // Tier 1.5: start MONOBASS text pixel-scatter at 2s
-  if (self.enteredMode && !self.enteredMode2
-      && heldMs >= MONO_ANIM_DELAY_MS && monoAnimPhase == MONO_ANIM_NONE) {
+static void btnXHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
+  (void)self;
+  if (xMod.comboFired) return;
+
+  // MONOBASS warning animation at 1750ms (only if no combo, X held alone)
+  if (!xMod.monoAnimStarted && heldMs >= X_MONO_ANIM_MS) {
     monoAnimPhase = monoBass.active ? MONO_ANIM_EXITING : MONO_ANIM_ENTERING;
-    monoAnimStart = nowTick;
+    monoAnimStart = nowTick - (heldMs - X_MONO_ANIM_MS);
+    xMod.monoAnimStarted = true;
   }
-  // Tier 2: MONOBASS at 5s — fires immediately; suppresses chroma toggle
-  if (!self.enteredMode2 && heldMs >= D1_MONOBASS_LONG_PRESS_MS) {
-    self.enteredMode2 = true;
-    monoAnimPhase = MONO_ANIM_NONE;
+
+  // MONOBASS mode entry/exit at 3000ms
+  if (!xMod.monoFired && heldMs >= X_MONO_ENTER_MS) {
+    xMod.monoFired = true;
+    xMod.comboFired = true;
+    cancelMonoAnim();
     cancelChromaAnim();
     if (!monoBass.active) {
       enterMonoBassMode();
@@ -1520,182 +1789,14 @@ static void btnD1Hold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
   }
 }
 
-// --- D2 button (index 1): short=selectD2, hold 2s=chroma ---
-
-static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
-  if (monoBass.active) return;
-  self.pressTick = nowTick;
-  self.enteredMode = false;
-}
-
-static void btnD2Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (monoBass.active) return;
-  if (!self.enteredMode) {
-    cancelChromaAnim();
-    selectTrack(TRACK_D2);
-  } else {
-    startChromaSettle();
-    d2ChromaMode = !d2ChromaMode;
-    if (d2ChromaMode) {
-      selectTrack(TRACK_D2);
-    } else {
-      d2ChromaHeldStep = -1;
-    }
-    applyKnobToEngine(8, analog[8]->getValue());
-  }
-  self.enteredMode = false;
-}
-
-static void btnD2Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
-  if (monoBass.active || self.enteredMode) return;
-  if (heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
-    startChromaRamp(1, !d2ChromaMode);
-  }
-  if (heldMs >= D2_CHROMA_LONG_PRESS_MS) {
-    self.enteredMode = true;
-  }
-}
-
-// --- D3 button (index 2): short=selectD3, hold 2s=chroma ---
-
-static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
-  if (monoBass.active) return;
-  self.pressTick = nowTick;
-  self.enteredMode = false;
-}
-
-static void btnD3Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (monoBass.active) return;
-  if (!self.enteredMode) {
-    cancelChromaAnim();
-    selectTrack(TRACK_D3);
-  } else {
-    startChromaSettle();
-    d3ChromaMode = !d3ChromaMode;
-    if (d3ChromaMode) {
-      selectTrack(TRACK_D3);
-    } else {
-      d3ChromaHeldStep = -1;
-    }
-    applyKnobToEngine(16, analog[16]->getValue());
-  }
-  self.enteredMode = false;
-}
-
-static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
-  if (monoBass.active || self.enteredMode) return;
-  if (heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
-    startChromaRamp(2, !d3ChromaMode);
-  }
-  if (heldMs >= D3_CHROMA_LONG_PRESS_MS) {
-    self.enteredMode = true;
-  }
-}
-
-// --- PLAY button (index 6): short=play/stop, hold 2s=WF chroma ---
-
-static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
-  self.pressTick = nowTick;
-  self.enteredMode = false;
-}
-
-static void btnPlayRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
-  if (!self.enteredMode && !monoBass.active) {
-    cancelChromaAnim();
-    handlePlayStop();
-  } else if (self.enteredMode && !monoBass.active) {
-    startChromaSettle();
-    wfChromaMode = !wfChromaMode;
-  }
-  self.enteredMode = false;
-}
-
-static void btnPlayHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
-  if (self.enteredMode) return;
-  if (monoBass.active && heldMs >= WF_CHROMA_LONG_PRESS_MS) {
-    self.enteredMode = true;
-    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF CHROMA");
-    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "LOCKED");
-    monoBass.paramShowStart = sysTickMs;
-    return;
-  }
-  if (heldMs >= CHROMA_RAMP_DELAY_MS && chromaAnimDot < 0) {
-    startChromaRamp(3, !wfChromaMode);
-  }
-  if (heldMs >= WF_CHROMA_LONG_PRESS_MS) {
-    self.enteredMode = true;
-  }
-}
-
-// --- MEMORY button (index 7): short=cycle slot, hold 2s=PPQN mode ---
-
-static void btnMemoryPress(ButtonHandler& self, uint32_t nowTick) {
-  if (monoBass.active) {
-    snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
-    parameterOverlayStartTick = nowTick;
-    activeRail = RAIL_NONE;
-    return;
-  }
-  self.pressTick = nowTick;
-  self.enteredMode = false;
-}
-
-static void btnMemoryRelease(ButtonHandler& self, uint32_t nowTick) {
-  if (monoBass.active) return;
-  if (self.enteredMode) {
-    // Hold entered PPQN mode — suppress slot cycle
-  } else if (ppqnModeActive) {
-    // Short press in PPQN mode — cycle to next value
-    uint8_t idx = 0;
-    for (int j = 0; j < PPQN_OPTION_COUNT; j++) {
-      if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
-    }
-    ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
-    ppqnModeLastActivityTick = nowTick;
-  } else {
-    // Short press — cycle memory slot
-    activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
-    snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
-    snprintf(displayParameter2, sizeof(displayParameter2), "SELECT");
-    parameterOverlayStartTick = nowTick;
-  }
-  self.enteredMode = false;
-}
-
-static void btnMemoryHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  if (monoBass.active) return;
-  if (self.enteredMode) return;
-  if (heldMs < PPQN_LONG_PRESS_MS) return;
-
-  if (ppqnModeActive) {
-    ppqn = ppqnModeSelection;
-    savePpqnToEEPROM(ppqn);
-    ppqnModeActive = false;
-    snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
-    snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
-    parameterOverlayStartTick = nowTick;
-    activeRail = RAIL_NONE;
-  } else {
-    if (sequencePlaying) {
-      noInterrupts();
-      sequencePlaying = false;
-      setTransport(STOPPED);
-      interrupts();
-      resetExternalClockState();
-      applyMasterGain();
-    }
-    ppqnModeActive = true;
-    ppqnModeLastActivityTick = nowTick;
-    ppqnModeSelection = ppqn;
-  }
-  self.enteredMode = true;
-}
-
-// --- LOAD button (index 8): press-only ---
+// --- LOAD button (index 8): short=load, X+LOAD=shuffle ---
 
 static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
+  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
+    comboShuffle();
+    return;
+  }
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
@@ -1715,16 +1816,37 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
     updateLEDs();
     patternDirty = false;
     activeRail = RAIL_NONE;
-    snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", activeSaveSlot + 1);
+    snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d",
+             activeSaveSlot + 1);
     snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
     parameterOverlayStartTick = nowTick;
   }
 }
 
-// --- SAVE button (index 9): press-only ---
+// --- SAVE button (index 9): short=save, X+SAVE hold=PPQN ---
 
 static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
-  (void)self;
+  // If X is held, start tracking for PPQN combo
+  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
+    self.pressTick = nowTick;
+    activeComboIndex = 0;  // using as flag for PPQN pending
+    comboSecondPressTick = nowTick;
+    xMod.comboFired = true;
+    return;
+  }
+
+  // In PPQN mode: SAVE = save and exit
+  if (ppqnModeActive) {
+    ppqn = ppqnModeSelection;
+    savePpqnToEEPROM(ppqn);
+    ppqnModeActive = false;
+    snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
+    snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
+    parameterOverlayStartTick = nowTick;
+    activeRail = RAIL_NONE;
+    return;
+  }
+
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
@@ -1732,13 +1854,30 @@ static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
     activeRail = RAIL_NONE;
     return;
   }
+
+  // Normal save
   activeRail = RAIL_NONE;
   if (patternDirty) {
     saveStateToEEPROM(activeSaveSlot);
   } else {
-    snprintf(displayParameter1, sizeof(displayParameter1), "PATTERN");
-    snprintf(displayParameter2, sizeof(displayParameter2), "CLEAN");
+    snprintf(displayParameter1, sizeof(displayParameter1), "NOTHING TO");
+    snprintf(displayParameter2, sizeof(displayParameter2), "SAVE");
     parameterOverlayStartTick = nowTick;
+  }
+}
+
+static void btnSaveRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
+  (void)self;
+  if (activeComboIndex >= 0) {
+    activeComboIndex = -1;
+  }
+}
+
+static void btnSaveHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
+  (void)self;
+  if (activeComboIndex >= 0 && heldMs >= PPQN_LONG_PRESS_MS) {
+    activeComboIndex = -1;
+    comboPPQN();
   }
 }
 
@@ -1749,16 +1888,16 @@ static void btnNullHold(ButtonHandler& s, uint32_t t, uint32_t h) { (void)s; (vo
 
 // --- Handler table (indices 0–9 match otherButtonsMux channels) ---
 static ButtonHandler btnHandlers[otherButtonsCount] = {
-  /* 0 D1     */ { 0, false, false, btnD1Press,     btnD1Release,     btnD1Hold     },
-  /* 1 D2     */ { 0, false, false, btnD2Press,     btnD2Release,     btnD2Hold     },
-  /* 2 D3     */ { 0, false, false, btnD3Press,     btnD3Release,     btnD3Hold     },
-  /* 3 n/a    */ { 0, false, false, btnNullPress,   btnNullRelease,   btnNullHold   },
-  /* 4 n/a    */ { 0, false, false, btnNullPress,   btnNullRelease,   btnNullHold   },
-  /* 5 n/a    */ { 0, false, false, btnNullPress,   btnNullRelease,   btnNullHold   },
-  /* 6 PLAY   */ { 0, false, false, btnPlayPress,   btnPlayRelease,   btnPlayHold   },
-  /* 7 MEMORY */ { 0, false, false, btnMemoryPress, btnMemoryRelease, btnMemoryHold },
-  /* 8 LOAD   */ { 0, false, false, btnLoadPress,   btnNullRelease,   btnNullHold   },
-  /* 9 SAVE   */ { 0, false, false, btnSavePress,   btnNullRelease,   btnNullHold   },
+  /* 0 D1     */ { 0, false, false, btnD1Press,   btnD1Release,   btnD1Hold   },
+  /* 1 D2     */ { 0, false, false, btnD2Press,   btnD2Release,   btnD2Hold   },
+  /* 2 D3     */ { 0, false, false, btnD3Press,   btnD3Release,   btnD3Hold   },
+  /* 3 n/a    */ { 0, false, false, btnNullPress, btnNullRelease, btnNullHold },
+  /* 4 n/a    */ { 0, false, false, btnNullPress, btnNullRelease, btnNullHold },
+  /* 5 n/a    */ { 0, false, false, btnNullPress, btnNullRelease, btnNullHold },
+  /* 6 PLAY   */ { 0, false, false, btnPlayPress, btnPlayRelease, btnPlayHold },
+  /* 7 X(MEM) */ { 0, false, false, btnXPress,    btnXRelease,    btnXHold    },
+  /* 8 LOAD   */ { 0, false, false, btnLoadPress, btnNullRelease, btnNullHold },
+  /* 9 SAVE   */ { 0, false, false, btnSavePress, btnSaveRelease, btnSaveHold },
 };
 
 // ============================================================================
@@ -2517,21 +2656,18 @@ bool renderChromaNoteSelect() {
 }
 
 // Chroma dot indicator — bottom bar dots for active chroma channels.
-// Animation phases:
-//   RAMPING (0.5s-1.5s hold): hash-based progressive pixel fill of 8×8 checkerboard
-//   SETTLING (on release):    quick 8×8 → 6×6 shrink (appear) or dissolve (disappear)
+// Animation: 3-phase Bayer-dithered 8×8 dot (outline → fill → hollow center).
 void renderChromaDots() {
-  // All dots suppressed during MONOBASS — WF chroma is always on there and the
-  // idle grid / scope uses the full display area without room for the dot bar.
   if (monoBass.active) return;
 
   const bool chromaActive[4] = {
     d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode
   };
   const int dotCenters[4] = { 16, 48, 80, 112 };
-  static constexpr int kSteadySize = 6;
-  static constexpr int kClearSize = 10;
+  static constexpr int kSteadySize = 8;
+  static constexpr int kClearSize = 12;
   static constexpr int kCenterY = 60;
+  static constexpr int kHalf = 4;
 
   bool animActive = (chromaAnimDot >= 0 && chromaAnimPhase != CHROMA_ANIM_NONE);
   uint32_t animElapsed = animActive ? (sysTickMs - chromaAnimStart) : 0;
@@ -2543,7 +2679,13 @@ void renderChromaDots() {
     animActive = false;
   }
 
-  // Early exit if no dots active and no animation running
+  // Auto-transition from ramp to settle when ramp completes
+  if (animActive && chromaAnimPhase == CHROMA_ANIM_RAMPING
+      && animElapsed >= CHROMA_COMBO_RAMP_MS) {
+    startChromaSettle();
+    animElapsed = 0;
+  }
+
   if (!chromaActive[0] && !chromaActive[1] && !chromaActive[2]
       && !chromaActive[3] && !animActive) return;
 
@@ -2551,99 +2693,179 @@ void renderChromaDots() {
     int cx = dotCenters[i];
 
     if (animActive && i == chromaAnimDot) {
-      // Clear area around dot
       display.fillRect(cx - kClearSize / 2, kCenterY - kClearSize / 2,
                        kClearSize, kClearSize, SH110X_BLACK);
 
       if (chromaAnimPhase == CHROMA_ANIM_RAMPING) {
-        // Progressive fill over CHROMA_RAMP_MS (1 second)
-        float progress = (float)animElapsed / (float)CHROMA_RAMP_MS;
+        float progress = (float)animElapsed / (float)CHROMA_COMBO_RAMP_MS;
         if (progress > 1.0f) progress = 1.0f;
-        uint8_t threshold = (uint8_t)(progress * 255.0f);
 
         if (chromaAnimAppearing) {
-          // Pixels scatter in over checkerboard positions → full checkerboard at 100%
-          for (int py = kCenterY - 4; py < kCenterY + 4; py++) {
-            for (int px = cx - 4; px < cx + 4; px++) {
-              if ((px + py) % 2 != 0) continue;  // checkerboard only
-              uint8_t h = (uint8_t)((px * 7 + py * 13 + px * py * 3) & 0xFF);
-              if (h <= threshold)
-                display.drawPixel(px, py, SH110X_WHITE);
+          // 3-phase Bayer dither: outline → fill → hollow center
+          if (progress <= 0.4f) {
+            // Phase 1: outline dithers in
+            float t = progress / 0.4f;
+            for (int py = kCenterY - kHalf; py < kCenterY + kHalf; py++) {
+              for (int px = cx - kHalf; px < cx + kHalf; px++) {
+                bool isEdge = (py == kCenterY - kHalf || py == kCenterY + kHalf - 1 ||
+                               px == cx - kHalf || px == cx + kHalf - 1);
+                if (isEdge && bayerDither(px, py, t))
+                  display.drawPixel(px, py, SH110X_WHITE);
+              }
+            }
+          } else if (progress <= 0.8f) {
+            // Phase 2: outline solid, interior dithers in
+            float t = (progress - 0.4f) / 0.4f;
+            for (int py = kCenterY - kHalf; py < kCenterY + kHalf; py++) {
+              for (int px = cx - kHalf; px < cx + kHalf; px++) {
+                bool isEdge = (py == kCenterY - kHalf || py == kCenterY + kHalf - 1 ||
+                               px == cx - kHalf || px == cx + kHalf - 1);
+                if (isEdge) {
+                  display.drawPixel(px, py, SH110X_WHITE);
+                } else if (bayerDither(px, py, t)) {
+                  display.drawPixel(px, py, SH110X_WHITE);
+                }
+              }
+            }
+          } else {
+            // Phase 3: full square, center hollows out
+            float t = (progress - 0.8f) / 0.2f;
+            display.fillRect(cx - kHalf, kCenterY - kHalf, kHalf * 2, kHalf * 2, SH110X_WHITE);
+            for (int py = kCenterY - 1; py <= kCenterY; py++) {
+              for (int px = cx - 1; px <= cx; px++) {
+                if (bayerDither(px, py, t))
+                  display.drawPixel(px, py, SH110X_BLACK);
+              }
             }
           }
         } else {
-          // Disappearing: start with steady 6×6, progressively erase pixels
-          display.fillRect(cx - 3, kCenterY - 3, kSteadySize, kSteadySize, SH110X_WHITE);
-          for (int py = kCenterY - 3; py < kCenterY + 3; py++) {
-            for (int px = cx - 3; px < cx + 3; px++) {
-              uint8_t h = (uint8_t)((px * 7 + py * 13 + px * py * 3) & 0xFF);
-              if (h <= threshold)
+          // Disappearing: steady dot dissolves via dither
+          display.fillRect(cx - kHalf, kCenterY - kHalf, 8, 8, SH110X_WHITE);
+          display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
+          for (int py = kCenterY - kHalf; py < kCenterY + kHalf; py++) {
+            for (int px = cx - kHalf; px < cx + kHalf; px++) {
+              if (bayerDither(px, py, progress))
                 display.drawPixel(px, py, SH110X_BLACK);
             }
           }
         }
       } else {
-        // SETTLING phase — quick transition on release
+        // SETTLING: snap to steady state
         if (chromaAnimAppearing) {
-          // Shrink: checkerboard 8×8 → hollow 6×6 (white border, black center)
-          float t = (float)animElapsed / (float)CHROMA_SETTLE_MS;
-          if (t > 1.0f) t = 1.0f;
-          int halfSize = 4 - (int)(t + 0.5f);  // 4 → 3
-          if (halfSize < 3) halfSize = 3;
-          display.fillRect(cx - halfSize, kCenterY - halfSize,
-                           halfSize * 2, halfSize * 2, SH110X_WHITE);
-          if (halfSize <= 3) {
-            // Punch out center for hollow look
-            display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
-          }
+          display.fillRect(cx - kHalf, kCenterY - kHalf, 8, 8, SH110X_WHITE);
+          display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
         }
-        // Disappearing settle: area already cleared, nothing to draw
       }
     } else if (chromaActive[i]) {
-      // Steady state: hollow 6×6 (white border, black center = "toggle on")
-      display.fillRect(cx - 4, kCenterY - 4, kSteadySize + 2, kSteadySize + 2, SH110X_BLACK);
-      display.fillRect(cx - 3, kCenterY - 3, kSteadySize, kSteadySize, SH110X_WHITE);
+      // Steady state: hollow 8×8 (white border, 2×2 black center)
+      display.fillRect(cx - kHalf - 1, kCenterY - kHalf - 1,
+                       kSteadySize + 2, kSteadySize + 2, SH110X_BLACK);
+      display.fillRect(cx - kHalf, kCenterY - kHalf, kSteadySize, kSteadySize, SH110X_WHITE);
       display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
     }
   }
 }
 
-// MONOBASS text pixel-scatter animation — renders "MONOBASS" with random pixel
-// reveal (entering) or dissolve (exiting) over the display.  Uses draw-then-erase:
-// text is rendered fully, then pixels not yet revealed are cleared to black.
+// MONOBASS text Bayer-dithered animation — 3-phase outline reveal (entering)
+// or reverse dissolve (exiting).  Uses precomputed text/outline masks.
 void renderMonoTextAnim() {
-  if (monoAnimPhase == MONO_ANIM_NONE) return;
+  if (monoAnimPhase == MONO_ANIM_NONE || !monoMasksReady) return;
 
   uint32_t elapsed = sysTickMs - monoAnimStart;
   if (elapsed >= MONO_ANIM_DURATION_MS) return;
 
   float progress = (float)elapsed / (float)MONO_ANIM_DURATION_MS;
-  uint8_t threshold = (uint8_t)(progress * 255.0f);
 
-  // "MONOBASS" at textSize 2: 8 chars × 12px = 96px wide, 16px tall
-  // Matches the top-bar title in renderTopBar() (textSize 2, y=2, centered)
-  static constexpr int kTextW = 96;
-  static constexpr int kTextH = 16;
-  static constexpr int kTextX = (128 - kTextW) / 2;  // 16
-  static constexpr int kTextY = 2;
+  // Clear text region (clamped to screen bounds)
+  int clearY = (kMonoTextY - kOutlineRadius < 0) ? 0 : kMonoTextY - kOutlineRadius;
+  display.fillRect(kMonoTextX - kOutlineRadius, clearY,
+                   kMonoTextW + kOutlineRadius * 2,
+                   kMonoTextH + kOutlineRadius * 2, SH110X_BLACK);
 
-  // Clear text region and draw the full text
-  display.fillRect(kTextX, kTextY, kTextW, kTextH, SH110X_BLACK);
-  display.setTextSize(2);
-  display.setTextColor(SH110X_WHITE);
-  display.setCursor(kTextX, kTextY);
-  display.print("MONOBASS");
-
-  // Selectively erase pixels based on hash and progress
-  for (int py = kTextY; py < kTextY + kTextH; py++) {
-    for (int px = kTextX; px < kTextX + kTextW; px++) {
-      uint8_t h = (uint8_t)((px * 17 + py * 31 + (px ^ py) * 7) & 0xFF);
-      if (monoAnimPhase == MONO_ANIM_ENTERING) {
-        if (h > threshold)
-          display.drawPixel(px, py, SH110X_BLACK);
-      } else {
-        if (h <= threshold)
-          display.drawPixel(px, py, SH110X_BLACK);
+  if (monoAnimPhase == MONO_ANIM_ENTERING) {
+    if (progress <= 0.33f) {
+      // Phase 1: outline dithers in
+      float t = progress / 0.33f;
+      for (int y = 0; y < kMonoTextH; y++) {
+        for (int x = 0; x < kMonoTextW; x++) {
+          int bit = y * kMonoTextW + x;
+          if (monoOutlineMask[bit >> 3] & (1 << (bit & 7))) {
+            if (bayerDither(kMonoTextX + x, kMonoTextY + y, t))
+              display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          }
+        }
+      }
+    } else if (progress <= 0.66f) {
+      // Phase 2: outline solid, text dithers in
+      float t = (progress - 0.33f) / 0.33f;
+      for (int y = 0; y < kMonoTextH; y++) {
+        for (int x = 0; x < kMonoTextW; x++) {
+          int bit = y * kMonoTextW + x;
+          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
+          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
+          if (isOutline) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          } else if (isText && bayerDither(kMonoTextX + x, kMonoTextY + y, t)) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          }
+        }
+      }
+    } else {
+      // Phase 3: text solid, outline dithers out
+      float t = (progress - 0.66f) / 0.34f;
+      for (int y = 0; y < kMonoTextH; y++) {
+        for (int x = 0; x < kMonoTextW; x++) {
+          int bit = y * kMonoTextW + x;
+          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
+          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
+          if (isText) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          } else if (isOutline && bayerDither(kMonoTextX + x, kMonoTextY + y, 1.0f - t)) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          }
+        }
+      }
+    }
+  } else {
+    // EXITING: reverse — text stays, outline appears, then everything fades
+    if (progress <= 0.33f) {
+      float t = progress / 0.33f;
+      for (int y = 0; y < kMonoTextH; y++) {
+        for (int x = 0; x < kMonoTextW; x++) {
+          int bit = y * kMonoTextW + x;
+          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
+          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
+          if (isText) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          } else if (isOutline && bayerDither(kMonoTextX + x, kMonoTextY + y, t)) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          }
+        }
+      }
+    } else if (progress <= 0.66f) {
+      float t = (progress - 0.33f) / 0.33f;
+      for (int y = 0; y < kMonoTextH; y++) {
+        for (int x = 0; x < kMonoTextW; x++) {
+          int bit = y * kMonoTextW + x;
+          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
+          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
+          if (isOutline) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          } else if (isText && bayerDither(kMonoTextX + x, kMonoTextY + y, 1.0f - t)) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          }
+        }
+      }
+    } else {
+      float t = (progress - 0.66f) / 0.34f;
+      for (int y = 0; y < kMonoTextH; y++) {
+        for (int x = 0; x < kMonoTextW; x++) {
+          int bit = y * kMonoTextW + x;
+          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
+          if (isOutline && bayerDither(kMonoTextX + x, kMonoTextY + y, 1.0f - t)) {
+            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
+          }
+        }
       }
     }
   }
