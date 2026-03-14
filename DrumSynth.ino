@@ -1523,8 +1523,6 @@ static uint32_t comboSecondPressTick = 0;
 // --- Combo action functions (X held + second button) ---
 
 static void comboChromaD1() {
-  xMod.comboFired = true;
-  cancelMonoAnim();
   startChromaRamp(0, !d1ChromaMode);
   d1ChromaMode = !d1ChromaMode;
   if (d1ChromaMode) {
@@ -1560,8 +1558,6 @@ static void comboChromaD1() {
 }
 
 static void comboChromaD2() {
-  xMod.comboFired = true;
-  cancelMonoAnim();
   startChromaRamp(1, !d2ChromaMode);
   d2ChromaMode = !d2ChromaMode;
   if (d2ChromaMode) {
@@ -1573,8 +1569,6 @@ static void comboChromaD2() {
 }
 
 static void comboChromaD3() {
-  xMod.comboFired = true;
-  cancelMonoAnim();
   startChromaRamp(2, !d3ChromaMode);
   d3ChromaMode = !d3ChromaMode;
   if (d3ChromaMode) {
@@ -1586,15 +1580,11 @@ static void comboChromaD3() {
 }
 
 static void comboChromaWF() {
-  xMod.comboFired = true;
-  cancelMonoAnim();
   startChromaRamp(3, !wfChromaMode);
   wfChromaMode = !wfChromaMode;
 }
 
 static void comboShuffle() {
-  xMod.comboFired = true;
-  cancelMonoAnim();
   shuffleEnabled = !shuffleEnabled;
   snprintf(displayParameter1, sizeof(displayParameter1), "SHUFFLE");
   snprintf(displayParameter2, sizeof(displayParameter2),
@@ -1604,8 +1594,6 @@ static void comboShuffle() {
 }
 
 static void comboPPQN() {
-  xMod.comboFired = true;
-  cancelMonoAnim();
   if (sequencePlaying) {
     noInterrupts();
     sequencePlaying = false;
@@ -1619,14 +1607,60 @@ static void comboPPQN() {
   ppqnModeSelection = ppqn;
 }
 
+// X button combo dispatch table.
+// holdMs == 0: fires immediately on second button press.
+// holdMs  > 0: arms on press, fires when second button hold reaches threshold.
+//
+// | Btn | holdMs | Action      |
+// |-----|--------|-------------|
+// |  D1 |      0 | D1 Chroma   |
+// |  D2 |      0 | D2 Chroma   |
+// |  D3 |      0 | D3 Chroma   |
+// |PLAY |      0 | WF Chroma   |
+// |LOAD |      0 | Shuffle     |
+// |SAVE |   1500 | PPQN select |
+struct XComboEntry {
+  uint8_t  buttonIndex;
+  uint32_t holdMs;
+  void     (*onTrigger)();
+  const char* label;
+};
+
+static const XComboEntry xComboTable[] = {
+  { 0, 0,                comboChromaD1, "D1 CHROMA" },
+  { 1, 0,                comboChromaD2, "D2 CHROMA" },
+  { 2, 0,                comboChromaD3, "D3 CHROMA" },
+  { 6, 0,                comboChromaWF, "WF CHROMA" },
+  { 8, 0,                comboShuffle,  "SHUFFLE"   },
+  { 9, PPQN_LONG_PRESS_MS, comboPPQN,  "PPQN"      },
+};
+static constexpr int X_COMBO_COUNT = (int)(sizeof(xComboTable) / sizeof(xComboTable[0]));
+
+// Dispatch X+button combo. Returns true if a combo was fired or armed.
+// Sets xMod.comboFired and cancels the MONOBASS animation automatically.
+// For holdMs>0 entries, arms activeComboIndex — caller must set self.pressTick.
+static bool dispatchXCombo(uint8_t btnIdx, uint32_t nowTick) {
+  if (!xMod.held || (nowTick - xMod.pressTick) < X_SHORT_PRESS_MS) return false;
+  for (int i = 0; i < X_COMBO_COUNT; i++) {
+    if (xComboTable[i].buttonIndex != btnIdx) continue;
+    xMod.comboFired = true;
+    cancelMonoAnim();
+    if (xComboTable[i].holdMs == 0) {
+      xComboTable[i].onTrigger();
+    } else {
+      activeComboIndex = i;
+      comboSecondPressTick = nowTick;
+    }
+    return true;
+  }
+  return false;
+}
+
 // --- D1 button (index 0): short=selectD1, X+D1=chroma ---
 
 static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) return;
-  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
-    comboChromaD1();
-    return;
-  }
+  if (dispatchXCombo(0, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D1);
 }
@@ -1643,10 +1677,7 @@ static void btnD1Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*held
 
 static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) return;
-  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
-    comboChromaD2();
-    return;
-  }
+  if (dispatchXCombo(1, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D2);
 }
@@ -1663,10 +1694,7 @@ static void btnD2Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*held
 
 static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) return;
-  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
-    comboChromaD3();
-    return;
-  }
+  if (dispatchXCombo(2, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D3);
 }
@@ -1682,11 +1710,8 @@ static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*held
 // --- PLAY button (index 6): short=play/stop, X+PLAY=WF chroma ---
 
 static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
-  // X combo: WF chroma (works even in MONOBASS)
-  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
-    comboChromaWF();
-    return;
-  }
+  // X+PLAY combo fires before the MONOBASS guard — WF chroma works in MONOBASS
+  if (dispatchXCombo(6, nowTick)) return;
   if (monoBass.active) return;
   self.pressTick = nowTick;
   handlePlayStop();
@@ -1793,10 +1818,7 @@ static void btnXHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
 
 static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
-  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
-    comboShuffle();
-    return;
-  }
+  if (dispatchXCombo(8, nowTick)) return;
   if (monoBass.active) {
     snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
     snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
@@ -1826,14 +1848,8 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
 // --- SAVE button (index 9): short=save, X+SAVE hold=PPQN ---
 
 static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
-  // If X is held, start tracking for PPQN combo
-  if (xMod.held && (nowTick - xMod.pressTick) >= X_SHORT_PRESS_MS) {
-    self.pressTick = nowTick;
-    activeComboIndex = 0;  // using as flag for PPQN pending
-    comboSecondPressTick = nowTick;
-    xMod.comboFired = true;
-    return;
-  }
+  self.pressTick = nowTick;  // always record for hold timing
+  if (dispatchXCombo(9, nowTick)) return;
 
   // In PPQN mode: SAVE = save and exit
   if (ppqnModeActive) {
@@ -1875,9 +1891,10 @@ static void btnSaveRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
 
 static void btnSaveHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
   (void)self;
-  if (activeComboIndex >= 0 && heldMs >= PPQN_LONG_PRESS_MS) {
+  if (activeComboIndex >= 0 && heldMs >= xComboTable[activeComboIndex].holdMs) {
+    int idx = activeComboIndex;
     activeComboIndex = -1;
-    comboPPQN();
+    xComboTable[idx].onTrigger();
   }
 }
 
