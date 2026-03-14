@@ -41,6 +41,11 @@ struct MonoBassState {
   bool savedWfChroma = false;   // wfChromaMode state before entering MONOBASS
   uint32_t modeEnteredAt = 0;   // sysTickMs when MONOBASS was entered (for splash grid)
 
+  // Envelope filter state (snap knob repurposed)
+  float envFiltDepth = 0.0f;    // 0–1 from snap knob — how far filter opens above base
+  float envFiltBaseHz = 100.0f; // base cutoff in Hz (cached from body knob)
+  uint32_t envFiltTrigger = 0;  // sysTickMs of last noteOn
+
   // Last-note-priority key stack for polyphonic trill
   int8_t heldKeys[kMaxHeldKeys];
   uint8_t heldCount = 0;
@@ -120,9 +125,9 @@ void enterMonoBassMode() {
   d1ChromaHeldStep = -1;
   d2ChromaHeldStep = -1;
   d3ChromaHeldStep = -1;
-  // Gate-style bass synth envelope: fast attack, full sustain, short release
+  // Gate-style bass synth envelope: fixed fast attack, full sustain, short release
   AudioNoInterrupts();
-  d1AmpEnv.attack(2.0f);       // Moog-like punch (~2ms)
+  d1AmpEnv.attack(0.5f);       // fixed minimum — snap knob repurposed as env filter
   d1AmpEnv.hold(0.0f);         // no hold phase — sustain takes over
   d1AmpEnv.decay(0.0f);        // no decay — sustain at full level
   d1AmpEnv.sustain(1.0f);      // hold at full amplitude while key pressed
@@ -136,10 +141,12 @@ void enterMonoBassMode() {
   d1EQ.setNotch(0, 600.0f, 0.5f);          // mild notch — tames boxiness
   d1EQ.setHighShelf(1, 2000.0f, 0.0f, 1.0f); // flat shelf — no cut
   d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
-  d1VoiceMixer.gain(1, 0.0f);  // mute snap transient — knob 5 becomes attack
+  d1VoiceMixer.gain(1, 0.0f);  // mute snap transient — knob 5 is now env filter depth
+  d1AmpEnv.noteOff();          // kill any note held over from the sequencer
   AudioInterrupts();
-  // Apply snap knob as attack control (reads current knob position)
-  applyKnobToEngine(5, analog[5]->getValue());
+  // Init envelope filter depth from current snap knob position
+  monoBass.envFiltDepth = normalizeKnob(analog[5]->getValue());
+  monoBass.envFiltTrigger = 0;
   // Light first 12 LEDs as usable-key indicators (12 notes per octave)
   for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
   ledShiftReg.updateRegisters();
@@ -180,6 +187,41 @@ void exitMonoBassMode() {
 }
 
 // ============================================================================
+//  Envelope filter update — call from loop() every ~5ms
+// ============================================================================
+
+// Decays d1LowPass from its peak (set on noteOn) back toward envFiltBaseHz.
+// Only runs when a note is held and envFiltDepth > 0.
+void updateMonoBassEnvFilter(uint32_t nowMs) {
+  if (!monoBass.active) return;
+  if (monoBass.envFiltDepth < 0.01f) return;
+  if (monoBass.topKey() < 0) return;  // no note held — body knob owns the filter
+  if (monoBass.envFiltTrigger == 0) return;
+
+  uint32_t elapsed = nowMs - monoBass.envFiltTrigger;
+  // Time constant: 0.6× release time, minimum 40ms — faster decay for punchier sweep
+  float tauMs = monoBass.releaseMs * 0.6f + 40.0f;
+  float decay = expf(-(float)elapsed / tauMs);  // 1.0 at trigger → 0.0 as time → ∞
+
+  // Fixed ceiling: always sweep to 5000 Hz at full depth regardless of base position.
+  // This guarantees a wide, audible wah regardless of where the body knob is set.
+  static constexpr float kEnvFiltCeiling = 5000.0f;
+  float peak = monoBass.envFiltBaseHz
+             + monoBass.envFiltDepth * (kEnvFiltCeiling - monoBass.envFiltBaseHz);
+  if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
+  float cutoff = monoBass.envFiltBaseHz + (peak - monoBass.envFiltBaseHz) * decay;
+  if (cutoff < 20.0f) cutoff = 20.0f;
+
+  // High resonance during the sweep gives the vocal "waaah" character
+  float resonance = 1.5f + 2.0f * monoBass.envFiltDepth * decay;  // peaks at 3.5, settles to 1.5
+
+  AudioNoInterrupts();
+  d1LowPass.frequency(cutoff);
+  d1LowPass.resonance(resonance);
+  AudioInterrupts();
+}
+
+// ============================================================================
 //  Keyboard handler — call from updateStepButtons() for each button
 // ============================================================================
 
@@ -210,6 +252,17 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     applyD1Freq();
     triggerD1();
     monoBass.noteShowStart = sysTickMs;
+    // Envelope filter: open to peak cutoff at note attack
+    monoBass.envFiltTrigger = sysTickMs;
+    if (monoBass.envFiltDepth > 0.01f) {
+      float peak = monoBass.envFiltBaseHz
+                 + monoBass.envFiltDepth * (5000.0f - monoBass.envFiltBaseHz);
+      if (peak > 5000.0f) peak = 5000.0f;
+      AudioNoInterrupts();
+      d1LowPass.frequency(peak);
+      d1LowPass.resonance(1.5f + 2.0f * monoBass.envFiltDepth);  // up to 3.5 at full depth
+      AudioInterrupts();
+    }
 
     // Light first 12 LEDs (usable keys) — single SPI transaction
     for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
@@ -234,6 +287,16 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       applyD1Freq();
       triggerD1();
       monoBass.noteShowStart = sysTickMs;
+      // Envelope filter: re-trigger on legato fallback
+      monoBass.envFiltTrigger = sysTickMs;
+      if (monoBass.envFiltDepth > 0.01f) {
+        float peak = monoBass.envFiltBaseHz * (1.0f + 3.0f * monoBass.envFiltDepth);
+        if (peak > 6000.0f) peak = 6000.0f;
+        AudioNoInterrupts();
+        d1LowPass.frequency(peak);
+        d1LowPass.resonance(1.5f);
+        AudioInterrupts();
+      }
       for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
       ledShiftReg.updateRegisters();
     } else {
@@ -290,7 +353,7 @@ static void renderMonoBassIdleGrid() {
   static constexpr int kRightKnobCx = 68;
 
   static const char* const leftLabels[]  = { "OCTAVE", "DECAY", "OSC", "WAVFLDR" };
-  static const char* const rightLabels[] = { "VOLUME", "ATTACK", "FILTER", "DLY SND" };
+  static const char* const rightLabels[] = { "VOLUME", "ENV FLT", "FILTER", "DLY SND" };
 
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);

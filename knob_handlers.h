@@ -254,14 +254,14 @@ static void displayD1Volume(uint8_t idx, int knobValue) {
   displayMonoBassParam("D1 VOLUME", "VOLUME", knobValue);
 }
 
-// Case 5: D1 Snap (repurposed as Attack in MONOBASS mode)
+// Case 5: D1 Snap (repurposed as envelope filter depth in MONOBASS mode)
 static void displayD1Snap(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) {
     float norm = normalizeKnob(knobValue);
-    float attackMs = 0.5f * expf(norm * 5.298f);  // 0.5–100 ms
-    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "ATTACK");
-    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d ms", (int)(attackMs + 0.5f));
+    int percent = (int)(norm * 100.0f + 0.5f);
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "ENV FLT");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
     monoBass.paramShowStart = sysTickMs;
     return;
   }
@@ -745,12 +745,9 @@ static void engineD1Snap(uint8_t idx, int knobValue) {
   float norm = normalizeKnob(knobValue);
 
   if (monoBass.active) {
-    // Repurposed as attack control: 0.5–100 ms exponential
-    float attackMs = 0.5f * expf(norm * 5.298f);  // ln(100/0.5) ≈ 5.298
-    AudioNoInterrupts();
-    d1AmpEnv.attack(attackMs);
-    AudioInterrupts();
-    return;
+    // Repurposed as envelope filter depth — 0 = no effect, 1 = opens to 3× base cutoff
+    monoBass.envFiltDepth = norm;
+    return;  // no direct audio change; updateMonoBassEnvFilter() drives the filter
   }
 
   // Pitch snap depth increases with knob
@@ -779,6 +776,11 @@ static void engineD1Body(uint8_t idx, int knobValue) {
     float cutoff = baseCutoff * (0.6f + 0.4f * trackRatio);
     if (cutoff > 6000.0f) cutoff = 6000.0f;
     if (cutoff < 20.0f)   cutoff = 20.0f;
+    if (monoBass.active) {
+      // Cache base Hz for envelope filter; skip setting filter if env filter is active
+      monoBass.envFiltBaseHz = cutoff;
+      if (monoBass.envFiltDepth > 0.01f && monoBass.topKey() >= 0) return;
+    }
     AudioNoInterrupts();
     d1LowPass.frequency(cutoff);
     d1LowPass.resonance(1.5f);
