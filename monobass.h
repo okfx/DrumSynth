@@ -203,9 +203,9 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   float tauMs = monoBass.releaseMs * 0.6f + 40.0f;
   float decay = expf(-(float)elapsed / tauMs);  // 1.0 at trigger → 0.0 as time → ∞
 
-  // Fixed ceiling: always sweep to 5000 Hz at full depth regardless of base position.
+  // Fixed ceiling: always sweep to 8000 Hz at full depth regardless of base position.
   // This guarantees a wide, audible wah regardless of where the body knob is set.
-  static constexpr float kEnvFiltCeiling = 5000.0f;
+  static constexpr float kEnvFiltCeiling = 8000.0f;
   float peak = monoBass.envFiltBaseHz
              + monoBass.envFiltDepth * (kEnvFiltCeiling - monoBass.envFiltBaseHz);
   if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
@@ -213,7 +213,7 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   if (cutoff < 20.0f) cutoff = 20.0f;
 
   // High resonance during the sweep gives the vocal "waaah" character
-  float resonance = 1.5f + 2.0f * monoBass.envFiltDepth * decay;  // peaks at 3.5, settles to 1.5
+  float resonance = 1.5f + 2.5f * monoBass.envFiltDepth * decay;  // peaks at 4.0, settles to 1.5
 
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);
@@ -256,11 +256,11 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     monoBass.envFiltTrigger = sysTickMs;
     if (monoBass.envFiltDepth > 0.01f) {
       float peak = monoBass.envFiltBaseHz
-                 + monoBass.envFiltDepth * (5000.0f - monoBass.envFiltBaseHz);
-      if (peak > 5000.0f) peak = 5000.0f;
+                 + monoBass.envFiltDepth * (8000.0f - monoBass.envFiltBaseHz);
+      if (peak > 8000.0f) peak = 8000.0f;
       AudioNoInterrupts();
       d1LowPass.frequency(peak);
-      d1LowPass.resonance(1.5f + 2.0f * monoBass.envFiltDepth);  // up to 3.5 at full depth
+      d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);  // up to 4.0 at full depth
       AudioInterrupts();
     }
 
@@ -291,11 +291,11 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       monoBass.envFiltTrigger = sysTickMs;
       if (monoBass.envFiltDepth > 0.01f) {
         float peak = monoBass.envFiltBaseHz
-                   + monoBass.envFiltDepth * (5000.0f - monoBass.envFiltBaseHz);
-        if (peak > 5000.0f) peak = 5000.0f;
+                   + monoBass.envFiltDepth * (8000.0f - monoBass.envFiltBaseHz);
+        if (peak > 8000.0f) peak = 8000.0f;
         AudioNoInterrupts();
         d1LowPass.frequency(peak);
-        d1LowPass.resonance(1.5f + 2.0f * monoBass.envFiltDepth);
+        d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);
         AudioInterrupts();
       }
       for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);

@@ -1172,14 +1172,14 @@ void updateD1ChromaEnvFilter(uint32_t nowMs) {
   float tauMs = d1EffectiveDecay * 0.6f + 40.0f;
   float decay = expf(-(float)elapsed / tauMs);
 
-  static constexpr float kEnvFiltCeiling = 5000.0f;
+  static constexpr float kEnvFiltCeiling = 8000.0f;
   float peak = d1ChromaEnvFiltBaseHz
              + d1ChromaEnvFiltDepth * (kEnvFiltCeiling - d1ChromaEnvFiltBaseHz);
   if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
   float cutoff = d1ChromaEnvFiltBaseHz + (peak - d1ChromaEnvFiltBaseHz) * decay;
   if (cutoff < 20.0f) cutoff = 20.0f;
 
-  float resonance = 1.5f + 2.0f * d1ChromaEnvFiltDepth * decay;
+  float resonance = 1.5f + 2.5f * d1ChromaEnvFiltDepth * decay;
 
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);
@@ -1213,10 +1213,10 @@ void triggerD1() {
     if (d1ChromaMode && d1ChromaEnvFiltDepth > 0.01f) {
       d1ChromaEnvFiltTrigger = sysTickMs;
       float peak = d1ChromaEnvFiltBaseHz
-                 + d1ChromaEnvFiltDepth * (5000.0f - d1ChromaEnvFiltBaseHz);
-      if (peak > 5000.0f) peak = 5000.0f;
+                 + d1ChromaEnvFiltDepth * (8000.0f - d1ChromaEnvFiltBaseHz);
+      if (peak > 8000.0f) peak = 8000.0f;
       d1LowPass.frequency(peak);
-      d1LowPass.resonance(1.5f + 2.0f * d1ChromaEnvFiltDepth);
+      d1LowPass.resonance(1.5f + 2.5f * d1ChromaEnvFiltDepth);
     }
   }
   AudioInterrupts();

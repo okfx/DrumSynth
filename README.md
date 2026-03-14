@@ -115,6 +115,9 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 - `finalAmp` gain reduced from 5.0 to 3.5 to prevent DAC clipping on bright patches with high-shelf EQ boost
 - Audio thread safety: `AudioNoInterrupts()` guard added to `engineD2Noise` off-branch
 - D1 Body knob now responds immediately in Chroma mode when envelope filter is active but no note is decaying
+- Envelope filter sweep range widened: ceiling raised from 5000 Hz to 8000 Hz for more pronounced wah character
+- Envelope filter resonance peak raised from 3.5 to 4.0 at full depth (applies to both D1 Chroma and MONOBASS)
+- Master lowpass raised from 7500 Hz to 9000 Hz for a slightly brighter overall mix
 
 ## Changes (v1.03.1)
 
