@@ -259,7 +259,7 @@ static void displayD1Snap(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) {
     float norm = normalizeKnob(knobValue);
-    float attackMs = 0.5f * expf(norm * 4.605f);  // 0.5–50 ms
+    float attackMs = 0.5f * expf(norm * 5.298f);  // 0.5–100 ms
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "ATTACK");
     snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d ms", (int)(attackMs + 0.5f));
     monoBass.paramShowStart = sysTickMs;
@@ -745,8 +745,8 @@ static void engineD1Snap(uint8_t idx, int knobValue) {
   float norm = normalizeKnob(knobValue);
 
   if (monoBass.active) {
-    // Repurposed as attack control: 0.5–50 ms exponential
-    float attackMs = 0.5f * expf(norm * 4.605f);  // ln(50/0.5) ≈ 4.605
+    // Repurposed as attack control: 0.5–100 ms exponential
+    float attackMs = 0.5f * expf(norm * 5.298f);  // ln(100/0.5) ≈ 5.298
     AudioNoInterrupts();
     d1AmpEnv.attack(attackMs);
     AudioInterrupts();
