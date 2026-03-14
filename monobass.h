@@ -142,6 +142,7 @@ void enterMonoBassMode() {
   d1EQ.setHighShelf(1, 2000.0f, 0.0f, 1.0f); // flat shelf — no cut
   d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
   d1VoiceMixer.gain(1, 0.0f);  // mute snap transient — knob 5 is now env filter depth
+  d1AmpEnv.noteOff();          // kill any note held over from the sequencer
   AudioInterrupts();
   // Init envelope filter depth from current snap knob position
   monoBass.envFiltDepth = normalizeKnob(analog[5]->getValue());
@@ -198,17 +199,25 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   if (monoBass.envFiltTrigger == 0) return;
 
   uint32_t elapsed = nowMs - monoBass.envFiltTrigger;
-  // Time constant: ~1.5× release time, minimum 80ms for audible sweep
-  float tauMs = monoBass.releaseMs * 1.5f + 80.0f;
+  // Time constant: 0.6× release time, minimum 40ms — faster decay for punchier sweep
+  float tauMs = monoBass.releaseMs * 0.6f + 40.0f;
   float decay = expf(-(float)elapsed / tauMs);  // 1.0 at trigger → 0.0 as time → ∞
 
-  float peak = monoBass.envFiltBaseHz * (1.0f + 3.0f * monoBass.envFiltDepth);
-  if (peak > 6000.0f) peak = 6000.0f;
+  // Fixed ceiling: always sweep to 5000 Hz at full depth regardless of base position.
+  // This guarantees a wide, audible wah regardless of where the body knob is set.
+  static constexpr float kEnvFiltCeiling = 5000.0f;
+  float peak = monoBass.envFiltBaseHz
+             + monoBass.envFiltDepth * (kEnvFiltCeiling - monoBass.envFiltBaseHz);
+  if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
   float cutoff = monoBass.envFiltBaseHz + (peak - monoBass.envFiltBaseHz) * decay;
   if (cutoff < 20.0f) cutoff = 20.0f;
 
+  // High resonance during the sweep gives the vocal "waaah" character
+  float resonance = 1.5f + 2.0f * monoBass.envFiltDepth * decay;  // peaks at 3.5, settles to 1.5
+
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);
+  d1LowPass.resonance(resonance);
   AudioInterrupts();
 }
 
@@ -246,11 +255,12 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     // Envelope filter: open to peak cutoff at note attack
     monoBass.envFiltTrigger = sysTickMs;
     if (monoBass.envFiltDepth > 0.01f) {
-      float peak = monoBass.envFiltBaseHz * (1.0f + 3.0f * monoBass.envFiltDepth);
-      if (peak > 6000.0f) peak = 6000.0f;
+      float peak = monoBass.envFiltBaseHz
+                 + monoBass.envFiltDepth * (5000.0f - monoBass.envFiltBaseHz);
+      if (peak > 5000.0f) peak = 5000.0f;
       AudioNoInterrupts();
       d1LowPass.frequency(peak);
-      d1LowPass.resonance(1.5f);
+      d1LowPass.resonance(1.5f + 2.0f * monoBass.envFiltDepth);  // up to 3.5 at full depth
       AudioInterrupts();
     }
 
