@@ -147,16 +147,21 @@ static MonoAnimPhase monoAnimPhase = MONO_ANIM_NONE;
 static uint32_t monoAnimStart = 0;
 static constexpr uint32_t MONO_ANIM_DURATION_MS = 2000;  // fits within 1750→4000 window
 
-// Precomputed pixel masks for MONOBASS Bayer dither animation.
-// Computed once in setup() by rendering text and reading back pixels.
-static constexpr int kMonoTextX = 16;   // (128 - 96) / 2
+// Precomputed text mask for MONOBASS white-fill sweep animation.
+// Computed once in setup() since it depends on the font renderer.
+static constexpr int kMonoTextX = 16;  // (128 - 96) / 2
 static constexpr int kMonoTextY = 2;
-static constexpr int kMonoTextW = 96;   // 8 chars × 12px at size 2
-static constexpr int kMonoTextH = 16;
-static constexpr int kOutlineRadius = 3;
-// Bitmask arrays: 1 bit per pixel in the text region (96×16 = 1536 bits = 192 bytes)
-static uint8_t monoTextMask[192];
-static uint8_t monoOutlineMask[192];
+static constexpr int kMonoTextW = 96;  // 8 chars × 12px at size 2
+static constexpr int kMonoTextH = 14;  // 7 rows × 2 at size 2 (y=2..15)
+// Sweep region: 1px symmetrical buffer around visible text, y=0 to y=17
+static constexpr int kSweepLeftX = kMonoTextX - 1;       // 15 (1px before 'M')
+static constexpr int kSweepRightX = kMonoTextX + kMonoTextW - 1; // 111 (1px after 'S')
+static constexpr int kSweepW = kSweepRightX - kSweepLeftX; // 96
+static constexpr int kSweepRegionH = 18;     // y < 18, 1px gap above divider at y=19
+static constexpr int kSweepTransitionW = 16;  // Bayer-dithered soft edge width in pixels
+// Text bitmask: 1 bit per pixel in the text region (kMonoTextW × kMonoTextH = 96×14)
+// Stored as packed bytes: ceil(1344 / 8) = 168 bytes
+static uint8_t monoTextMask[168];
 static bool monoMasksReady = false;
 
 static void startChromaRamp(uint8_t dotIndex, bool appearing);
@@ -248,7 +253,6 @@ static void cancelMonoAnim() {
 // Must be called once in setup() after display.begin() / clearDisplay().
 void precomputeMonoMasks() {
   memset(monoTextMask, 0, sizeof(monoTextMask));
-  memset(monoOutlineMask, 0, sizeof(monoOutlineMask));
 
   // Render text to display buffer to capture pixel positions
   display.fillRect(kMonoTextX, kMonoTextY, kMonoTextW, kMonoTextH, SH110X_BLACK);
@@ -265,30 +269,6 @@ void precomputeMonoMasks() {
         monoTextMask[bit >> 3] |= (1 << (bit & 7));
       }
     }
-  }
-
-  // Expand text mask by kOutlineRadius to get outline+text area
-  uint8_t expandedMask[192];
-  memset(expandedMask, 0, sizeof(expandedMask));
-  for (int y = 0; y < kMonoTextH; y++) {
-    for (int x = 0; x < kMonoTextW; x++) {
-      int bit = y * kMonoTextW + x;
-      if (!(monoTextMask[bit >> 3] & (1 << (bit & 7)))) continue;
-      for (int oy = -kOutlineRadius; oy <= kOutlineRadius; oy++) {
-        for (int ox = -kOutlineRadius; ox <= kOutlineRadius; ox++) {
-          int nx = x + ox, ny = y + oy;
-          if (nx >= 0 && nx < kMonoTextW && ny >= 0 && ny < kMonoTextH) {
-            int nbit = ny * kMonoTextW + nx;
-            expandedMask[nbit >> 3] |= (1 << (nbit & 7));
-          }
-        }
-      }
-    }
-  }
-
-  // Outline = expanded minus text
-  for (int i = 0; i < 192; i++) {
-    monoOutlineMask[i] = expandedMask[i] & ~monoTextMask[i];
   }
 
   // Clear the rendering we used for mask capture
@@ -2623,18 +2603,14 @@ bool isSafeToPushOled(uint32_t nowMs) {
 void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
                   uint8_t slotSnap, bool playingSnap) {
   // MONOBASS mode: replace entire toolbar with centered "MONOBASS" text.
-  // Skip when exit dissolve animation is running — renderMonoTextAnim owns the text.
-  if (monoBass.active && monoAnimPhase != MONO_ANIM_EXITING) {
+  // During exit sweep, draw the text as base — the sweep overwrites it R→L.
+  if (monoBass.active) {
     display.setTextSize(2);
-    int16_t x1, y1;
-    uint16_t w, h;
-    display.getTextBounds("MONOBASS", 0, 0, &x1, &y1, &w, &h);
-    display.setCursor((128 - w) / 2, 2);
+    display.setCursor(kMonoTextX, kMonoTextY);
     display.print("MONOBASS");
     display.setTextSize(1);
     return;
   }
-  if (monoBass.active) return;  // exit dissolve active — skip normal toolbar too
 
   // BPM / EXT clock state
   display.setCursor(0, 0);
@@ -2843,110 +2819,49 @@ void renderChromaDots() {
   }
 }
 
-// MONOBASS text Bayer-dithered animation — 3-phase outline reveal (entering)
-// or reverse dissolve (exiting).  Uses precomputed text/outline masks.
+// MONOBASS white-fill sweep animation — a solid white rectangle sweeps across
+// the top-bar region with MONOBASS text knocked out in black. The sweep position
+// directly communicates hold progress. Uses precomputed text mask.
 void renderMonoTextAnim() {
   if (monoAnimPhase == MONO_ANIM_NONE || !monoMasksReady) return;
 
   uint32_t elapsed = sysTickMs - monoAnimStart;
-  if (elapsed >= MONO_ANIM_DURATION_MS) return;
+  if (elapsed >= MONO_ANIM_DURATION_MS) elapsed = MONO_ANIM_DURATION_MS;
 
   float progress = (float)elapsed / (float)MONO_ANIM_DURATION_MS;
+  bool entering = (monoAnimPhase == MONO_ANIM_ENTERING);
 
-  // Clear text region (clamped to screen bounds)
-  int clearY = (kMonoTextY - kOutlineRadius < 0) ? 0 : kMonoTextY - kOutlineRadius;
-  display.fillRect(kMonoTextX - kOutlineRadius, clearY,
-                   kMonoTextW + kOutlineRadius * 2,
-                   kMonoTextH + kOutlineRadius * 2, SH110X_BLACK);
+  // sweepPos: 0 to (kSweepW + kSweepTransitionW)
+  // At progress=0: nothing filled. At progress=1: entire region filled.
+  float sweepPos = progress * (float)(kSweepW + kSweepTransitionW);
 
-  if (monoAnimPhase == MONO_ANIM_ENTERING) {
-    if (progress <= 0.33f) {
-      // Phase 1: outline dithers in
-      float t = progress / 0.33f;
-      for (int y = 0; y < kMonoTextH; y++) {
-        for (int x = 0; x < kMonoTextW; x++) {
-          int bit = y * kMonoTextW + x;
-          if (monoOutlineMask[bit >> 3] & (1 << (bit & 7))) {
-            if (bayerDither(kMonoTextX + x, kMonoTextY + y, t))
-              display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          }
-        }
+  for (int sy = 0; sy < kSweepRegionH; sy++) {
+    for (int sx = kSweepLeftX; sx < kSweepRightX; sx++) {
+      int dx = entering ? (sx - kSweepLeftX) : (kSweepRightX - 1 - sx);
+      float behind = sweepPos - (float)dx;
+      if (behind <= 0.0f) continue;  // ahead of sweep — keep base (top bar or text)
+
+      // Is this a text pixel?
+      bool isText = false;
+      int my = sy - kMonoTextY;
+      int mx = sx - kMonoTextX;
+      if (mx >= 0 && mx < kMonoTextW && my >= 0 && my < kMonoTextH) {
+        int bit = my * kMonoTextW + mx;
+        isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
       }
-    } else if (progress <= 0.66f) {
-      // Phase 2: outline solid, text dithers in
-      float t = (progress - 0.33f) / 0.33f;
-      for (int y = 0; y < kMonoTextH; y++) {
-        for (int x = 0; x < kMonoTextW; x++) {
-          int bit = y * kMonoTextW + x;
-          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
-          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
-          if (isOutline) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          } else if (isText && bayerDither(kMonoTextX + x, kMonoTextY + y, t)) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          }
-        }
-      }
-    } else {
-      // Phase 3: text solid, outline dithers out
-      float t = (progress - 0.66f) / 0.34f;
-      for (int y = 0; y < kMonoTextH; y++) {
-        for (int x = 0; x < kMonoTextW; x++) {
-          int bit = y * kMonoTextW + x;
-          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
-          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
-          if (isText) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          } else if (isOutline && bayerDither(kMonoTextX + x, kMonoTextY + y, 1.0f - t)) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          }
-        }
-      }
-    }
-  } else {
-    // EXITING: reverse — text stays, outline appears, then everything fades
-    if (progress <= 0.33f) {
-      float t = progress / 0.33f;
-      for (int y = 0; y < kMonoTextH; y++) {
-        for (int x = 0; x < kMonoTextW; x++) {
-          int bit = y * kMonoTextW + x;
-          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
-          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
-          if (isText) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          } else if (isOutline && bayerDither(kMonoTextX + x, kMonoTextY + y, t)) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          }
-        }
-      }
-    } else if (progress <= 0.66f) {
-      float t = (progress - 0.33f) / 0.33f;
-      for (int y = 0; y < kMonoTextH; y++) {
-        for (int x = 0; x < kMonoTextW; x++) {
-          int bit = y * kMonoTextW + x;
-          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
-          bool isText = monoTextMask[bit >> 3] & (1 << (bit & 7));
-          if (isOutline) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          } else if (isText && bayerDither(kMonoTextX + x, kMonoTextY + y, 1.0f - t)) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          }
-        }
-      }
-    } else {
-      float t = (progress - 0.66f) / 0.34f;
-      for (int y = 0; y < kMonoTextH; y++) {
-        for (int x = 0; x < kMonoTextW; x++) {
-          int bit = y * kMonoTextW + x;
-          bool isOutline = monoOutlineMask[bit >> 3] & (1 << (bit & 7));
-          if (isOutline && bayerDither(kMonoTextX + x, kMonoTextY + y, 1.0f - t)) {
-            display.drawPixel(kMonoTextX + x, kMonoTextY + y, SH110X_WHITE);
-          }
+
+      if (behind >= (float)kSweepTransitionW) {
+        // Fully behind sweep: white fill, text knocked out in black
+        display.drawPixel(sx, sy, isText ? SH110X_BLACK : SH110X_WHITE);
+      } else {
+        // Transition zone: clear to black, then dither white fill in
+        display.drawPixel(sx, sy, SH110X_BLACK);
+        if (!isText && bayerDither(sx, sy, behind / (float)kSweepTransitionW)) {
+          display.drawPixel(sx, sy, SH110X_WHITE);
         }
       }
     }
   }
-  display.setTextSize(1);
 }
 
 // Parameter overlay — bottom text or voice rails.
