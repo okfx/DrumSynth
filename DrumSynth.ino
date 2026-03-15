@@ -107,8 +107,16 @@ bool d3ChromaMode = false;
 // Wavefolder CHROMA mode — toggled via X+PLAY combo
 bool wfChromaMode = false;
 
-// Shuffle state (909-style, on/off toggle)
-static bool shuffleEnabled = false;
+// Shuffle state (TR-909 style, 7 settings + OFF)
+// Delay ticks are on a 96-PPQN grid: each 16th = 24 ticks.
+// Even 16th notes are delayed by kShuffleDelayTicks[mode] ticks.
+enum ShuffleMode : uint8_t {
+  SHUFFLE_OFF = 0, SHUFFLE_1, SHUFFLE_2, SHUFFLE_3,
+  SHUFFLE_4, SHUFFLE_5, SHUFFLE_6, SHUFFLE_7
+};
+static volatile ShuffleMode shuffleMode = SHUFFLE_OFF;
+static constexpr uint8_t kShuffleDelayTicks[8] = { 0, 0, 2, 4, 6, 8, 10, 12 };
+static constexpr uint8_t kShufflePercent[8]    = { 50, 50, 54, 58, 62, 66, 70, 75 };
 
 // Bayer 4×4 ordered dithering — returns true if pixel (x,y) should be ON
 // at the given density (0.0 = all off, 1.0 = all on).
@@ -281,9 +289,9 @@ void precomputeMonoMasks() {
   monoMasksReady = true;
 }
 
-// bpm: main-loop only — not accessed from any ISR. rearmStepTimer() is only
-// called from setTransport() and setup(), both main-loop context.
-float bpm = 120.0f;
+// bpm: main-loop writes (knob handler), ISR reads via shuffledStepPeriodUs().
+// 32-bit float read is atomic on Cortex-M7 (single LDR).
+volatile float bpm = 120.0f;
 // currentStep: ISR-written (stepISR, externalClockISR, subdivTimerCallback),
 // main loop reads. See concurrency contract in ext_sync.h.
 volatile uint8_t currentStep = 0;
@@ -546,7 +554,7 @@ static inline int chokeOffsetFromKnob(int knobVal) {
 // D3 effective decay (includes choke and accent boost, capped at 250ms)
 static inline float computeD3Decay() {
   float base = d3DecayBase + chokeOffsetMs;
-  if (base < 7.0f) base = 7.0f;
+  if (base < 15.0f) base = 15.0f;
   if (d3AccentMode != ACCENT_OFF) base += 7.0f;
   if (base > 250.0f) base = 250.0f;
   return base;
@@ -1425,13 +1433,13 @@ void handlePlayStop() {
 
     // PLAY = ARM. No step fires here. The next external pulse (or
     // internal tick for RUN_INT) fires step 0.
-    subdivTimer.end();
     // Snapshot sysTickMs before the critical section — avoids reading
     // the volatile inside noInterrupts() where it can't update anyway.
     uint32_t nowTick = sysTickMs;
-    // Wide critical section — all ISR-shared state must be initialized
-    // before setTransport() arms the timer that creates the ISR source.
+    // Wide critical section — subdivTimer.end() must be inside to prevent
+    // a pending callback from firing between end() and state zeroing.
     noInterrupts();
+    subdivTimer.end();
     pendingStepCount = 0;
     extStepAcc = 0;
     subdivStepsRemaining = 0;
@@ -1510,7 +1518,6 @@ static ComboModState comboMod = {};
 
 // Track active combo for hold-duration combos (e.g. X+SAVE for PPQN)
 static int8_t activeComboIndex = -1;
-static uint32_t comboSecondPressTick = 0;
 
 // --- Combo action functions (combo button held + second button) ---
 
@@ -1576,13 +1583,29 @@ static void comboChromaWF() {
   wfChromaMode = !wfChromaMode;
 }
 
-static void comboShuffle() {
-  shuffleEnabled = !shuffleEnabled;
+// Cycle shuffle mode: OFF → 1 → 2 → … → 7 → OFF.
+// Shows overlay "SHUFFLE OFF" or "SHUFFLE N / xx%".
+// Live-updates the step timer if internal clock is running.
+static void cycleShuffle(uint32_t nowTick) {
+  uint8_t next = (uint8_t)shuffleMode + 1;
+  shuffleMode = (next > SHUFFLE_7) ? SHUFFLE_OFF : (ShuffleMode)next;
   snprintf(displayParameter1, sizeof(displayParameter1), "SHUFFLE");
-  snprintf(displayParameter2, sizeof(displayParameter2),
-           shuffleEnabled ? "ON" : "OFF");
-  parameterOverlayStartTick = sysTickMs;
+  if (shuffleMode == SHUFFLE_OFF) {
+    snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
+  } else {
+    snprintf(displayParameter2, sizeof(displayParameter2),
+             "%u / %u%%", (unsigned)shuffleMode, (unsigned)kShufflePercent[shuffleMode]);
+  }
+  parameterOverlayStartTick = nowTick;
   activeRail = RAIL_NONE;
+  // Live-update timer so shuffle takes effect immediately
+  if (transportState == RUN_INT && sequencePlaying) {
+    stepTimer.update(shuffledStepPeriodUs(currentStep));
+  }
+}
+
+static void comboShuffle() {
+  cycleShuffle(sysTickMs);
 }
 
 static void comboPPQN() {
@@ -1642,7 +1665,6 @@ static bool dispatchCombo(uint8_t btnIdx, uint32_t nowTick) {
       comboTable[i].onTrigger();
     } else {
       activeComboIndex = i;
-      comboSecondPressTick = nowTick;
     }
     return true;
   }
@@ -1736,6 +1758,7 @@ static void btnPlayHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*he
 
 static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
+  // Reset hold-phase flags (gate PPQN save and MONOBASS anim re-entry)
   self.enteredMode = false;
   self.enteredMode2 = false;
 
@@ -2104,13 +2127,8 @@ void updateStepButtons() {
         }
 
         if (i == 15) {
-          // Step 15: shuffle toggle
-          shuffleEnabled = !shuffleEnabled;
-          snprintf(displayParameter1, sizeof(displayParameter1), "SHUFFLE");
-          snprintf(displayParameter2, sizeof(displayParameter2),
-                   shuffleEnabled ? "ON" : "OFF");
-          parameterOverlayStartTick = nowTick;
-          activeRail = RAIL_NONE;
+          // Step 15: cycle shuffle mode (OFF → 1 → … → 7 → OFF)
+          cycleShuffle(nowTick);
         } else if (i <= 9) {
           // Steps 0-9: select & load memory slot
           activeSaveSlot = i;
@@ -2172,7 +2190,7 @@ void updateStepButtons() {
           snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
           snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
           parameterOverlayStartTick = nowTick;
-        } else if (stepPressTick[i] != 0
+        } else if (*heldStep < 0 && stepPressTick[i] != 0
                    && (uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
           *heldStep = i;
         }
@@ -2268,12 +2286,12 @@ float d1ChromaFreq(uint8_t midiNote) {
 }
 
 // Chroma pitch: writes note name string for display.
-// outName must be >= 5 chars.
+// outName must be >= 6 chars (worst case: "C#10\0" = 5 + null).
 static inline void formatChromaNote(uint8_t midiNote, char* outName) {
   static const char* NOTE_NAMES[] = {
     "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
   };
-  snprintf(outName, 5, "%s%d", NOTE_NAMES[midiNote % 12], (midiNote / 12) - 1);
+  snprintf(outName, 6, "%s%d", NOTE_NAMES[midiNote % 12], (midiNote / 12) - 1);
 }
 
 // Maps knob 0–1023 to MIDI note in A1(33)–D#5(75) range, quantized.
@@ -2665,7 +2683,7 @@ void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
   {
     char chokeBuf[8];
     if (chokeSnap == 0) {
-      strcpy(chokeBuf, "OFF");
+      snprintf(chokeBuf, sizeof(chokeBuf), "OFF");
     } else {
       snprintf(chokeBuf, sizeof(chokeBuf), "%+d%%", chokeSnap);
     }

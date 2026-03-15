@@ -3,9 +3,16 @@
 // ============================================================================
 //  EEPROM Persistence — eeprom.h
 //
-//  Pattern save/load across 10 slots, plus PPQN persistence.
-//  Each slot stores a 3-track + D1/D2/D3 chroma × 16-step pattern with magic number validation.
-//  PPQN is stored separately after the pattern slots.
+//  Pattern save/load across 10 slots, plus PPQN and MONOBASS persistence.
+//  Each slot stores a 3-track + D1/D2/D3 chroma × 16-step pattern with
+//  magic number validation and CRC-8 integrity checking.
+//  PPQN and MONOBASS are stored separately after the pattern slots.
+//
+//  Memory map (Teensy 4.0: 1080 bytes available):
+//    Slots 0–9:  0–1019   (10 × 102 = 1020 bytes)
+//    PPQN:       1020–1021 (magic + value)
+//    MONOBASS:   1022–1023 (magic + bool)
+//    Total:      1024 of 1080 bytes used
 //
 //  Include AFTER: hw_setup.h (numSteps), EEPROM.h, sequence arrays,
 //  ppqn, PPQN_DEFAULT, PPQN_OPTIONS, UI overlay variables.
@@ -78,7 +85,7 @@ struct PatternStore {
   uint8_t d1Chroma[numSteps];     // Per-step MIDI note for D1 chroma mode
   uint8_t d2Chroma[numSteps];     // Per-step MIDI note for D2 chroma mode
   uint8_t d3Chroma[numSteps];     // Per-step MIDI note for D3 chroma mode
-  uint8_t flags;                  // bit 0: d1ChromaMode, bit 1: d2ChromaMode, bit 2: d3ChromaMode, bit 3: wfChromaMode
+  uint8_t flags;                  // bits 0-3: d1/d2/d3/wfChromaMode, bits 4-6: shuffleMode, bit 7: reserved
 };
 
 struct EepromSlot {
@@ -98,16 +105,16 @@ static_assert(sizeof(EepromSlot)   == 102, "EepromSlot layout changed — bump E
 static constexpr uint16_t EEPROM_MAGIC_V1    = 0x4247;  // V1 magic (D1 chroma 33–69)
 static constexpr uint16_t EEPROM_MAGIC_V2   = 0x4248;  // V2 magic (D1 chroma 33–75)
 static constexpr uint16_t EEPROM_MAGIC      = 0x4249;  // Current magic (+ wfChromaMode in flags)
-static constexpr uint8_t  SAVE_SLOT_COUNT   = 16;
-// PPQN stored after all save slots
+static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
+// PPQN stored after all save slots (2 bytes: magic + value)
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
 static constexpr uint8_t  EEPROM_PPQN_MAGIC = 0xAA;
 // MONOBASS global state stored after PPQN (2 bytes: magic + bool)
 static constexpr int      EEPROM_MONOBASS_ADDR  = EEPROM_PPQN_ADDR + 2;
 static constexpr uint8_t  EEPROM_MONOBASS_MAGIC = 0xBB;
-// Legacy addresses (10-slot layout) for one-time migration on first boot
-static constexpr int      EEPROM_LEGACY_PPQN_ADDR     = 10 * (int)sizeof(EepromSlot);
-static constexpr int      EEPROM_LEGACY_MONOBASS_ADDR  = EEPROM_LEGACY_PPQN_ADDR + 2;
+// Total EEPROM footprint: 10×102 + 2 + 2 = 1024 bytes (Teensy 4.0 has 1080)
+static constexpr int      EEPROM_TOTAL_BYTES = EEPROM_MONOBASS_ADDR + 2;
+static_assert(EEPROM_TOTAL_BYTES <= 1080, "EEPROM layout exceeds Teensy 4.0 capacity (1080 bytes)");
 
 // ============================================================================
 //  State
@@ -164,6 +171,10 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   d3ChromaMode = (slot.patterns.flags & 0x04) != 0;
   wfChromaMode = (version >= 3) ? ((slot.patterns.flags & 0x08) != 0) : false;
 
+  // Restore shuffle mode from bits 4-6 (0 = SHUFFLE_OFF for old patterns)
+  uint8_t rawShuffle = (slot.patterns.flags >> 4) & 0x07;
+  shuffleMode = (rawShuffle <= SHUFFLE_7) ? (ShuffleMode)rawShuffle : SHUFFLE_OFF;
+
   // If D1 chroma was just enabled by load, save current freq for restore on exit
   if (d1ChromaMode && !wasD1Chroma) {
     d1FreqBeforeChroma = d1BaseFreq;
@@ -191,6 +202,11 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   }
 
   patternDirty = false;
+
+  // Live-update step timer if shuffle mode changed during playback
+  if (transportState == RUN_INT && sequencePlaying) {
+    stepTimer.update(shuffledStepPeriodUs(currentStep));
+  }
 
   // Show "PATTERN LOADED" overlay message
   activeRail = RAIL_NONE;
@@ -225,11 +241,12 @@ void saveStateToEEPROM(uint8_t slotIndex) {
     slot.patterns.d3Chroma[step] = d3ChromaNote[step];
   }
 
-  // Pack chroma mode flags
+  // Pack chroma mode flags + shuffle mode (bits 4-6)
   slot.patterns.flags = (d1ChromaMode ? 0x01 : 0)
                       | (d2ChromaMode ? 0x02 : 0)
                       | (d3ChromaMode ? 0x04 : 0)
-                      | (wfChromaMode ? 0x08 : 0);
+                      | (wfChromaMode ? 0x08 : 0)
+                      | (((uint8_t)shuffleMode & 0x07) << 4);
 
   // CRC8 over pattern data — detects partial writes on load
   slot.crc = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
@@ -246,14 +263,10 @@ void saveStateToEEPROM(uint8_t slotIndex) {
 }
 
 void loadPpqnFromEEPROM() {
-  // Try current address first, then legacy (10-slot layout) for migration
-  int addrs[] = { EEPROM_PPQN_ADDR, EEPROM_LEGACY_PPQN_ADDR };
-  for (int a : addrs) {
-    if (EEPROM.read(a) == EEPROM_PPQN_MAGIC) {
-      uint8_t val = EEPROM.read(a + 1);
-      for (int i = 0; i < PPQN_OPTION_COUNT; i++) {
-        if (PPQN_OPTIONS[i] == val) { ppqn = val; return; }
-      }
+  if (EEPROM.read(EEPROM_PPQN_ADDR) == EEPROM_PPQN_MAGIC) {
+    uint8_t val = EEPROM.read(EEPROM_PPQN_ADDR + 1);
+    for (int i = 0; i < PPQN_OPTION_COUNT; i++) {
+      if (PPQN_OPTIONS[i] == val) { ppqn = val; return; }
     }
   }
   ppqn = PPQN_DEFAULT;
@@ -275,12 +288,8 @@ void savePpqnToEEPROM(uint8_t val) {
 // ============================================================================
 
 bool loadMonoBassStatusFromEEPROM() {
-  // Try current address first, then legacy (10-slot layout) for migration
-  int addrs[] = { EEPROM_MONOBASS_ADDR, EEPROM_LEGACY_MONOBASS_ADDR };
-  for (int a : addrs) {
-    if (EEPROM.read(a) == EEPROM_MONOBASS_MAGIC) {
-      return EEPROM.read(a + 1) != 0;
-    }
+  if (EEPROM.read(EEPROM_MONOBASS_ADDR) == EEPROM_MONOBASS_MAGIC) {
+    return EEPROM.read(EEPROM_MONOBASS_ADDR + 1) != 0;
   }
   return false;
 }

@@ -14,7 +14,7 @@ as one file. Headers are inline code segments, not independent modules.
 
 | File | Purpose | Notes |
 |------|---------|-------|
-| `DrumSynth.ino` | Main firmware (~2520 lines) | State, setup, loop, transport, triggers, buttons, knobs, display |
+| `DrumSynth.ino` | Main firmware (~3100 lines) | State, setup, loop, transport, triggers, buttons, knobs, display |
 | `audiotool.h` | Audio Design Tool output | **Auto-generated — NEVER full-file rewrite** |
 | `audio_init.h` | One-time audio object init | Codec, envelopes, filters, mixer gains |
 | `hw_setup.h` | Pin assignments, peripheral objects | Mux, shift register, OLED, constants |
@@ -56,7 +56,7 @@ All ISRs pinned to NVIC priority 128 (same priority = no preemption).
 ISR sources: `stepISR` (PIT), `subdivTimerCallback` (PIT), `externalClockISR` (GPIO).
 
 - **ISR writes, main reads:** `currentStep`, `pendingStepCount`, `sysTickMs`, ext clock timing vars
-- **Main writes, ISR reads:** `transportState`, `sequencePlaying`, `armed`, `ppqn`
+- **Main writes, ISR reads:** `transportState`, `sequencePlaying`, `armed`, `ppqn`, `bpm` (via `shuffledStepPeriodUs()`)
 - **Main only:** sequences, trigger functions, display, knob state, EEPROM
 
 Rule: aligned 32-bit reads/writes are atomic on ARM Cortex-M7. Use `noInterrupts()`
@@ -84,15 +84,15 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
 | **D3 Chroma** | D3 hold 1.5s | Per-step pitch for all D3 voices |
 | **WF Chroma** | PLAY hold 1.5s | Master wavefolder freq quantized to chromatic notes |
 | **PPQN Select** | MEM hold 1.5s | Stops transport, cycles PPQN values, hold again to save |
+| **Shuffle** | X+step15 or X+LOAD | TR-909 shuffle (7 levels), internal clock only, disabled in MONOBASS |
 
 ### EEPROM
 
-- 16 pattern slots × 102 bytes + 2 bytes PPQN + 1 byte MONOBASS = 1635 bytes (Teensy 4.0 EEPROM emulates up to 4284 bytes)
-- UI accesses slots 0-9 via combo+step buttons; slots 10-15 reserved for future expansion
+- 10 pattern slots × 102 bytes + 2 bytes PPQN + 2 bytes MONOBASS = 1024 of 1080 bytes (Teensy 4.0)
+- Slots 0–9 accessible via combo+step buttons; compile-time `static_assert` guards capacity
 - Magic `0x4249` (current), `0x4248`/`0x4247` (legacy backward compat)
-- PPQN/MONOBASS addresses migrated from 10-slot layout on first boot (checks legacy addresses as fallback)
 - CRC-8 over `PatternStore` — rejects corrupted slots
-- Stores: 3 sequences + 3 chroma note arrays + chroma mode flags + MONOBASS active state
+- Stores: 3 sequences + 3 chroma note arrays + chroma mode flags (bits 0-3) + shuffle mode (bits 4-6) + MONOBASS active state
 
 ### Knob Map
 

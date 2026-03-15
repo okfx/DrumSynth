@@ -89,7 +89,7 @@ extern float d3DecayBase;
 extern uint8_t d3AccentMode;
 extern uint16_t d3AccentMask;
 extern AccentPreview accentPreview;
-extern float bpm;
+extern volatile float bpm;
 extern float extBpmDisplay;
 extern int chokeOffsetMs;
 extern int chokeDisplayPercent;
@@ -1371,11 +1371,9 @@ static void engineMasterTempo(uint8_t idx, int knobValue) {
 
   // If internal clock is currently running, adjust period without restarting.
   // update() finishes the current interval, then applies the new period --
-  // no gap, no stutter.
+  // no gap, no stutter.  shuffledStepPeriodUs() handles shuffle + clamping.
   if (transportState == RUN_INT) {
-    float stepPeriodUs = 60000000.0f / (STEPS_PER_BEAT * bpm);
-    if (stepPeriodUs < 500.0f) stepPeriodUs = 500.0f;
-    stepTimer.update((uint32_t)stepPeriodUs);
+    stepTimer.update(shuffledStepPeriodUs(currentStep));
   }
 }
 

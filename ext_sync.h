@@ -27,7 +27,7 @@ extern volatile TransportState transportState;
 extern volatile bool sequencePlaying;
 extern volatile bool armed;
 extern volatile uint16_t armPulseCountdown;
-extern float bpm;
+extern volatile float bpm;
 extern volatile uint8_t ppqn;
 
 // Shared timer (used for internal clock)
@@ -129,6 +129,28 @@ float extBpmDisplay = 0.0f;
 //  ISR Functions
 // ============================================================================
 
+// Compute step period (µs) with TR-909 shuffle applied.
+// Even steps (0,2,4…) are shortened; odd steps (1,3,5…) are lengthened.
+// The total time per pair remains constant (no tempo drift).
+// Safe to call from ISR — uses float division (same as rearmStepTimer).
+static inline uint32_t shuffledStepPeriodUs(uint8_t stepJustPlayed) {
+  float basePeriod = 60000000.0f / (STEPS_PER_BEAT * bpm);
+  if (basePeriod < 500.0f) basePeriod = 500.0f;
+  uint8_t s = kShuffleDelayTicks[shuffleMode];
+  if (s == 0) return (uint32_t)basePeriod;
+  // stepJustPlayed is the step that just fired.
+  // Next step = stepJustPlayed + 1.
+  // If next step is even → short gap (even step fires early → less wait).
+  // If next step is odd  → long gap  (odd step fires late → more wait).
+  bool nextIsOdd = ((stepJustPlayed + 1) & 1) != 0;
+  uint32_t base = (uint32_t)basePeriod;
+  if (nextIsOdd) {
+    return base * (24u + s) / 24u;  // long gap before odd step
+  } else {
+    return base * (24u - s) / 24u;  // short gap before even step
+  }
+}
+
 // Internal clock step generation — only active when in RUN_INT mode.
 // Advances currentStep at ISR time so the step boundary is anchored to the
 // timer tick, not the main loop. Main loop fires audio via playSequence().
@@ -144,6 +166,9 @@ void stepISR() {
     if (pendingStepCount < 255) {
       currentStep = (currentStep + 1) % numSteps;
       pendingStepCount++;
+      // Apply shuffle: set the timer period for the *next* step.
+      // stepTimer.update() is ISR-safe (used by engineMasterTempo).
+      stepTimer.update(shuffledStepPeriodUs(currentStep));
     }
   }
 }
@@ -283,7 +308,7 @@ void externalClockISR() {
     // Arm subdivision for deferred steps (step B for ppqn=2, B/C/D for ppqn=1).
     // Uses slow-filtered synthInterval — same source as the normal subdivision path.
     uint8_t p = ppqn;
-    if (p < STEPS_PER_BEAT) {
+    if (p > 0 && p < STEPS_PER_BEAT) {
       uint8_t stepsPerPulse = STEPS_PER_BEAT / p;
       uint8_t deferred = stepsPerPulse - 1;
       uint32_t pulseInterval = synthIntervalUs;
@@ -315,6 +340,7 @@ void externalClockISR() {
     // ppqn is volatile (main loop writes it in PPQN mode).
     uint8_t p = ppqn;
 
+    if (p == 0) return;  // invalid — reject silently
     if (p >= STEPS_PER_BEAT) {
       // --- STANDARD PATH (ppqn >= 4): accumulator, at most 1 step per pulse ---
       uint8_t acc = extStepAcc + STEPS_PER_BEAT;
@@ -371,13 +397,10 @@ void externalClockISR() {
 //  Helper Functions
 // ============================================================================
 
-// (Re)start the internal clock timer based on current BPM
+// (Re)start the internal clock timer based on current BPM + shuffle
 void rearmStepTimer() {
-  // 60,000,000 µs/min ÷ STEPS_PER_BEAT ÷ bpm = µs per step
-  float stepPeriodUs = 60000000.0f / (STEPS_PER_BEAT * bpm);
-  if (stepPeriodUs < 500.0f) stepPeriodUs = 500.0f;
   stepTimer.end();
-  stepTimer.begin(stepISR, (uint32_t)stepPeriodUs);
+  stepTimer.begin(stepISR, shuffledStepPeriodUs(currentStep));
 }
 
 // Clear all external clock state — pulse tracking, subdivision, and display.

@@ -20,6 +20,7 @@
 static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS    = 1200;
 static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1200;
 static constexpr uint32_t MONOBASS_NOTE_DISPLAY_MS   = 1200;
+static constexpr float    kEnvFiltCeiling             = 8000.0f;  // envelope filter max Hz
 
 // ============================================================================
 //  State
@@ -205,9 +206,8 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   float tauMs = fmaxf(monoBass.releaseMs * 0.6f + 40.0f, 100.0f);
   float decay = expf(-(float)elapsed / tauMs);  // 1.0 at trigger → 0.0 as time → ∞
 
-  // Fixed ceiling: always sweep to 8000 Hz at full depth regardless of base position.
+  // Fixed ceiling: always sweep to kEnvFiltCeiling at full depth regardless of base.
   // This guarantees a wide, audible wah regardless of where the body knob is set.
-  static constexpr float kEnvFiltCeiling = 8000.0f;
   float peak = monoBass.envFiltBaseHz
              + monoBass.envFiltDepth * (kEnvFiltCeiling - monoBass.envFiltBaseHz);
   if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
@@ -236,6 +236,10 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
   if (buttonIndex >= 12) return true;  // only 12 notes per octave — ignore top 4 keys
 
   if (pressed) {
+    // Skip if already held (debounce edge case — prevents ghost stack entries)
+    for (int k = 0; k < monoBass.heldCount; k++) {
+      if (monoBass.heldKeys[k] == buttonIndex) return true;
+    }
     // Push key onto held-key stack
     if (monoBass.heldCount < MonoBassState::kMaxHeldKeys) {
       monoBass.heldKeys[monoBass.heldCount++] = buttonIndex;
@@ -258,8 +262,8 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     monoBass.envFiltTrigger = sysTickMs;
     if (monoBass.envFiltDepth > 0.01f) {
       float peak = monoBass.envFiltBaseHz
-                 + monoBass.envFiltDepth * (8000.0f - monoBass.envFiltBaseHz);
-      if (peak > 8000.0f) peak = 8000.0f;
+                 + monoBass.envFiltDepth * (kEnvFiltCeiling - monoBass.envFiltBaseHz);
+      if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
       AudioNoInterrupts();
       d1LowPass.frequency(peak);
       d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);  // up to 4.0 at full depth
@@ -293,8 +297,8 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       monoBass.envFiltTrigger = sysTickMs;
       if (monoBass.envFiltDepth > 0.01f) {
         float peak = monoBass.envFiltBaseHz
-                   + monoBass.envFiltDepth * (8000.0f - monoBass.envFiltBaseHz);
-        if (peak > 8000.0f) peak = 8000.0f;
+                   + monoBass.envFiltDepth * (kEnvFiltCeiling - monoBass.envFiltBaseHz);
+        if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
         AudioNoInterrupts();
         d1LowPass.frequency(peak);
         d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);
