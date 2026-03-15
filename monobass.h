@@ -435,8 +435,8 @@ void renderMonoBassScope(uint32_t nowMs) {
   // Priority 4: note still playing → let scope waveform show through
   if (monoBass.topKey() >= 0) return;
 
-  // Priority 5: idle — show knob reference grid for 4 seconds after mode entry
-  if (nowMs - monoBass.modeEnteredAt < 4000) renderMonoBassIdleGrid();
+  // Priority 5: idle — show knob reference grid
+  renderMonoBassIdleGrid();
 }
 
 #endif // MONOBASS_H

@@ -14,7 +14,7 @@ as one file. Headers are inline code segments, not independent modules.
 
 | File | Purpose | Notes |
 |------|---------|-------|
-| `DrumSynth.ino` | Main firmware (~3100 lines) | State, setup, loop, transport, triggers, buttons, knobs, display |
+| `DrumSynth.ino` | Main firmware (~3235 lines) | State, setup, loop, transport, triggers, buttons, knobs, display |
 | `audiotool.h` | Audio Design Tool output | **Auto-generated — NEVER full-file rewrite** |
 | `audio_init.h` | One-time audio object init | Codec, envelopes, filters, mixer gains |
 | `hw_setup.h` | Pin assignments, peripheral objects | Mux, shift register, OLED, constants |
@@ -83,8 +83,9 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
 | **D2 Chroma** | D2 hold 1.5s | Per-step pitch for snare osc |
 | **D3 Chroma** | D3 hold 1.5s | Per-step pitch for all D3 voices |
 | **WF Chroma** | PLAY hold 1.5s | Master wavefolder freq quantized to chromatic notes |
-| **PPQN Select** | MEM hold 1.5s | Stops transport, cycles PPQN values, hold again to save |
-| **Shuffle** | X+step15 or X+LOAD | TR-909 shuffle (7 levels), internal clock only, disabled in MONOBASS |
+| **PPQN Select** | X+LOAD hold 1.5s | Stops transport, cycles PPQN values, hold again to save |
+| **Shuffle** | X+step15 | TR-909 shuffle (7 levels), internal clock only, disabled in MONOBASS |
+| **X-Combo Overlay** | Hold X (MEM) | Full-screen help overlay showing available combos, scrolling marquee |
 
 ### EEPROM
 

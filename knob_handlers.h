@@ -178,9 +178,7 @@ static inline bool displayDisabledInMonoBass() {
 static void displayD1Distort(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
-  float active = (norm <= WF_DEADBAND) ? 0.0f
-               : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
-  if (active > 1.0f) active = 1.0f;
+  float active = wfActive(norm);
   int percent = (int)(active * 100.0f + 0.5f);
   if (monoBass.active) {
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "%s", "DISTORT");
@@ -353,9 +351,7 @@ static void displayD2WfDrive(uint8_t idx, int knobValue) {
   (void)idx;
   if (displayDisabledInMonoBass()) return;
   float norm = normalizeKnob(knobValue);
-  float active = (norm <= WF_DEADBAND) ? 0.0f
-               : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
-  if (active > 1.0f) active = 1.0f;
+  float active = wfActive(norm);
   int percent = (int)(active * 100.0f + 0.5f);
   snprintf(displayParameter1, sizeof(displayParameter1), "D2 DISTORTION");
   snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -436,9 +432,7 @@ static void displayD3Distort(uint8_t idx, int knobValue) {
   (void)idx;
   if (displayDisabledInMonoBass()) return;
   float norm = normalizeKnob(knobValue);
-  float active = (norm <= WF_DEADBAND) ? 0.0f
-               : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
-  if (active > 1.0f) active = 1.0f;
+  float active = wfActive(norm);
   int percent = (int)(active * 100.0f + 0.5f);
   snprintf(displayParameter1, sizeof(displayParameter1), "D3 DISTORTION");
   snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
@@ -576,9 +570,7 @@ static void displayMasterChoke(uint8_t idx, int knobValue) {
 static void displayWfDrive(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
-  float active = (norm <= WF_DEADBAND) ? 0.0f
-               : (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
-  if (active > 1.0f) active = 1.0f;
+  float active = wfActive(norm);
 
   // Perceived intensity follows drive^2 curve
   int percent = (int)(active * active * 100.0f + 0.5f);
@@ -623,15 +615,14 @@ static void displayMasterDelayMix(uint8_t idx, int knobValue) {
 static void engineD1Distort(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
-  if (norm <= WF_DEADBAND) {
+  float active = wfActive(norm);
+  if (active == 0.0f) {
     AudioNoInterrupts();
     d1WfDrive.amplitude(0.0f);
-    d1VoiceMixer.gain(3, 0.0f);   // wavefolder return off
+    d1VoiceMixer.gain(3, 0.0f);
     AudioInterrupts();
     return;
   }
-  // Remap above deadband to 0->1 so the effect fades in smoothly
-  float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
   float wavefolderAmp = 0.1f + active * 1.023f;
 
   AudioNoInterrupts();
@@ -890,9 +881,8 @@ static void engineD2WfDrive(uint8_t idx, int knobValue) {
   float gainDry = 1.0f;
   float gainWet = 0.0f;
 
-  if (norm > WF_DEADBAND) {
-    // Remap above deadband to 0->1 so all curves start from zero
-    float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
+  float active = wfActive(norm);
+  if (active > 0.0f) {
     driveGain = 0.75f + 0.15f * active;
     // Frequency: 32-220 Hz (0-75%), 220-440 Hz (75-100%)
     if (active <= 0.75f) {
@@ -1183,16 +1173,15 @@ static void engineD3Distort(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
-  if (norm <= WF_DEADBAND) {
+  float active = wfActive(norm);
+  if (active == 0.0f) {
     AudioNoInterrupts();
     d3WfOsc.amplitude(0.0f);
-    d3MasterMixer.gain(0, 0.70f);  // dry at default (parity with D1/D2)
-    d3MasterMixer.gain(1, 0.0f);   // wavefolder return off
+    d3MasterMixer.gain(0, 0.70f);
+    d3MasterMixer.gain(1, 0.0f);
     AudioInterrupts();
     return;
   }
-  // Remap above deadband to 0->1 so all curves start from zero
-  float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
 
   // Amplitude: 0.05 -> 0.50 (linear ramp, full range)
   float drive = 0.05f + 0.45f * active;
@@ -1402,7 +1391,8 @@ static void engineWfDrive(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
 
-  if (norm <= WF_DEADBAND) {
+  float active = wfActive(norm);
+  if (active == 0.0f) {
     AudioNoInterrupts();
     masterWfInputMixer.gain(0, 0.0f);
     masterWfInputMixer.gain(1, 0.0f);
@@ -1411,9 +1401,6 @@ static void engineWfDrive(uint8_t idx, int knobValue) {
     AudioInterrupts();
     return;
   }
-
-  float active = (norm - WF_DEADBAND) / (1.0f - WF_DEADBAND);
-  if (active > 1.0f) active = 1.0f;
   active *= 0.5f;  // full knob = old 50%
 
   float sq      = active * active;
