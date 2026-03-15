@@ -86,10 +86,12 @@ static constexpr uint32_t PPQN_LONG_PRESS_MS = 1500;
 static constexpr uint8_t PPQN_OPTIONS[] = {1, 2, 4, 8, 24, 48, 96};
 static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_OPTIONS[0]);
 
-// Combo button (MEM) timing
-static constexpr uint32_t COMBO_SHORT_PRESS_MS   = 500;   // held less = short press (slot cycle)
+// Combo button (MEM) timing — combo button is purely a modifier, no short press action.
+// Any button pressed while combo is held fires a combo immediately.
 static constexpr uint32_t COMBO_MONO_ANIM_MS     = 1750;  // MONOBASS warning animation starts
-static constexpr uint32_t COMBO_MONO_ENTER_MS    = 3000;  // MONOBASS mode enters/exits
+static constexpr uint32_t COMBO_MONO_ENTER_MS    = 4000;  // MONOBASS mode enters/exits
+// PPQN mode: combo short press cycles, combo long press saves
+static constexpr uint32_t PPQN_SAVE_HOLD_MS      = 1500;
 
 // D1 chroma mode state — main-loop only
 bool d1ChromaMode = false;
@@ -143,7 +145,7 @@ enum MonoAnimPhase : uint8_t {
 
 static MonoAnimPhase monoAnimPhase = MONO_ANIM_NONE;
 static uint32_t monoAnimStart = 0;
-static constexpr uint32_t MONO_ANIM_DURATION_MS = 1000;  // fits within 1750→3000 window
+static constexpr uint32_t MONO_ANIM_DURATION_MS = 2000;  // fits within 1750→4000 window
 
 // Precomputed pixel masks for MONOBASS Bayer dither animation.
 // Computed once in setup() by rendering text and reading back pixels.
@@ -595,6 +597,7 @@ void updateKnobs();
 void setTransport(TransportState s);
 void updateDrumDelayGains();
 void initKnobsFromHardware();
+static void flashStepLed(uint8_t stepIndex, uint8_t count);
 void applyMasterGain();
 void handlePlayStop();
 void applyD1Decay();
@@ -1053,6 +1056,9 @@ void loop() {
     }
   }
 
+  // Step LED flash animation (save/load/slot-select feedback)
+  updateFlashLed();
+
   // PPQN mode timeout — auto-exit without saving after 5s inactivity
   if (ppqnModeActive) {
     if ((uint32_t)(loopNowTick - ppqnModeLastActivityTick) >= PPQN_MODE_TIMEOUT_MS) {
@@ -1505,12 +1511,14 @@ struct ButtonHandler {
   void (*onHoldCheck)(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs);
 };
 
-// Combo button (MEM) modifier state machine
+// Combo button (MEM) modifier state machine.
+// Combo button is purely a modifier — no short-press action.
+// Any button pressed while combo is held fires a combo immediately.
+// Combo held alone → MONOBASS timer.
 struct ComboModState {
-  bool held;               // true while X is physically held
-  uint32_t pressTick;      // when X was pressed
+  bool held;               // true while combo button is physically held
+  uint32_t pressTick;      // when combo button was pressed
   bool comboFired;         // true if any combo triggered during this hold
-  bool slotCycled;         // true if slot was cycled (short press on release)
   bool monoAnimStarted;    // true if MONOBASS warning animation has begun
   bool monoFired;          // true if MONOBASS mode was entered/exited
 };
@@ -1641,7 +1649,7 @@ static constexpr int COMBO_COUNT = (int)(sizeof(comboTable) / sizeof(comboTable[
 // Call from any button's press handler when combo button is held.
 // For holdMs>0 entries, arms activeComboIndex — caller must set self.pressTick.
 static bool dispatchCombo(uint8_t btnIdx, uint32_t nowTick) {
-  if (!comboMod.held || (nowTick - comboMod.pressTick) < COMBO_SHORT_PRESS_MS) return false;
+  if (!comboMod.held) return false;
   for (int i = 0; i < COMBO_COUNT; i++) {
     if (comboTable[i].buttonIndex != btnIdx) continue;
     comboMod.comboFired = true;
@@ -1657,62 +1665,68 @@ static bool dispatchCombo(uint8_t btnIdx, uint32_t nowTick) {
   return false;
 }
 
-// --- D1 button (index 0): short=selectD1, X+D1=chroma ---
+// Helper: show "DISABLED FOR MONOBASS" overlay and mark combo as fired.
+static void showMonoBassDisabled(uint32_t nowTick) {
+  snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
+  snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
+  parameterOverlayStartTick = nowTick;
+  activeRail = RAIL_NONE;
+  comboMod.comboFired = true;
+}
+
+// --- D1 button (index 0): press=selectD1, combo+D1=chroma ---
 
 static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
+  if (comboMod.held) {
+    if (monoBass.active) { showMonoBassDisabled(nowTick); }
+    else { dispatchCombo(0, nowTick); }
+    return;
+  }
   if (monoBass.active) return;
-  if (dispatchCombo(0, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D1);
 }
 
-static void btnD1Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  (void)self;
-}
+static void btnD1Release(ButtonHandler& self, uint32_t /*nowTick*/) { (void)self; }
+static void btnD1Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) { (void)self; }
 
-static void btnD1Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) {
-  (void)self;
-}
-
-// --- D2 button (index 1): short=selectD2, X+D2=chroma ---
+// --- D2 button (index 1): press=selectD2, combo+D2=chroma ---
 
 static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
+  if (comboMod.held) {
+    if (monoBass.active) { showMonoBassDisabled(nowTick); }
+    else { dispatchCombo(1, nowTick); }
+    return;
+  }
   if (monoBass.active) return;
-  if (dispatchCombo(1, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D2);
 }
 
-static void btnD2Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  (void)self;
-}
+static void btnD2Release(ButtonHandler& self, uint32_t /*nowTick*/) { (void)self; }
+static void btnD2Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) { (void)self; }
 
-static void btnD2Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) {
-  (void)self;
-}
-
-// --- D3 button (index 2): short=selectD3, X+D3=chroma ---
+// --- D3 button (index 2): press=selectD3, combo+D3=chroma ---
 
 static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
+  if (comboMod.held) {
+    if (monoBass.active) { showMonoBassDisabled(nowTick); }
+    else { dispatchCombo(2, nowTick); }
+    return;
+  }
   if (monoBass.active) return;
-  if (dispatchCombo(2, nowTick)) return;
   self.pressTick = nowTick;
   selectTrack(TRACK_D3);
 }
 
-static void btnD3Release(ButtonHandler& self, uint32_t /*nowTick*/) {
-  (void)self;
-}
+static void btnD3Release(ButtonHandler& self, uint32_t /*nowTick*/) { (void)self; }
+static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) { (void)self; }
 
-static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*heldMs*/) {
-  (void)self;
-}
-
-// --- PLAY button (index 6): short=play/stop, X+PLAY=WF chroma ---
+// --- PLAY button (index 6): press=play/stop, combo+PLAY=WF chroma ---
 
 static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
-  // Combo+PLAY fires before the MONOBASS guard — WF chroma works in MONOBASS
-  if (dispatchCombo(6, nowTick)) return;
+  // Combo+PLAY: WF chroma — NOT disabled in MONOBASS
+  if (comboMod.held) { dispatchCombo(6, nowTick); return; }
   if (monoBass.active) return;
   self.pressTick = nowTick;
   handlePlayStop();
@@ -1728,10 +1742,13 @@ static void btnPlayHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*he
 
 // --- Combo button (index 7, MEM) ---
 //
-// Short press (<500ms, no combo): cycle memory slot
+// Purely a modifier — no short-press action in normal mode.
 // Hold alone 1750ms: MONOBASS warning animation begins
-// Hold alone 3000ms: enter/exit MONOBASS mode
-// Hold >500ms + second button: combo dispatch (see comboTable)
+// Hold alone 4000ms: enter/exit MONOBASS mode
+// Any button pressed while combo is held: combo dispatch (see comboTable)
+//
+// Exception: in PPQN mode, combo short press cycles PPQN values,
+// combo long press (1500ms) saves and exits PPQN mode.
 
 static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
@@ -1741,7 +1758,6 @@ static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
   comboMod.held = true;
   comboMod.pressTick = nowTick;
   comboMod.comboFired = false;
-  comboMod.slotCycled = false;
   comboMod.monoAnimStarted = false;
   comboMod.monoFired = false;
 
@@ -1749,39 +1765,22 @@ static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
 }
 
 static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {
-  uint32_t heldMs = nowTick - comboMod.pressTick;
-
-  // Short press: cycle slot (only if no combo fired and held < threshold)
-  if (heldMs < COMBO_SHORT_PRESS_MS && !comboMod.comboFired) {
-    if (monoBass.active) {
-      snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-      snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
-      parameterOverlayStartTick = nowTick;
-      activeRail = RAIL_NONE;
-    } else if (ppqnModeActive) {
-      // In PPQN mode: cycle PPQN value
-      uint8_t idx = 0;
-      for (int j = 0; j < PPQN_OPTION_COUNT; j++) {
-        if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
-      }
-      ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
-      ppqnModeLastActivityTick = nowTick;
-    } else {
-      // Normal: cycle memory slot
-      activeSaveSlot = (activeSaveSlot + 1) % SAVE_SLOT_COUNT;
-      snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d",
-               activeSaveSlot + 1);
-      snprintf(displayParameter2, sizeof(displayParameter2), "SELECT");
-      parameterOverlayStartTick = nowTick;
+  // PPQN mode special case: short press cycles PPQN value
+  if (ppqnModeActive && !comboMod.comboFired && !self.enteredMode) {
+    uint8_t idx = 0;
+    for (int j = 0; j < PPQN_OPTION_COUNT; j++) {
+      if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
     }
+    ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
+    ppqnModeLastActivityTick = nowTick;
   }
 
   // Cancel MONOBASS animation if it was in progress but didn't fire
   if (comboMod.monoAnimStarted && !comboMod.monoFired) {
-    cancelMonoAnim();
+    monoAnimPhase = MONO_ANIM_NONE;
   }
 
-  // Cancel any pending hold-combo (e.g. X+SAVE that didn't reach 1500ms)
+  // Cancel any pending hold-combo (e.g. combo+SAVE that didn't reach 1500ms)
   activeComboIndex = -1;
 
   comboMod.held = false;
@@ -1790,8 +1789,21 @@ static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {
 }
 
 static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
-  (void)self;
   if (comboMod.comboFired) return;
+
+  // PPQN mode special case: long press saves and exits
+  if (ppqnModeActive && !self.enteredMode && heldMs >= PPQN_SAVE_HOLD_MS) {
+    self.enteredMode = true;
+    ppqn = ppqnModeSelection;
+    savePpqnToEEPROM(ppqn);
+    ppqnModeActive = false;
+    snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
+    snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
+    parameterOverlayStartTick = nowTick;
+    activeRail = RAIL_NONE;
+    comboMod.comboFired = true;
+    return;
+  }
 
   // MONOBASS warning animation at 1750ms (only if no combo fired, combo button held alone)
   if (!comboMod.monoAnimStarted && heldMs >= COMBO_MONO_ANIM_MS) {
@@ -1800,7 +1812,7 @@ static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs)
     comboMod.monoAnimStarted = true;
   }
 
-  // MONOBASS mode entry/exit at 3000ms
+  // MONOBASS mode entry/exit at 4000ms
   if (!comboMod.monoFired && heldMs >= COMBO_MONO_ENTER_MS) {
     comboMod.monoFired = true;
     comboMod.comboFired = true;
@@ -1815,18 +1827,16 @@ static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs)
   }
 }
 
-// --- LOAD button (index 8): short=load, X+LOAD=shuffle ---
+// --- LOAD button (index 8): press=load, combo+LOAD=shuffle ---
 
 static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
-  if (dispatchCombo(8, nowTick)) return;
-  if (monoBass.active) {
-    snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
-    parameterOverlayStartTick = nowTick;
-    activeRail = RAIL_NONE;
+  if (comboMod.held) {
+    if (monoBass.active) { showMonoBassDisabled(nowTick); }
+    else { dispatchCombo(8, nowTick); }
     return;
   }
+  if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
   if (!loadStateFromEEPROM(activeSaveSlot)) {
     for (int step = 0; step < numSteps; step++) {
       d1Sequence[step] = 0;
@@ -1844,38 +1854,31 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
     snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
     parameterOverlayStartTick = nowTick;
   }
+  flashStepLed(activeSaveSlot, 2);
 }
 
-// --- SAVE button (index 9): short=save, X+SAVE hold=PPQN ---
+// --- SAVE button (index 9): press=save, combo+SAVE hold=PPQN ---
 
 static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
-  self.pressTick = nowTick;  // always record for hold timing
-  if (dispatchCombo(9, nowTick)) return;
-
-  // In PPQN mode: SAVE = save and exit
-  if (ppqnModeActive) {
-    ppqn = ppqnModeSelection;
-    savePpqnToEEPROM(ppqn);
-    ppqnModeActive = false;
-    snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
-    snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
-    parameterOverlayStartTick = nowTick;
-    activeRail = RAIL_NONE;
+  self.pressTick = nowTick;
+  if (comboMod.held) {
+    if (monoBass.active) { showMonoBassDisabled(nowTick); }
+    else {
+      // Arm PPQN combo — fires when SAVE is held for 1500ms
+      activeComboIndex = 5;
+      comboSecondPressTick = nowTick;
+      comboMod.comboFired = true;
+      cancelMonoAnim();
+    }
     return;
   }
-
-  if (monoBass.active) {
-    snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-    snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
-    parameterOverlayStartTick = nowTick;
-    activeRail = RAIL_NONE;
-    return;
-  }
+  if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
 
   // Normal save
   activeRail = RAIL_NONE;
   if (patternDirty) {
     saveStateToEEPROM(activeSaveSlot);
+    flashStepLed(activeSaveSlot, 2);
   } else {
     snprintf(displayParameter1, sizeof(displayParameter1), "NOTHING TO");
     snprintf(displayParameter2, sizeof(displayParameter2), "SAVE");
@@ -2015,6 +2018,43 @@ void updateLEDs() {
   ledShiftReg.updateRegisters();
 }
 
+// Step LED flash — non-blocking double-blink on a specific step LED.
+// Used for save/load/slot-select visual feedback.
+static int8_t flashLedIndex = -1;
+static uint8_t flashLedCount = 0;
+static uint32_t flashLedTick = 0;
+static bool flashLedOn = false;
+static constexpr uint32_t FLASH_LED_ON_MS  = 80;
+static constexpr uint32_t FLASH_LED_OFF_MS = 80;
+
+static void flashStepLed(uint8_t stepIndex, uint8_t count) {
+  flashLedIndex = stepIndex;
+  flashLedCount = count;
+  flashLedTick = sysTickMs;
+  flashLedOn = true;
+  ledShiftReg.set(stepIndex, true);
+}
+
+static void updateFlashLed() {
+  if (flashLedIndex < 0) return;
+  uint32_t elapsed = sysTickMs - flashLedTick;
+  if (flashLedOn && elapsed >= FLASH_LED_ON_MS) {
+    flashLedOn = false;
+    flashLedTick = sysTickMs;
+    ledShiftReg.set(flashLedIndex, false);
+  } else if (!flashLedOn && elapsed >= FLASH_LED_OFF_MS) {
+    flashLedCount--;
+    if (flashLedCount == 0) {
+      flashLedIndex = -1;
+      updateLEDs();
+      return;
+    }
+    flashLedOn = true;
+    flashLedTick = sysTickMs;
+    ledShiftReg.set(flashLedIndex, true);
+  }
+}
+
 // Returns the active chroma held-step pointer for the current track, or nullptr
 static inline int8_t* activeChromaHeldStep() {
   if (d1ChromaMode && activeTrack == TRACK_D1) return &d1ChromaHeldStep;
@@ -2061,6 +2101,25 @@ void updateStepButtons() {
 
       // MONOBASS mode — buttons trigger D1 directly, skip all sequence editing
       if (handleMonoBassButton(i, btnState[i])) {
+        btnLastState[i] = rawPressed;
+        continue;
+      }
+
+      // Combo+step: select memory slot (0-9) and load pattern
+      if (comboMod.held && btnState[i] && i < SAVE_SLOT_COUNT) {
+        comboMod.comboFired = true;
+        cancelMonoAnim();
+        activeSaveSlot = i;
+        if (loadStateFromEEPROM(i)) {
+          snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
+          snprintf(displayParameter2, sizeof(displayParameter2), "LOADED");
+        } else {
+          snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
+          snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+        }
+        parameterOverlayStartTick = nowTick;
+        activeRail = RAIL_NONE;
+        flashStepLed(i, 2);
         btnLastState[i] = rawPressed;
         continue;
       }
