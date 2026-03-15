@@ -211,6 +211,10 @@ void externalClockISR() {
     uint32_t ema = extIntervalEMA;
     if (ema > 0 && interval < (ema * 2 / 5)) return;
 
+    // Clamp huge intervals (e.g. after 35+ min pause) to prevent
+    // int32_t overflow in the EMA subtraction below.
+    if (interval > EXT_TIMEOUT_US) interval = EXT_TIMEOUT_US;
+
     // Accepted pulse — update raw interval and fast EMA
     lastPulseInterval = interval;
 
@@ -381,8 +385,8 @@ void rearmStepTimer() {
 // NOT called from STOP — STOP does a partial reset preserving pulse timing
 // so the PLAY handler detects ext clock immediately on the next press.
 void resetExternalClockState() {
-  subdivTimer.end();
   noInterrupts();
+  subdivTimer.end();
   extPulseCount = 0;
   lastPulseMicros = 0;
   lastPulseInterval = 0;
@@ -459,6 +463,7 @@ void updateExtBpmDisplay() {
   uint8_t ppqnCopy = ppqn;  // main-loop only — no critical section needed
 
   // Show ext BPM if we've received pulses recently (within timeout)
+  if (ppqnCopy == 0) return;  // defensive — ppqn should always be valid
   if (lastPCopy != 0 && (micros() - lastPCopy) < EXT_TIMEOUT_US && emaCopy > 0) {
     float rawBpm = 60000000.0f / ((float)emaCopy * (float)ppqnCopy);
     if (extBpmDisplay <= 0.0f) {

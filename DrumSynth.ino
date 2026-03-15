@@ -155,8 +155,8 @@ static constexpr int kMonoTextW = 96;  // 8 chars × 12px at size 2
 static constexpr int kMonoTextH = 14;  // 7 rows × 2 at size 2 (y=2..15)
 // Sweep region: 1px symmetrical buffer around visible text, y=0 to y=17
 static constexpr int kSweepLeftX = kMonoTextX - 1;       // 15 (1px before 'M')
-static constexpr int kSweepRightX = kMonoTextX + kMonoTextW - 1; // 111 (1px after 'S')
-static constexpr int kSweepW = kSweepRightX - kSweepLeftX; // 96
+static constexpr int kSweepRightX = kMonoTextX + kMonoTextW; // 112 (1px past last text column)
+static constexpr int kSweepW = kSweepRightX - kSweepLeftX; // 97
 static constexpr int kSweepRegionH = 18;     // y < 18, 1px gap above divider at y=19
 static constexpr int kSweepTransitionW = 16;  // Bayer-dithered soft edge width in pixels
 // Text bitmask: 1 bit per pixel in the text region (kMonoTextW × kMonoTextH = 96×14)
@@ -165,7 +165,7 @@ static uint8_t monoTextMask[168];
 static bool monoMasksReady = false;
 
 static void startChromaRamp(uint8_t dotIndex, bool appearing);
-static void startChromaSettle();
+static void startChromaSettle(uint32_t nowMs);
 static void cancelChromaAnim();
 static void cancelMonoAnim();
 
@@ -224,7 +224,11 @@ uint8_t d3Sequence[numSteps] = {
 IntervalTimer sysTickTimer;
 IntervalTimer stepTimer;
 
-volatile uint32_t sysTickMs = 0;  // Written by sysTickISR, read by main loop
+// Written by sysTickISR every 1ms, read by main loop.
+// Single aligned 32-bit reads are atomic on Cortex-M7, so a lone read is safe
+// without noInterrupts(). Use noInterrupts() only when snapshotting multiple
+// ISR variables that must be consistent together.
+volatile uint32_t sysTickMs = 0;
 
 // Chroma dot animation helpers — placed here because sysTickMs must be declared first.
 static void startChromaRamp(uint8_t dotIndex, bool appearing) {
@@ -234,10 +238,10 @@ static void startChromaRamp(uint8_t dotIndex, bool appearing) {
   chromaAnimAppearing = appearing;
 }
 
-static void startChromaSettle() {
+static void startChromaSettle(uint32_t nowMs) {
   if (chromaAnimDot < 0) return;
   chromaAnimPhase = CHROMA_ANIM_SETTLING;
-  chromaAnimStart = sysTickMs;
+  chromaAnimStart = nowMs;
 }
 
 static void cancelChromaAnim() {
@@ -1760,7 +1764,8 @@ static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {
     monoAnimPhase = MONO_ANIM_NONE;
   }
 
-  // Cancel any pending hold-combo (e.g. combo+SAVE that didn't reach 1500ms)
+  // Cancel any pending hold-combo. Also reset in btnSaveRelease —
+  // both paths needed because either button can be released first.
   activeComboIndex = -1;
 
   comboMod.held = false;
@@ -1788,7 +1793,7 @@ static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs)
   // MONOBASS warning animation at 1750ms (only if no combo fired, combo button held alone)
   if (!comboMod.monoAnimStarted && heldMs >= COMBO_MONO_ANIM_MS) {
     monoAnimPhase = monoBass.active ? MONO_ANIM_EXITING : MONO_ANIM_ENTERING;
-    monoAnimStart = nowTick - (heldMs - COMBO_MONO_ANIM_MS);
+    monoAnimStart = nowTick - (heldMs - COMBO_MONO_ANIM_MS);  // backdate to threshold crossing
     comboMod.monoAnimStarted = true;
   }
 
@@ -1843,13 +1848,7 @@ static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
   self.pressTick = nowTick;
   if (comboMod.held) {
     if (monoBass.active) { showMonoBassDisabled(nowTick); }
-    else {
-      // Arm PPQN combo — fires when SAVE is held for 1500ms
-      activeComboIndex = 5;
-      comboSecondPressTick = nowTick;
-      comboMod.comboFired = true;
-      cancelMonoAnim();
-    }
+    else { dispatchCombo(9, nowTick); }
     return;
   }
   if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
@@ -1875,7 +1874,8 @@ static void btnSaveRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
 
 static void btnSaveHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t heldMs) {
   (void)self;
-  if (activeComboIndex >= 0 && heldMs >= comboTable[activeComboIndex].holdMs) {
+  if (activeComboIndex >= 0 && activeComboIndex < COMBO_COUNT
+      && heldMs >= comboTable[activeComboIndex].holdMs) {
     int idx = activeComboIndex;
     activeComboIndex = -1;
     comboTable[idx].onTrigger();
@@ -2017,10 +2017,11 @@ static void flashStepLed(uint8_t stepIndex, uint8_t count) {
 
 static void updateFlashLed() {
   if (flashLedIndex < 0) return;
-  uint32_t elapsed = sysTickMs - flashLedTick;
+  uint32_t now = sysTickMs;  // snapshot once — ISR may update between reads
+  uint32_t elapsed = now - flashLedTick;
   if (flashLedOn && elapsed >= FLASH_LED_ON_MS) {
     flashLedOn = false;
-    flashLedTick = sysTickMs;
+    flashLedTick = now;
     ledShiftReg.set(flashLedIndex, false);
   } else if (!flashLedOn && elapsed >= FLASH_LED_OFF_MS) {
     flashLedCount--;
@@ -2030,7 +2031,7 @@ static void updateFlashLed() {
       return;
     }
     flashLedOn = true;
-    flashLedTick = sysTickMs;
+    flashLedTick = now;
     ledShiftReg.set(flashLedIndex, true);
   }
 }
@@ -2085,21 +2086,47 @@ void updateStepButtons() {
         continue;
       }
 
-      // Combo+step: select memory slot (0-9) and load pattern
-      if (comboMod.held && btnState[i] && i < SAVE_SLOT_COUNT) {
+      // Combo+step: slot select (0-9), shuffle (15), or no-op (10-14)
+      if (comboMod.held && btnState[i]) {
         comboMod.comboFired = true;
         cancelMonoAnim();
-        activeSaveSlot = i;
-        if (loadStateFromEEPROM(i)) {
-          snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
-          snprintf(displayParameter2, sizeof(displayParameter2), "LOADED");
-        } else {
-          snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
-          snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+
+        if (i >= 10 && i <= 14) {
+          // Steps 10-14: reserved, no action, no LED blink
+          btnLastState[i] = rawPressed;
+          continue;
         }
-        parameterOverlayStartTick = nowTick;
-        activeRail = RAIL_NONE;
-        flashStepLed(i, 2);
+
+        if (monoBass.active) {
+          showMonoBassDisabled(nowTick);
+          btnLastState[i] = rawPressed;
+          continue;
+        }
+
+        if (i == 15) {
+          // Step 15: shuffle toggle
+          shuffleEnabled = !shuffleEnabled;
+          snprintf(displayParameter1, sizeof(displayParameter1), "SHUFFLE");
+          snprintf(displayParameter2, sizeof(displayParameter2),
+                   shuffleEnabled ? "ON" : "OFF");
+          parameterOverlayStartTick = nowTick;
+          activeRail = RAIL_NONE;
+        } else if (i <= 9) {
+          // Steps 0-9: select & load memory slot
+          activeSaveSlot = i;
+          if (loadStateFromEEPROM(i)) {
+            snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "LOADED");
+          } else {
+            snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
+            snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+          }
+          parameterOverlayStartTick = nowTick;
+          activeRail = RAIL_NONE;
+          updateLEDs();
+          flashStepLed(i, 2);
+        }
+
         btnLastState[i] = rawPressed;
         continue;
       }
@@ -2145,7 +2172,8 @@ void updateStepButtons() {
           snprintf(displayParameter1, sizeof(displayParameter1), "STEP %d", i + 1);
           snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
           parameterOverlayStartTick = nowTick;
-        } else if ((uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
+        } else if (stepPressTick[i] != 0
+                   && (uint32_t)(nowTick - stepPressTick[i]) >= CHROMA_STEP_HOLD_MS) {
           *heldStep = i;
         }
       }
@@ -2635,7 +2663,7 @@ void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
   display.setCursor(58, 0);
   display.print("CHOKE");
   {
-    char chokeBuf[6];
+    char chokeBuf[8];
     if (chokeSnap == 0) {
       strcpy(chokeBuf, "OFF");
     } else {
@@ -2710,7 +2738,7 @@ bool renderChromaNoteSelect() {
 
 // Chroma dot indicator — bottom bar dots for active chroma channels.
 // Animation: 3-phase Bayer-dithered 8×8 dot (outline → fill → hollow center).
-void renderChromaDots() {
+void renderChromaDots(uint32_t nowMs) {
   if (monoBass.active) return;
 
   const bool chromaActive[4] = {
@@ -2723,21 +2751,7 @@ void renderChromaDots() {
   static constexpr int kHalf = 4;
 
   bool animActive = (chromaAnimDot >= 0 && chromaAnimPhase != CHROMA_ANIM_NONE);
-  uint32_t animElapsed = animActive ? (sysTickMs - chromaAnimStart) : 0;
-
-  // Auto-expire settling animation
-  if (animActive && chromaAnimPhase == CHROMA_ANIM_SETTLING
-      && animElapsed >= CHROMA_SETTLE_MS) {
-    cancelChromaAnim();
-    animActive = false;
-  }
-
-  // Auto-transition from ramp to settle when ramp completes
-  if (animActive && chromaAnimPhase == CHROMA_ANIM_RAMPING
-      && animElapsed >= CHROMA_COMBO_RAMP_MS) {
-    startChromaSettle();
-    animElapsed = 0;
-  }
+  uint32_t animElapsed = animActive ? (nowMs - chromaAnimStart) : 0;
 
   if (!chromaActive[0] && !chromaActive[1] && !chromaActive[2]
       && !chromaActive[3] && !animActive) return;
@@ -2822,10 +2836,10 @@ void renderChromaDots() {
 // MONOBASS white-fill sweep animation — a solid white rectangle sweeps across
 // the top-bar region with MONOBASS text knocked out in black. The sweep position
 // directly communicates hold progress. Uses precomputed text mask.
-void renderMonoTextAnim() {
+void renderMonoTextAnim(uint32_t nowMs) {
   if (monoAnimPhase == MONO_ANIM_NONE || !monoMasksReady) return;
 
-  uint32_t elapsed = sysTickMs - monoAnimStart;
+  uint32_t elapsed = nowMs - monoAnimStart;
   if (elapsed >= MONO_ANIM_DURATION_MS) elapsed = MONO_ANIM_DURATION_MS;
 
   float progress = (float)elapsed / (float)MONO_ANIM_DURATION_MS;
@@ -3031,6 +3045,17 @@ void updateDisplay() {
   }
   renderMonoBassScope(nowMs);  // outlined overlay on top of scope
 
+  // Advance chroma animation state machine — runs every frame regardless of
+  // whether renderChromaDots() is called, so overlays don't stall transitions.
+  if (chromaAnimDot >= 0 && chromaAnimPhase != CHROMA_ANIM_NONE) {
+    uint32_t animAge = nowMs - chromaAnimStart;
+    if (chromaAnimPhase == CHROMA_ANIM_SETTLING && animAge >= CHROMA_SETTLE_MS) {
+      cancelChromaAnim();
+    } else if (chromaAnimPhase == CHROMA_ANIM_RAMPING && animAge >= CHROMA_COMBO_RAMP_MS) {
+      startChromaSettle(nowMs);
+    }
+  }
+
   // Suppress small parameter overlay when scope area owns the display.
   // In MONOBASS, allow D1 voice rail through (D1 shape knob is still active).
   if (noteSelectActive) overlayActiveNow = false;
@@ -3040,11 +3065,11 @@ void updateDisplay() {
   } else {
     // Chroma dots share the bottom strip with the parameter overlay —
     // only draw them when the overlay is not visible.
-    renderChromaDots();
+    renderChromaDots(nowMs);
   }
 
-  // MONOBASS text pixel-scatter overlay (during D1 hold, 2s-5s)
-  renderMonoTextAnim();
+  // MONOBASS white-fill sweep overlay (during combo hold, 1.75s-4s)
+  renderMonoTextAnim(nowMs);
 
   // Fire any steps queued during framebuffer drawing, before the
   // blocking SPI transfer adds another 15-25ms of latency.

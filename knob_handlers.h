@@ -231,7 +231,7 @@ static void displayD1Pitch(uint8_t idx, int knobValue) {
   if (d1ChromaMode) {
     if (d1ChromaHeldStep >= 0) {
       uint8_t note = d1ChromaKnobToNote(knobValue);
-      d1ChromaNote[d1ChromaHeldStep] = note;
+      // Note written to d1ChromaNote[] by engineD1Pitch — display is read-only
       char noteName[8];
       formatChromaNote(note, noteName);
       snprintf(displayParameter1, sizeof(displayParameter1),

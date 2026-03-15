@@ -87,8 +87,10 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
 
 ### EEPROM
 
-- 10 pattern slots × 102 bytes + 2 bytes PPQN + 1 byte MONOBASS = 1023 of 1080 bytes
+- 16 pattern slots × 102 bytes + 2 bytes PPQN + 1 byte MONOBASS = 1635 bytes (Teensy 4.0 EEPROM emulates up to 4284 bytes)
+- UI accesses slots 0-9 via combo+step buttons; slots 10-15 reserved for future expansion
 - Magic `0x4249` (current), `0x4248`/`0x4247` (legacy backward compat)
+- PPQN/MONOBASS addresses migrated from 10-slot layout on first boot (checks legacy addresses as fallback)
 - CRC-8 over `PatternStore` — rejects corrupted slots
 - Stores: 3 sequences + 3 chroma note arrays + chroma mode flags + MONOBASS active state
 

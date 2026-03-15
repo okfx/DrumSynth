@@ -88,6 +88,9 @@ struct EepromSlot {
   uint8_t crc;  // CRC8 over PatternStore bytes — detects partial writes / corruption
 };
 
+static_assert(sizeof(PatternStore) == 97, "PatternStore layout changed — bump EEPROM_MAGIC");
+static_assert(sizeof(EepromSlot)   == 102, "EepromSlot layout changed — bump EEPROM_MAGIC");
+
 // ============================================================================
 //  Constants
 // ============================================================================
@@ -95,13 +98,16 @@ struct EepromSlot {
 static constexpr uint16_t EEPROM_MAGIC_V1    = 0x4247;  // V1 magic (D1 chroma 33–69)
 static constexpr uint16_t EEPROM_MAGIC_V2   = 0x4248;  // V2 magic (D1 chroma 33–75)
 static constexpr uint16_t EEPROM_MAGIC      = 0x4249;  // Current magic (+ wfChromaMode in flags)
-static constexpr uint8_t  SAVE_SLOT_COUNT   = 10;
+static constexpr uint8_t  SAVE_SLOT_COUNT   = 16;
 // PPQN stored after all save slots
 static constexpr int      EEPROM_PPQN_ADDR  = SAVE_SLOT_COUNT * (int)sizeof(EepromSlot);
 static constexpr uint8_t  EEPROM_PPQN_MAGIC = 0xAA;
 // MONOBASS global state stored after PPQN (2 bytes: magic + bool)
 static constexpr int      EEPROM_MONOBASS_ADDR  = EEPROM_PPQN_ADDR + 2;
 static constexpr uint8_t  EEPROM_MONOBASS_MAGIC = 0xBB;
+// Legacy addresses (10-slot layout) for one-time migration on first boot
+static constexpr int      EEPROM_LEGACY_PPQN_ADDR     = 10 * (int)sizeof(EepromSlot);
+static constexpr int      EEPROM_LEGACY_MONOBASS_ADDR  = EEPROM_LEGACY_PPQN_ADDR + 2;
 
 // ============================================================================
 //  State
@@ -240,15 +246,17 @@ void saveStateToEEPROM(uint8_t slotIndex) {
 }
 
 void loadPpqnFromEEPROM() {
-  uint8_t magic = EEPROM.read(EEPROM_PPQN_ADDR);
-  if (magic == EEPROM_PPQN_MAGIC) {
-    uint8_t val = EEPROM.read(EEPROM_PPQN_ADDR + 1);
-    // Validate: must be one of the allowed values
-    for (int i = 0; i < PPQN_OPTION_COUNT; i++) {
-      if (PPQN_OPTIONS[i] == val) { ppqn = val; return; }
+  // Try current address first, then legacy (10-slot layout) for migration
+  int addrs[] = { EEPROM_PPQN_ADDR, EEPROM_LEGACY_PPQN_ADDR };
+  for (int a : addrs) {
+    if (EEPROM.read(a) == EEPROM_PPQN_MAGIC) {
+      uint8_t val = EEPROM.read(a + 1);
+      for (int i = 0; i < PPQN_OPTION_COUNT; i++) {
+        if (PPQN_OPTIONS[i] == val) { ppqn = val; return; }
+      }
     }
   }
-  ppqn = PPQN_DEFAULT;  // Defined in main .ino — shared single source of truth
+  ppqn = PPQN_DEFAULT;
 }
 
 void savePpqnToEEPROM(uint8_t val) {
@@ -267,9 +275,12 @@ void savePpqnToEEPROM(uint8_t val) {
 // ============================================================================
 
 bool loadMonoBassStatusFromEEPROM() {
-  uint8_t magic = EEPROM.read(EEPROM_MONOBASS_ADDR);
-  if (magic == EEPROM_MONOBASS_MAGIC) {
-    return EEPROM.read(EEPROM_MONOBASS_ADDR + 1) != 0;
+  // Try current address first, then legacy (10-slot layout) for migration
+  int addrs[] = { EEPROM_MONOBASS_ADDR, EEPROM_LEGACY_MONOBASS_ADDR };
+  for (int a : addrs) {
+    if (EEPROM.read(a) == EEPROM_MONOBASS_MAGIC) {
+      return EEPROM.read(a + 1) != 0;
+    }
   }
   return false;
 }

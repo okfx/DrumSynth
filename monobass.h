@@ -94,6 +94,8 @@ extern void drawOutlinedText(int x, int y, const char* text);
 extern void applyKnobToEngine(uint8_t idx, int knobValue);
 extern ResponsiveAnalogRead* analog[];
 extern bool monoBassKeyEvent;
+// Animation enum and state — defined in .ino before this header is included
+extern MonoAnimPhase monoAnimPhase;
 
 // ============================================================================
 //  Entry / exit
