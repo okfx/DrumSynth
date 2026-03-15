@@ -1564,7 +1564,7 @@ static void prerenderScrollText() {
   static const char scrollStr[] =
     "                                                "  // 48 leading spaces
     "KEEP HOLDING X FOR MONOBASS MODE  ...  "
-    "HOLD X + LOAD TO SET PPQN  ...  ";
+    "HOLD X + L TO SET PPQN  ...  ";
 
   memset(scrollBuf, 0, sizeof(scrollBuf));
 
@@ -1618,82 +1618,82 @@ static void renderXComboOverlay(uint32_t nowMs) {
   display.setTextSize(1);
   display.setTextWrap(false);
 
-  // ── Header tab (y=0–9) ──
-  display.fillRect(5, 0, 117, 9, SH110X_WHITE);
-  display.drawFastHLine(0, 9, 128, SH110X_WHITE);
-  display.setTextColor(SH110X_BLACK);
-  display.setCursor(12, 7);
+  // ── Header tab (y=0–6, compact left-aligned) ──
+  display.fillRect(0, 0, 68, 7, SH110X_WHITE);
+  display.setTextColor(SH110X_BLACK, SH110X_WHITE);
+  display.setCursor(2, 5);
   display.print("HOLD X AND PRESS...");
   display.setTextColor(SH110X_WHITE);
+  for (int ux = 0; ux < 67; ++ux) display.drawPixel(ux, 7, SH110X_WHITE);
 
   // ── Circle buttons: D1(1) D2(2) D3(3) and PLAY ──
-  // Button circles at y=20 with radius 5
+  // Button circles at y=19 with radius 5
   static constexpr uint8_t circCx[] = { 8, 28, 48, 119 };
   for (int i = 0; i < 4; ++i) {
-    display.drawCircle(circCx[i], 20, 5, SH110X_WHITE);
+    display.drawCircle(circCx[i], 19, 5, SH110X_WHITE);
   }
   // Labels "1", "2", "3" centered in circles
-  display.setCursor(7, 22);  display.print("1");
-  display.setCursor(27, 22); display.print("2");
-  display.setCursor(47, 22); display.print("3");
+  display.setCursor(7, 21);  display.print("1");
+  display.setCursor(27, 21); display.print("2");
+  display.setCursor(47, 21); display.print("3");
 
-  // PLAY triangle inside circle at (119, 20)
+  // PLAY triangle inside circle at (119, 19)
   // Hand-drawn: 7 rows centered, widths 1,2,3,4,3,2,1 → solid right-arrow
-  display.drawPixel(117, 17, SH110X_WHITE);
-  display.drawPixel(117, 18, SH110X_WHITE); display.drawPixel(118, 18, SH110X_WHITE);
-  display.drawPixel(117, 19, SH110X_WHITE); display.drawPixel(118, 19, SH110X_WHITE); display.drawPixel(119, 19, SH110X_WHITE);
-  display.drawPixel(117, 20, SH110X_WHITE); display.drawPixel(118, 20, SH110X_WHITE); display.drawPixel(119, 20, SH110X_WHITE); display.drawPixel(120, 20, SH110X_WHITE);
-  display.drawPixel(117, 21, SH110X_WHITE); display.drawPixel(118, 21, SH110X_WHITE); display.drawPixel(119, 21, SH110X_WHITE);
-  display.drawPixel(117, 22, SH110X_WHITE); display.drawPixel(118, 22, SH110X_WHITE);
-  display.drawPixel(117, 23, SH110X_WHITE);
+  static const uint8_t triW[] = {1, 2, 3, 4, 3, 2, 1};
+  for (int r = 0; r < 7; ++r)
+    for (int c = 0; c < triW[r]; ++c)
+      display.drawPixel(118 + c, 16 + r, SH110X_WHITE);
 
   // "TOGGLE CHROMA" label between (3) and (PLAY)
-  display.setCursor(58, 22);
+  display.setCursor(58, 21);
   display.print("TOGGLE CHROMA");
 
-  // ── Labels above step buttons (y=32–37) ──
-  display.setCursor(1, 36);
+  // ── Labels above step buttons (y=33–38) ──
+  display.setCursor(1, 37);
   display.print("SELECT MEM 0-9");
 
-  display.setCursor(91, 36);
+  display.setCursor(91, 37);
   display.print("SHUFFLE");
 
-  // Down-right arrow pointing at step 15
-  // Vertical line 4px: x=120, y=32→35
-  display.drawPixel(120, 32, SH110X_WHITE);
-  display.drawPixel(120, 33, SH110X_WHITE);
-  display.drawPixel(120, 34, SH110X_WHITE);
-  display.drawPixel(120, 35, SH110X_WHITE);
-  // Horizontal line 3px: x=121→123, y=35
-  display.drawPixel(121, 35, SH110X_WHITE);
-  display.drawPixel(122, 35, SH110X_WHITE);
-  display.drawPixel(123, 35, SH110X_WHITE);
-  // Chevron: (122,34) and (122,36)
+  // Hand-drawn ⤵ arrow: horizontal bar → vertical stem → arrowhead tip
+  display.drawPixel(120, 34, SH110X_WHITE);  // horizontal bar
+  display.drawPixel(121, 34, SH110X_WHITE);
   display.drawPixel(122, 34, SH110X_WHITE);
-  display.drawPixel(122, 36, SH110X_WHITE);
+  display.drawPixel(123, 34, SH110X_WHITE);
+  display.drawPixel(123, 35, SH110X_WHITE);  // vertical stem
+  display.drawPixel(123, 36, SH110X_WHITE);
+  display.drawPixel(123, 37, SH110X_WHITE);
+  display.drawPixel(122, 37, SH110X_WHITE);  // arrowhead left
+  display.drawPixel(124, 37, SH110X_WHITE);  // arrowhead right
+  display.drawPixel(123, 38, SH110X_WHITE);  // arrowhead tip
 
-  // ── Step buttons (y=39–47) ──
+  // ── Step buttons (y=40–48) ──
   char numBuf[3];
   for (int i = 0; i < 16; ++i) {
     uint8_t x = kStepX[i];
     if (i <= 9) {
       // Full-size buttons (7×9) with digit label
-      display.drawRect(x, 39, 7, 9, SH110X_WHITE);
+      display.drawRect(x, 40, 7, 9, SH110X_WHITE);
       snprintf(numBuf, sizeof(numBuf), "%d", i);
-      display.setCursor(x + 2, 45);
+      display.setCursor(x + 2, 46);
       display.print(numBuf);
     } else if (i <= 14) {
       // Smaller buttons (5×7), offset 1px down
-      display.drawRect(x, 40, 5, 7, SH110X_WHITE);
+      display.drawRect(x, 41, 5, 7, SH110X_WHITE);
     } else {
       // Step 15: full-size with centered 3×3 marker
-      display.drawRect(x, 39, 7, 9, SH110X_WHITE);
-      display.fillRect(x + 2, 42, 3, 3, SH110X_WHITE);
+      display.drawRect(x, 40, 7, 9, SH110X_WHITE);
+      display.fillRect(x + 2, 43, 3, 3, SH110X_WHITE);
     }
   }
 
   // ── Scrolling marquee (y=57–63) ──
-  display.fillRoundRect(0, 57, 128, 7, 2, SH110X_WHITE);
+  // White bar with manually rounded corners (skip 4 corner pixels)
+  display.fillRect(1, 57, 126, 7, SH110X_WHITE);
+  for (int ry = 58; ry <= 62; ++ry) {
+    display.drawPixel(0, ry, SH110X_WHITE);
+    display.drawPixel(127, ry, SH110X_WHITE);
+  }
 
   if (scrollBufWidth > 0) {
     uint32_t elapsed = nowMs - xComboOverlayStartMs;

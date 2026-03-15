@@ -21,6 +21,8 @@ static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS    = 1200;
 static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1200;
 static constexpr uint32_t MONOBASS_NOTE_DISPLAY_MS   = 1200;
 static constexpr float    kEnvFiltCeiling             = 8000.0f;  // envelope filter max Hz
+static constexpr uint32_t GRID_SHOW_MS     = 10000;  // idle grid visible for 10s
+static constexpr uint32_t GRID_DISSOLVE_MS = 1000;   // Bayer dissolve animation duration
 
 // ============================================================================
 //  State
@@ -54,6 +56,10 @@ struct MonoBassState {
 };
 
 extern MonoBassState monoBass;
+
+// Idle grid dissolve state
+static uint32_t monoGridShowStartMs = 0;  // when the idle grid first appeared
+static bool monoGridDismissed = false;     // true after dissolve completes
 
 // ============================================================================
 //  External dependencies — defined in main .ino
@@ -97,6 +103,7 @@ extern ResponsiveAnalogRead* analog[];
 extern bool monoBassKeyEvent;
 // Animation enum and state — defined in .ino before this header is included
 extern MonoAnimPhase monoAnimPhase;
+// bayerDither() is static inline in DrumSynth.ino, visible here via single TU
 
 // ============================================================================
 //  Entry / exit
@@ -123,6 +130,8 @@ void enterMonoBassMode() {
   for (auto& k : monoBass.heldKeys) k = -1;
   monoBass.showOctave = false;
   monoBass.noteShowStart = 0;
+  monoGridShowStartMs = 0;
+  monoGridDismissed = false;
   // Clear any chroma note-select state so it doesn't persist across mode switch
   d1ChromaHeldStep = -1;
   d2ChromaHeldStep = -1;
@@ -351,7 +360,19 @@ static inline void drawKnobIcon(int cx, int cy) {
 }
 
 // Draw the 4×2 knob reference grid in the scope area (idle state).
-static void renderMonoBassIdleGrid() {
+// After GRID_SHOW_MS, dissolves via Bayer dither over GRID_DISSOLVE_MS.
+static void renderMonoBassIdleGrid(uint32_t nowMs) {
+  if (monoGridDismissed) return;
+
+  if (monoGridShowStartMs == 0) {
+    monoGridShowStartMs = nowMs;
+  }
+
+  uint32_t elapsed = nowMs - monoGridShowStartMs;
+  if (elapsed >= GRID_SHOW_MS + GRID_DISSOLVE_MS) {
+    monoGridDismissed = true;
+    return;
+  }
   static constexpr int kRowStartY  = 24;
   static constexpr int kRowHeight  = 10;
   static constexpr int kLeftX      = 4;
@@ -382,6 +403,15 @@ static void renderMonoBassIdleGrid() {
     drawKnobIcon(kLeftKnobCx, knobCy);
     drawKnobIcon(kRightKnobCx, knobCy);
   }
+
+  // Bayer dissolve: erase content area pixels progressively after GRID_SHOW_MS
+  if (elapsed > GRID_SHOW_MS) {
+    float dp = (float)(elapsed - GRID_SHOW_MS) / (float)GRID_DISSOLVE_MS;
+    for (int dy = 22; dy < 64; ++dy)
+      for (int dx = 0; dx < 128; ++dx)
+        if (bayerDither(dx, dy, dp))
+          display.drawPixel(dx, dy, SH110X_BLACK);
+  }
 }
 
 // Helper: draw centered outlined text at given y position and text size.
@@ -399,8 +429,16 @@ static inline void monoBassOutlinedCenter(const char* text, int y, uint8_t textS
 void renderMonoBassScope(uint32_t nowMs) {
   if (!monoBass.active) return;
 
+  // Reset idle grid timer whenever a note is playing or an overlay is active
+  if (monoBass.topKey() >= 0) {
+    monoGridShowStartMs = 0;
+    monoGridDismissed = false;
+  }
+
   // Priority 1: Parameter knob changed recently
   if (monoBass.paramLabel[0] && (nowMs - monoBass.paramShowStart < MONOBASS_PARAM_DISPLAY_MS)) {
+    monoGridShowStartMs = 0;
+    monoGridDismissed = false;
     monoBassOutlinedCenter(monoBass.paramLabel, 24, 1);
     monoBassOutlinedCenter(monoBass.paramValue, 37, 2);
     return;
@@ -435,8 +473,8 @@ void renderMonoBassScope(uint32_t nowMs) {
   // Priority 4: note still playing → let scope waveform show through
   if (monoBass.topKey() >= 0) return;
 
-  // Priority 5: idle — show knob reference grid
-  renderMonoBassIdleGrid();
+  // Priority 5: idle — show knob reference grid (with timed dissolve)
+  renderMonoBassIdleGrid(nowMs);
 }
 
 #endif // MONOBASS_H
