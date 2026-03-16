@@ -743,8 +743,6 @@ void setup() {
 
   // Args: (i2cAddr=0 unused for SPI, reset=true to hardware-reset the display)
   bool displayOk = display.begin(0, true);
-  Serial.begin(115200);
-  Serial.print("[BOOT] displayOk="); Serial.println(displayOk);
   if (displayOk) {
     display.clearDisplay();
 
@@ -806,7 +804,6 @@ void setup() {
 
   // --- Audio system initialization ---
 
-  Serial.println("[BOOT] audio init...");
   AudioMemory(1200);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
   sysTickTimer.begin(sysTickISR, 1000);
   audioInit();
@@ -877,7 +874,6 @@ void setup() {
   lastFrameDrawTick = sysTickMs;
   interrupts();
 
-  Serial.println("[BOOT] setup() complete");
 }
 
 void loop() {
@@ -1024,14 +1020,6 @@ void loop() {
     // Don't rebuild framebuffer while a chunked push is still in progress
     if (!skipForSubdiv && !skipForMonoBass && !oledPushInProgress()) {
       updateDisplay();
-      // Debug: log first few display updates
-      {
-        static uint8_t dbgFrames = 0;
-        if (dbgFrames < 10) {
-          Serial.print("[DISP] frame="); Serial.println(dbgFrames);
-          dbgFrames++;
-        }
-      }
     }
   }
 
