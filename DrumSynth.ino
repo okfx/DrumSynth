@@ -906,7 +906,6 @@ void loop() {
     uint32_t ms = millis();
     if (dbgCount < 5 && ms >= dbgNext) {
       Serial.print("[LOOP] tick="); Serial.print(ms);
-      Serial.print(" oledPage="); Serial.print(oledPushPage);
       Serial.print(" splashActive="); Serial.println(splashDissolveActive);
       dbgNext = ms + 1000;
       dbgCount++;
