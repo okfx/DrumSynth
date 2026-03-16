@@ -87,7 +87,7 @@ void audioInit() {
   d1PitchEnv.sustain(0.0f);
 
   // D1 amplitude envelope
-  d1AmpEnv.attack(0.5f);      // Keep in sync with D1_ATTACK_MS in DrumSynth.ino (= 0.5)
+  d1AmpEnv.attack(D1_ATTACK_MS);  // defined in DrumSynth.ino before this include
   d1AmpEnv.hold(2.5f);       // Library default — overridden per-trigger by cached params (see updateD1HoldCache)
   d1AmpEnv.decay(100.0f);
   d1AmpEnv.sustain(0.0f);

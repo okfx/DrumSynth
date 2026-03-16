@@ -119,8 +119,7 @@ void enterMonoBassMode() {
   pendingStepCount = 0;
   wantSwitchToExt = false;
   interrupts();
-  monoBass.heldCount = 0;
-  for (auto& k : monoBass.heldKeys) k = -1;
+  monoBass.heldCount = 0;  // heldKeys contents don't matter when heldCount == 0
   monoBass.showOctave = false;
   monoBass.noteShowStart = 0;
   monoGridShowStartMs = 0;
@@ -274,9 +273,6 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       AudioInterrupts();
     }
 
-    // Light first 12 LEDs (usable keys) — single SPI transaction
-    for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
-    ledShiftReg.updateRegisters();
   } else {
     // Remove released key from stack
     bool found = false;
@@ -308,17 +304,18 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
         d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);
         AudioInterrupts();
       }
-      for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
-      ledShiftReg.updateRegisters();
     } else {
       // No keys held — gate off
       AudioNoInterrupts();
       d1AmpEnv.noteOff();
       AudioInterrupts();
-      for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
-      ledShiftReg.updateRegisters();
     }
   }
+
+  // Light first 12 LEDs (usable keys) — single SPI transaction.
+  // Common to all paths: press, legato fallback, and gate-off.
+  for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
+  ledShiftReg.updateRegisters();
   monoBassKeyEvent = true;  // tell loop() to skip next OLED frame for lower latency
   return true;
 }

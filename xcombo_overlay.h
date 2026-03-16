@@ -113,9 +113,6 @@ static void renderXComboOverlay(uint32_t nowMs) {
   display.setFont(NULL);  // restore default for next caller
 
   if (isSafeToPushOled(nowMs)) {
-    oledStartPush();
-    noInterrupts();
-    lastFrameDrawTick = nowMs;
-    interrupts();
+    oledStartPushAndStamp(nowMs);
   }
 }

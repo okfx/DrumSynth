@@ -122,6 +122,7 @@ static_assert(EEPROM_TOTAL_BYTES <= 1080, "EEPROM layout exceeds Teensy 4.0 capa
 
 uint16_t eepromSeq = 0;
 uint8_t activeSaveSlot = 0;
+bool slotPending = false;    // true = slot selected but not yet loaded/saved
 bool patternDirty = false;
 
 // ============================================================================
@@ -205,9 +206,13 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
 
   patternDirty = false;
 
-  // Live-update step timer if shuffle mode changed during playback
+  // Live-update step timer if shuffle mode changed during playback.
+  // Snapshot currentStep under noInterrupts — stepISR can advance it mid-read.
   if (transportState == RUN_INT && sequencePlaying) {
-    stepTimer.update(shuffledStepPeriodUs(currentStep));
+    noInterrupts();
+    uint8_t step = currentStep;
+    interrupts();
+    stepTimer.update(shuffledStepPeriodUs(step));
   }
 
   // Show "PATTERN LOADED" overlay message

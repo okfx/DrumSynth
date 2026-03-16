@@ -491,8 +491,8 @@ void updateExtBpmDisplay() {
   noInterrupts();
   uint32_t emaCopy = extIntervalEMA;
   uint32_t lastPCopy = lastPulseMicros;
+  uint8_t ppqnCopy = ppqn;  // snapshot with interval for consistent BPM calculation
   interrupts();
-  uint8_t ppqnCopy = ppqn;  // uint8_t is ARM-atomic — no critical section needed
 
   // Show ext BPM if we've received pulses recently (within timeout)
   if (ppqnCopy == 0) return;  // defensive — ppqn should always be valid

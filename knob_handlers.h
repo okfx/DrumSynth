@@ -165,6 +165,7 @@ static inline void displayMonoBassParam(const char* normalLabel, const char* bkL
 // For D2/D3/master cases disabled during MONOBASS — returns true if handled
 static inline bool displayDisabledInMonoBass() {
   if (!monoBass.active) return false;
+  activeRail = RAIL_NONE;
   snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
   snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
   return true;

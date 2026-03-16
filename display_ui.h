@@ -28,6 +28,9 @@ extern float extBpmDisplay;
 extern volatile float bpm;
 extern volatile uint32_t sysTickMs;
 extern volatile TransportState transportState;
+extern uint32_t shuffleOverlayStartTick;
+extern char     shuffleOverlayText[];
+extern bool     slotPending;
 extern volatile bool sequencePlaying;
 extern volatile bool armed;
 extern volatile uint16_t armPulseCountdown;
@@ -59,7 +62,7 @@ extern uint8_t monoTextMask[];
 extern bool monoMasksReady;
 
 // --- Extern: functions (defined in .ino or earlier headers) ---
-extern bool isSafeToPushOled(uint32_t nowMs);
+bool isSafeToPushOled(uint32_t nowMs);
 extern void playSequence();
 
 // --- UI Helpers ---
@@ -196,14 +199,17 @@ void renderTopBar(float bpmSnap, uint8_t trackSnap, int chokeSnap,
     display.print(chokeBuf);
   }
 
-  // Memory slot
+  // Memory slot — blink number when pending (selected but not yet loaded)
   display.setCursor(95, 0);
   display.print("MEM");
   {
-    char memBuf[4];
-    snprintf(memBuf, sizeof(memBuf), "%d", slotSnap + 1);
-    display.setCursor(104 - (int)strlen(memBuf) * 3, 10);
-    display.print(memBuf);
+    bool showNum = !slotPending || ((sysTickMs / 300) & 1);  // ~1.7 Hz blink
+    if (showNum) {
+      char memBuf[4];
+      snprintf(memBuf, sizeof(memBuf), "%d", slotSnap + 1);
+      display.setCursor(104 - (int)strlen(memBuf) * 3, 10);
+      display.print(memBuf);
+    }
   }
 
   // Transport icon
@@ -472,10 +478,7 @@ void updateDisplay() {
     display.print(countdown);
 
     // Chunked push — no timing guard needed during count-in (no steps firing)
-    oledStartPush();
-    noInterrupts();
-    lastFrameDrawTick = nowMs;
-    interrupts();
+    oledStartPushAndStamp(nowMs);
     return;
   }
 
@@ -505,10 +508,7 @@ void updateDisplay() {
     }
 
     if (isSafeToPushOled(nowMs)) {
-      oledStartPush();
-      noInterrupts();
-      lastFrameDrawTick = nowMs;
-      interrupts();
+      oledStartPushAndStamp(nowMs);
     }
     return;
   }
@@ -517,7 +517,7 @@ void updateDisplay() {
   // Delayed by COMBO_OVERLAY_DELAY_MS so quick combos don't flash the overlay.
   if (comboMod.held && !comboMod.comboFired
       && (nowMs - comboMod.pressTick) >= COMBO_OVERLAY_DELAY_MS
-      && !ppqnModeActive && monoAnimPhase == MONO_ANIM_NONE) {
+      && !ppqnModeActive && !monoBass.active && monoAnimPhase == MONO_ANIM_NONE) {
     renderXComboOverlay(nowMs);
     return;
   }
@@ -587,13 +587,38 @@ void updateDisplay() {
     }
   }
 
+  // Big shuffle overlay — centered text size 2, 800 ms duration.
+  bool shuffleOverlayActive =
+    shuffleOverlayStartTick &&
+    ((uint32_t)(nowMs - shuffleOverlayStartTick) < SHUFFLE_OVERLAY_DURATION_MS);
+  if (shuffleOverlayActive) {
+    display.setTextSize(2);
+    display.setTextColor(1);
+    // "SHUFFLE" header — centered
+    {
+      int16_t x1, y1; uint16_t w, h;
+      display.getTextBounds("SHUFFLE", 0, 0, &x1, &y1, &w, &h);
+      display.setCursor(64 - w / 2, 24);
+      display.print("SHUFFLE");
+    }
+    // Value line — centered below header
+    {
+      int16_t x1, y1; uint16_t w, h;
+      display.getTextBounds(shuffleOverlayText, 0, 0, &x1, &y1, &w, &h);
+      display.setCursor(64 - w / 2, 44);
+      display.print(shuffleOverlayText);
+    }
+    display.setTextSize(1);
+  }
+
   // Suppress small parameter overlay when scope area owns the display.
   // In MONOBASS, allow D1 voice rail through (D1 shape knob is still active).
   if (noteSelectActive) overlayActiveNow = false;
   if (monoBass.active && railSnap != RAIL_D1_SHAPE) overlayActiveNow = false;
+  if (shuffleOverlayActive) overlayActiveNow = false;
   if (overlayActiveNow) {
     renderParameterOverlay(railSnap, param1Snap, param2Snap);
-  } else {
+  } else if (!shuffleOverlayActive) {
     // Chroma dots share the bottom strip with the parameter overlay —
     // only draw them when the overlay is not visible.
     renderChromaDots(nowMs);
@@ -603,7 +628,7 @@ void updateDisplay() {
   renderMonoTextAnim(nowMs);
 
   // Fire any steps queued during framebuffer drawing, before the
-  // blocking SPI transfer adds another 15-25ms of latency.
+  // chunked SPI transfer begins.
   if (playingSnap) {
     playSequence();
   }
@@ -622,13 +647,8 @@ void updateDisplay() {
   }
 
   if (isSafeToPushOled(nowMs)) {
-    oledStartPush();
-
-    // Update OLED watchdog timestamp only after a successful push start.
-    // On skipped pushes, the stale timestamp causes an immediate retry
-    // next loop iteration — by then step B has fired and the push succeeds.
-    noInterrupts();
-    lastFrameDrawTick = nowMs;
-    interrupts();
+    // Stamp watchdog only on successful push — stale timestamp causes an
+    // immediate retry next iteration, by which time the step has fired.
+    oledStartPushAndStamp(nowMs);
   }
 }

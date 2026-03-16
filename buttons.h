@@ -161,6 +161,9 @@ static void comboChromaWF() {
 
 // Reset all pattern state to blank defaults (sequences, chroma notes, chroma modes, shuffle).
 // Called when loading an empty or corrupt EEPROM slot.
+// shuffleMode write is intentionally unguarded: the ISR reads it via shuffledStepPeriodUs()
+// but the caller (btnLoadPress / combo+step) always also calls stepTimer.update() which
+// re-arms the timer with the new shuffle setting, so a torn read is harmless.
 static void clearPatternState() {
   for (int s = 0; s < numSteps; s++) {
     d1Sequence[s] = 0; d2Sequence[s] = 0; d3Sequence[s] = 0;
@@ -171,24 +174,28 @@ static void clearPatternState() {
   shuffleMode = SHUFFLE_OFF;
 }
 
-// Cycle shuffle mode: OFF → 1 → 2 → … → 7 → OFF.
+// Cycle shuffle mode: OFF → 2 → 3 → … → 7 → OFF (skip 1, identical to OFF).
 // Shows overlay "SHUFFLE OFF" or "SHUFFLE N / xx%".
 // Live-updates the step timer if internal clock is running.
 static void cycleShuffle(uint32_t nowTick) {
   uint8_t next = (uint8_t)shuffleMode + 1;
+  if (next == SHUFFLE_1) next = SHUFFLE_2;  // skip dead setting
   shuffleMode = (next > SHUFFLE_7) ? SHUFFLE_OFF : (ShuffleMode)next;
-  snprintf(displayParameter1, sizeof(displayParameter1), "SHUFFLE");
+  // Big centered shuffle overlay (800 ms) instead of standard small overlay
   if (shuffleMode == SHUFFLE_OFF) {
-    snprintf(displayParameter2, sizeof(displayParameter2), "OFF");
+    snprintf(shuffleOverlayText, sizeof(shuffleOverlayText), "OFF");
   } else {
-    snprintf(displayParameter2, sizeof(displayParameter2),
-             "%u / %u%%", (unsigned)shuffleMode, (unsigned)kShufflePercent[shuffleMode]);
+    snprintf(shuffleOverlayText, sizeof(shuffleOverlayText),
+             "%u / %u%%", (unsigned)shuffleMode - 1, (unsigned)kShufflePercent[shuffleMode]);
   }
-  parameterOverlayStartTick = nowTick;
-  activeRail = RAIL_NONE;
-  // Live-update timer so shuffle takes effect immediately
+  shuffleOverlayStartTick = nowTick;
+  // Live-update timer so shuffle takes effect immediately.
+  // Snapshot currentStep under noInterrupts — stepISR can advance it mid-read.
   if (transportState == RUN_INT && sequencePlaying) {
-    stepTimer.update(shuffledStepPeriodUs(currentStep));
+    noInterrupts();
+    uint8_t step = currentStep;
+    interrupts();
+    stepTimer.update(shuffledStepPeriodUs(step));
   }
 }
 
@@ -352,6 +359,9 @@ static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
 
   monoAnimPhase = MONO_ANIM_NONE;
 
+  // In MONOBASS, X only does the exit routine — skip combo LED pattern
+  if (monoBass.active) return;
+
   // Light combo-active step LEDs (0–9 = mem slots, 15 = shuffle)
   for (int i = 0; i < numSteps; ++i) {
     bool on = (i <= 9) || (i == 15);
@@ -435,6 +445,7 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
     return;
   }
   if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
+  slotPending = false;
   if (!loadStateFromEEPROM(activeSaveSlot)) {
     clearPatternState();
     updateLEDs();
@@ -477,6 +488,7 @@ static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
   if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
 
   // Normal save
+  slotPending = false;
   activeRail = RAIL_NONE;
   if (patternDirty) {
     saveStateToEEPROM(activeSaveSlot);
