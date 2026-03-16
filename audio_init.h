@@ -42,7 +42,9 @@ static void applyMasterSettingsA() {
   sgtl5000_1.volume(0.75f);
   sgtl5000_1.dacVolume(0.98f);
   sgtl5000_1.eqBands(0.25f, -0.20f, -0.10f, 0.05f, 0.05f);
-  sgtl5000_1.autoVolumeDisable();
+  // AVC stays enabled to avoid SGTL5000 bug when toggling enable/disable.
+  // 0 dBFS threshold + 0 maxGain = effectively transparent.
+  sgtl5000_1.autoVolumeControl(0, 0, 1, 0.0f, 1.0f, 1.0f);
   AudioInterrupts();
 }
 
@@ -67,7 +69,6 @@ static void applyMasterSettingsB() {
   sgtl5000_1.dacVolume(0.95f);
   sgtl5000_1.eqBands(0.50f, -0.08f, -0.05f, 0.05f, 0.03f);
   sgtl5000_1.autoVolumeControl(0, 1, 1, -3.0f, 150.0f, 500.0f);
-  sgtl5000_1.autoVolumeEnable();
   AudioInterrupts();
 }
 
@@ -90,7 +91,6 @@ static void applyMasterSettingsC() {
   sgtl5000_1.eqBands(0.50f, -0.08f, -0.05f, 0.05f, 0.03f);
   // --- Alternate AVC: slower, deeper threshold ---
   sgtl5000_1.autoVolumeControl(0, 2, 1, -4.5f, 30.0f, 2.0f);
-  sgtl5000_1.autoVolumeEnable();
   AudioInterrupts();
 }
 
@@ -134,17 +134,11 @@ void audioInit() {
     0.05f    // 9.9 kHz: sparkle
   );
 
-  // Auto Volume Control — configured as a safety limiter but currently disabled.
-  // Kept so the parameters are ready if re-enabled (call autoVolumeEnable()).
-  sgtl5000_1.autoVolumeControl(
-    0,      // maxGain: 0 dB
-    2,      // response: 50 ms integration
-    1,      // hardLimit: limiter mode
-    -1.5f,  // threshold: dBFS
-    80.0f,  // attack: dB/s
-    300.0f  // decay: dB/s
-  );
-  sgtl5000_1.autoVolumeDisable();
+  // Auto Volume Control — enabled at boot with transparent settings (0 dBFS threshold).
+  // SGTL5000 has a known bug when toggling autoVolumeEnable/Disable, so AVC stays
+  // enabled permanently. Profile A reconfigures it to be transparent; B/C set real values.
+  sgtl5000_1.autoVolumeControl(0, 0, 1, 0.0f, 1.0f, 1.0f);
+  sgtl5000_1.autoVolumeEnable();
 
   // ============================================================================
   // D1 - KICK DRUM
