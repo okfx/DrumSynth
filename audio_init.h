@@ -14,6 +14,74 @@ extern float d1Volume;
 extern float d2Volume;
 extern float d3Volume;
 
+// ============================================================================
+// A/B MASTER SETTINGS TOGGLE  (temporary — remove after evaluation)
+//
+// Profile A = current (old) settings.  Profile B = proposed optimised values.
+// Toggle with the LOAD button (remapped while this code is present).
+// ============================================================================
+static bool masterProfileB = false;   // false = A (old), true = B (new)
+
+static void applyMasterSettingsA() {
+  AudioNoInterrupts();
+  // --- Master filters (old) ---
+  masterHighPass.frequency(60.0f);
+  masterHighPass.resonance(1.5f);
+  masterLowPass.frequency(9000.0f);
+  masterLowPass.resonance(0.25f);
+  masterBandPass.frequency(1000.0f);
+  masterBandPass.resonance(1.0f);
+  // --- Final EQ (old) ---
+  finalFilter.setLowShelf(0, 150.0f, 0.7f, 2.0f);
+  finalFilter.setNotch(1, 350.0f, 1.7f);
+  finalFilter.setNotch(2, 2000.0f, 3.0f);
+  finalFilter.setHighShelf(3, 4500.0f, 0.7f, 3.5f);
+  finalAmp.gain(3.5f);
+  // --- SGTL5000 codec (old) ---
+  sgtl5000_1.volume(0.75f);
+  sgtl5000_1.dacVolume(0.98f);
+  sgtl5000_1.eqBands(0.25f, -0.20f, -0.10f, 0.05f, 0.05f);
+  sgtl5000_1.autoVolumeDisable();
+  AudioInterrupts();
+}
+
+static void applyMasterSettingsB() {
+  AudioNoInterrupts();
+  // --- Master filters (optimised) ---
+  masterHighPass.frequency(30.0f);
+  masterHighPass.resonance(0.707f);
+  masterLowPass.frequency(12000.0f);
+  masterLowPass.resonance(0.3f);
+  // Bypass bandpass — open it wide so it's effectively transparent
+  masterBandPass.frequency(1000.0f);
+  masterBandPass.resonance(0.01f);
+  // --- Final EQ (optimised) ---
+  finalFilter.setLowShelf(0, 150.0f, 0.6f, 3.5f);
+  finalFilter.setNotch(1, 400.0f, 1.0f);
+  finalFilter.setNotch(2, 2500.0f, 2.0f);
+  finalFilter.setHighShelf(3, 4500.0f, 0.7f, 2.5f);
+  finalAmp.gain(2.8f);
+  // --- SGTL5000 codec (optimised) ---
+  sgtl5000_1.volume(0.80f);
+  sgtl5000_1.dacVolume(0.95f);
+  sgtl5000_1.eqBands(0.50f, -0.08f, -0.05f, 0.05f, 0.03f);
+  sgtl5000_1.autoVolumeControl(0, 1, 1, -3.0f, 150.0f, 500.0f);
+  sgtl5000_1.autoVolumeEnable();
+  AudioInterrupts();
+}
+
+// Toggle between A and B. Returns the new profile label character ('A' or 'B').
+static char toggleMasterProfile() {
+  masterProfileB = !masterProfileB;
+  if (masterProfileB) {
+    applyMasterSettingsB();
+    return 'B';
+  } else {
+    applyMasterSettingsA();
+    return 'A';
+  }
+}
+
 void audioInit() {
 
   // ============================================================================
