@@ -24,7 +24,7 @@ static constexpr float D1_ATTACK_MS = 0.5f;  // 808-style instant punch — fixe
 // Full definition is in the button state machine section below.
 struct ButtonHandler;
 
-static constexpr const char* FIRMWARE_VERSION   = "1.06";
+static constexpr const char* FIRMWARE_VERSION   = "1.07";
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
