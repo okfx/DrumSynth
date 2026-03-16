@@ -435,24 +435,28 @@ static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs)
   }
 }
 
-// --- LOAD button (index 8): TEMPORARILY remapped to A/B master settings toggle.
-//     Original behaviour: press=load, combo+LOAD hold=PPQN.
-//     See AB_TEST.md for revert instructions.
+// --- LOAD button (index 8): press=load pattern, combo+LOAD hold=PPQN.
 
 static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
-  self.pressTick = nowTick;  // needed for hold-combo (PPQN) timing
+  self.pressTick = nowTick;
   if (comboMod.held) {
     if (monoBass.active) { showMonoBassDisabled(nowTick); }
     else { dispatchCombo(8, nowTick); }
     return;
   }
-
-  // --- A/B toggle (temporary) ---
-  char profile = toggleMasterProfile();
-  snprintf(displayParameter1, sizeof(displayParameter1), "MASTER");
-  snprintf(displayParameter2, sizeof(displayParameter2), "PROFILE %c", profile);
-  parameterOverlayStartTick = nowTick;
-  activeRail = RAIL_NONE;
+  if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
+  slotPending = false;
+  if (!loadStateFromEEPROM(activeSaveSlot)) {
+    clearPatternState();
+    updateLEDs();
+    patternDirty = false;
+    activeRail = RAIL_NONE;
+    snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d",
+             activeSaveSlot + 1);
+    snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+    parameterOverlayStartTick = nowTick;
+  }
+  flashStepLed(activeSaveSlot, 2);
 }
 
 static void btnLoadRelease(ButtonHandler& self, uint32_t /*nowTick*/) {
