@@ -23,38 +23,23 @@ void audioInit() {
   sgtl5000_1.disable();
   sgtl5000_1.enable();
 
-  // Analog output staging
-  sgtl5000_1.volume(0.75f);     // Headphone amp gain
+  // Analog output staging (Profile B)
+  sgtl5000_1.volume(0.80f);     // Headphone amp gain
   sgtl5000_1.lineOutLevel(13);  // Line out max voltage swing (3.16 Vpp)
 
   // Enable DAP (required for EQ / AVC on output)
   sgtl5000_1.audioPostProcessorEnable();
 
-  // Digital trim before DAC (useful if you ever need extra headroom)
-  sgtl5000_1.dacVolumeRamp();  // Smooth dacVolume changes
-  sgtl5000_1.dacVolume(0.98f);  // Near-unity, slight headroom
+  // Digital trim before DAC
+  sgtl5000_1.dacVolumeRamp();   // Smooth dacVolume changes
+  sgtl5000_1.dacVolume(0.95f);  // Slight headroom
 
-  // 5-band graphic EQ: 115Hz, 330Hz, 990Hz, 3kHz, 9.9kHz
-  // Range: 1.00 ~= +12 dB, -1.00 ~= -11.75 dB
-  sgtl5000_1.eqBands(
-    0.25f,   // 115 Hz: slight bass lift
-    -0.20f,  // 330 Hz: mud cut
-    -0.10f,  // 990 Hz: mild box cut
-    0.05f,   // 3 kHz: attack / presence
-    0.05f    // 9.9 kHz: sparkle
-  );
+  // 5-band graphic EQ: 115Hz, 330Hz, 990Hz, 3kHz, 9.9kHz (Profile B)
+  sgtl5000_1.eqBands(0.50f, -0.08f, -0.05f, 0.05f, 0.03f);
 
-  // Auto Volume Control — configured as a safety limiter but currently disabled.
-  // Kept so the parameters are ready if re-enabled (call autoVolumeEnable()).
-  sgtl5000_1.autoVolumeControl(
-    0,      // maxGain: 0 dB
-    2,      // response: 50 ms integration
-    1,      // hardLimit: limiter mode
-    -1.5f,  // threshold: dBFS
-    80.0f,  // attack: dB/s
-    300.0f  // decay: dB/s
-  );
-  sgtl5000_1.autoVolumeDisable();
+  // Auto Volume Control — fast transparent safety limiter
+  sgtl5000_1.autoVolumeControl(0, 1, 1, -3.0f, 150.0f, 500.0f);
+  sgtl5000_1.autoVolumeEnable();
 
   // ============================================================================
   // D1 - KICK DRUM
@@ -399,8 +384,8 @@ void audioInit() {
   masterWfInputMixer.gain(2, 0.0f);          // kick envelope
   masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
-  // Final output amplifier — makeup gain compensates for master filter chain + lower headphone amp
-  finalAmp.gain(3.5f);
+  // Final output amplifier (Profile B — lower gain, filters are more open)
+  finalAmp.gain(2.8f);
   usbTrim.gain(0.5f);
 
   // Master mixer (dry drums + wavefolder + delay return)
@@ -423,21 +408,21 @@ void audioInit() {
   delaySendMixer.gain(2, 0.0f);  // D3 send
   delaySendMixer.gain(3, 0.0f);  // feedback tap
 
-  // Master filters
-  masterHighPass.resonance(1.5f);
-  masterHighPass.frequency(60.0f);
+  // Master filters (Profile B — optimised)
+  masterHighPass.frequency(30.0f);
+  masterHighPass.resonance(0.707f);
 
-  masterLowPass.resonance(0.25f);
-  masterLowPass.frequency(9000.0f);
+  masterLowPass.frequency(12000.0f);
+  masterLowPass.resonance(0.3f);
 
-  masterBandPass.frequency(1000.0f);  // 1kHz bandpass — intentional coloring of master output
-  masterBandPass.resonance(1.0f);
+  masterBandPass.frequency(1000.0f);
+  masterBandPass.resonance(0.01f);   // effectively bypassed — transparent
 
-  // Smiley-face master EQ — boosted lows, two mid cuts, bright highs
-  finalFilter.setLowShelf(0, 150.0f, 0.7f, 2.0f);    // +2dB warmth below 150Hz
-  finalFilter.setNotch(1, 350.0f, 1.7f);              // moderate cut around 350Hz
-  finalFilter.setNotch(2, 2000.0f, 3.0f);             // narrow mild cut around 2kHz
-  finalFilter.setHighShelf(3, 4500.0f, 0.7f, 3.5f);   // +3.5dB air above 4.5kHz
+  // Master EQ (Profile B — optimised)
+  finalFilter.setLowShelf(0, 150.0f, 0.6f, 3.5f);    // +3.5dB warmth below 150Hz
+  finalFilter.setNotch(1, 400.0f, 1.0f);              // gentle cut around 400Hz
+  finalFilter.setNotch(2, 2500.0f, 2.0f);             // mild cut around 2.5kHz
+  finalFilter.setHighShelf(3, 4500.0f, 0.7f, 2.5f);   // +2.5dB air above 4.5kHz
 }
 
 #endif

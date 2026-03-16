@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.05.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.07.
 
 ## Features
 
@@ -53,6 +53,20 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 | `monobass.h` | MONOBASS live keyboard mode -- entry/exit, button handler, scope |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
+| `OLED_NONBLOCKING_PUSH.md` | Writeup of the non-blocking SH1106 OLED technique |
+
+## Changes (v1.07)
+
+- **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates the 15–25 ms blocking window that caused USB audio clicks when recording to a DAW. See [`OLED_NONBLOCKING_PUSH.md`](OLED_NONBLOCKING_PUSH.md) and [`CHUNKED_OLED_PUSH.md`](CHUNKED_OLED_PUSH.md) for details.
+- **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
+- **Master audio retuning** -- Master filters, EQ, codec settings, and output gain retuned after A/B/C evaluation:
+  - Highpass lowered to 30 Hz (Butterworth) to preserve sub-bass energy
+  - Lowpass opened to 12 kHz for more headroom up top
+  - Bandpass effectively bypassed (Q 0.01)
+  - Final EQ gentler mid cuts, stronger bass shelf (+3.5 dB), reduced top air (+2.5 dB)
+  - Output gain reduced from 3.5 to 2.8 (fuller spectrum needs less makeup)
+  - SGTL5000: bass EQ doubled (+6 dB at 115 Hz), mud/box cuts halved, AVC safety limiter enabled at boot
+- **OLED watchdog** -- ISR-based watchdog detects frozen display (750 ms timeout) and triggers hardware re-init with automatic push restart
 
 ## Changes (v1.05)
 

@@ -435,10 +435,10 @@ static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs)
   }
 }
 
-// --- LOAD button (index 8): press=load, combo+LOAD hold=PPQN ---
+// --- LOAD button (index 8): press=load pattern, combo+LOAD hold=PPQN.
 
 static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
-  self.pressTick = nowTick;  // needed for hold-combo (PPQN) timing
+  self.pressTick = nowTick;
   if (comboMod.held) {
     if (monoBass.active) { showMonoBassDisabled(nowTick); }
     else { dispatchCombo(8, nowTick); }

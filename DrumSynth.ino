@@ -24,7 +24,7 @@ static constexpr float D1_ATTACK_MS = 0.5f;  // 808-style instant punch — fixe
 // Full definition is in the button state machine section below.
 struct ButtonHandler;
 
-static constexpr const char* FIRMWARE_VERSION   = "1.06";
+static constexpr const char* FIRMWARE_VERSION   = "1.07";
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -873,10 +873,10 @@ void setup() {
   noInterrupts();
   lastFrameDrawTick = sysTickMs;
   interrupts();
+
 }
 
 void loop() {
-
   // --- Accent preview timeout ---
 
   // Single stable timebase for top-of-loop checks
@@ -1751,7 +1751,9 @@ static int8_t oledPushPage = -1;  // -1 = idle, 0–7 = page being pushed next
 static inline void oledSwSpiWrite(uint8_t data) {
   for (int8_t bit = 7; bit >= 0; bit--) {
     digitalWriteFast(OLED_MOSI, (data >> bit) & 1);
+    __asm__ volatile("dsb");  // data sync barrier — ~10ns hold time for SH1106
     digitalWriteFast(OLED_CLK, HIGH);
+    __asm__ volatile("dsb");
     digitalWriteFast(OLED_CLK, LOW);
   }
 }
