@@ -146,7 +146,7 @@ void drawScopeWaveform(int x, int y, int h) {
   float mid = (minVal + maxVal) * 0.5f;
 
   // Precompute y-coordinates for all samples
-  int ys[SCOPE_DISPLAY_WIDTH];
+  static int ys[SCOPE_DISPLAY_WIDTH];  // static to avoid 496-byte stack alloc per frame
   for (int i = 0; i < SCOPE_DISPLAY_WIDTH; i++) {
     int py = y + h / 2 - (int)((scopeBuffer[i] - mid) * vScale);
     ys[i] = constrain(py, y, y + h - 1);

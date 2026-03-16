@@ -22,7 +22,7 @@ as one file. Headers are inline code segments, not independent modules.
 | `eeprom.h` | Pattern save/load, PPQN persistence | CRC-8, magic number versioning (0x4249) |
 | `chroma.h` | Chromatic mode pitch/note/envelope | MIDI freq table, knob-to-note, dot animation |
 | `monobass.h` | MONOBASS mode (live keyboard) | Entry/exit, button handler, scope renderer |
-| `splash.h` | Boot splash animation | Wavefolding sine → version info |
+| `splash.h` | Boot splash + dissolve | Version display, Bayer dissolve into idle UI |
 | `xcombo_overlay.h` | X-combo help overlay | Full-screen diagram + scrolling marquee |
 | `buttons.h` | Button state machine + combos | ButtonHandler, ComboModState, dispatch table |
 | `knob_handlers.h` | 32 display + 32 engine functions | Table-driven dispatch via `knobTable[32]` |

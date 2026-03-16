@@ -517,7 +517,7 @@ uint8_t* sequenceForTrack(Track t) {
     case TRACK_D1: return d1Sequence;
     case TRACK_D2: return d2Sequence;
     case TRACK_D3: return d3Sequence;
-    default:       return d1Sequence;
+    default:       return d1Sequence;  // unreachable — all Track values handled above
   }
 }
 
@@ -549,6 +549,9 @@ void applyChokeToDecays();
 void drawOutlinedText(int x, int y, const char* text);
 bool isSafeToPushOled(uint32_t nowMs);
 
+// Shared constant: envelope filter ceiling used by both chroma and MONOBASS.
+static constexpr float kEnvFiltCeiling = 8000.0f;
+
 // Chroma — MIDI pitch tables, note conversion, envelope filter, dot animation.
 // Depends on: audiotool.h, chroma state vars (defined above).
 #include "chroma.h"
@@ -559,7 +562,13 @@ bool isSafeToPushOled(uint32_t nowMs);
 #include "monobass.h"
 MonoBassState monoBass;
 
-// Splash animation — sine wave → wavefold → version info.
+// Splash dissolve state — used by splash.h (Phase 1 setup) and
+// display_ui.h (Phase 2 overlay in updateDisplay).
+bool splashDissolveActive = false;
+uint32_t splashDissolveStartMs = 0;
+uint8_t splashCapture[1024];  // captured splash framebuffer
+
+// Splash animation — version display with Bayer dissolve into idle UI.
 #include "splash.h"
 
 // X-Combo help overlay — full-screen spatial diagram + scrolling marquee.
@@ -848,6 +857,13 @@ void setup() {
   if (loadMonoBassStatusFromEEPROM()) enterMonoBassMode();
   rearmStepTimer();
   applyMasterGain();
+
+  // Seed the OLED watchdog so it doesn't fire on the first loop() iteration.
+  // sysTickTimer just started — without this, the stale lastFrameDrawTick=0
+  // could exceed OLED_WATCHDOG_TIMEOUT_MS before the first updateDisplay().
+  noInterrupts();
+  lastFrameDrawTick = sysTickMs;
+  interrupts();
 }
 
 void loop() {
@@ -1023,8 +1039,8 @@ void setTransport(TransportState s) {
   transportState = s;
   if (s != RUN_EXT) {
     extStepAcc = 0;
-    subdivTimer.end();
-    subdivStepsRemaining = 0;
+    subdivTimer.end();           // safe inside noInterrupts — staleness guard in
+    subdivStepsRemaining = 0;    // subdivTimerCallback covers NVIC-pending edge case
     subdivTimerDueUs = 0;
   }
 
@@ -1233,6 +1249,7 @@ void handlePlayStop() {
     if (hasRecentPulse) {
       // External sync — count-in for one full cycle, then fire step 0.
       armed = true;
+      static_assert((uint32_t)16 * 96 / 4 <= UINT16_MAX, "armPulseCountdown overflow");
       armPulseCountdown = (uint32_t)numSteps * ppqn / STEPS_PER_BEAT;
 
       // Grace window: snap to nearest pulse.

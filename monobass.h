@@ -20,7 +20,7 @@
 static constexpr uint32_t MONOBASS_OCT_DISPLAY_MS    = 1200;
 static constexpr uint32_t MONOBASS_PARAM_DISPLAY_MS  = 1200;
 static constexpr uint32_t MONOBASS_NOTE_DISPLAY_MS   = 1200;
-static constexpr float    kEnvFiltCeiling             = 8000.0f;  // envelope filter max Hz
+// kEnvFiltCeiling defined in DrumSynth.ino before this include
 static constexpr uint32_t GRID_SHOW_MS     = 10000;  // idle grid visible for 10s
 static constexpr uint32_t GRID_DISSOLVE_MS = 1000;   // Bayer dissolve animation duration
 
@@ -145,6 +145,8 @@ void enterMonoBassMode() {
   d1EQ.setNotch(0, 600.0f, 0.5f);          // mild notch — tames boxiness
   d1EQ.setHighShelf(1, 2000.0f, 0.0f, 1.0f); // flat shelf — no cut
   d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
+  // Stage 3 intentionally unchanged — retains pre-entry EQ setting.
+  // exitMonoBassMode() restores it to lowpass 8 kHz.
   d1VoiceMixer.gain(1, 0.0f);  // mute snap transient — knob 5 is now env filter depth
   d1AmpEnv.noteOff();          // kill any note held over from the sequencer
   AudioInterrupts();

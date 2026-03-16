@@ -91,6 +91,7 @@ void audioInit() {
   d1AmpEnv.hold(2.5f);       // Library default — overridden per-trigger by cached params (see updateD1HoldCache)
   d1AmpEnv.decay(100.0f);
   d1AmpEnv.sustain(0.0f);
+  d1AmpEnv.release(5.0f);    // Explicit — matches exitMonoBassMode() restore value
 
   // D1 drum voice (transient layer)
   d1Snap.frequency(150.0f);

@@ -451,6 +451,7 @@ void updateDisplay() {
     p       = ppqn;
     armSnap = armPulseCountdown;
     interrupts();
+    if (p == 0) return;  // defensive — ppqn should never be 0
     uint16_t pulsesPerCycle = (uint16_t)numSteps * p / STEPS_PER_BEAT;
     uint8_t beatsPerCycle = numSteps / STEPS_PER_BEAT;  // 4
 
@@ -535,7 +536,7 @@ void updateDisplay() {
   playingSnap = sequencePlaying;
   interrupts();
 
-  // Main-loop only — no ISR access, safe without guards
+  // bpm is volatile but 32-bit aligned — ARM-atomic read, no guard needed
   bpmSnap = bpm;
   trackSnap = activeTrack;
   chokeSnap = chokeDisplayPercent;
@@ -543,8 +544,8 @@ void updateDisplay() {
   overlayStartSnap = parameterOverlayStartTick;
   railSnap = activeRail;
 
-  snprintf(param1Snap, sizeof(param1Snap), "%s", displayParameter1);
-  snprintf(param2Snap, sizeof(param2Snap), "%s", displayParameter2);
+  strlcpy(param1Snap, displayParameter1, sizeof(param1Snap));
+  strlcpy(param2Snap, displayParameter2, sizeof(param2Snap));
 
   // Overlay state
   bool overlayActiveNow =
@@ -603,6 +604,19 @@ void updateDisplay() {
   // blocking SPI transfer adds another 15-25ms of latency.
   if (playingSnap) {
     playSequence();
+  }
+
+  // Splash dissolve overlay — runs during first ~1s after boot.
+  // ORs surviving splash pixels on top of the normal UI before push.
+  // Uses millis() — not sysTickMs — because splashDissolveStartMs is set
+  // from millis() in splashAnimation(), which runs before sysTickTimer starts.
+  if (splashDissolveActive) {
+    uint32_t elapsed = millis() - splashDissolveStartMs;
+    if (elapsed >= 1000) {
+      splashDissolveActive = false;
+    } else {
+      applySplashDissolve((float)elapsed / 1000.0f);
+    }
   }
 
   if (isSafeToPushOled(nowMs)) {

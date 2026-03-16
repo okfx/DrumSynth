@@ -513,10 +513,7 @@ void updateOtherButtons() {
   static bool btnState[otherButtonsCount] = { false };
   static bool btnLastState[otherButtonsCount] = { false };
 
-  uint32_t nowTick;
-  noInterrupts();
-  nowTick = sysTickMs;
-  interrupts();
+  uint32_t nowTick = sysTickMs;  // 32-bit aligned, ARM-atomic read
 
   for (int i = 0; i < otherButtonsCount; i++) {
     otherButtonsMux.channel(i);

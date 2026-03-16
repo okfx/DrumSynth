@@ -206,7 +206,7 @@ static inline void updateD1ChromaEnvFilter(uint32_t nowMs) {
   float tauMs = fmaxf(d1EffectiveDecay * 0.6f + 40.0f, 100.0f);
   float decay = expf(-(float)elapsed / tauMs);
 
-  static constexpr float kEnvFiltCeiling = 8000.0f;
+  // kEnvFiltCeiling defined in DrumSynth.ino before this include
   float peak = d1ChromaEnvFiltBaseHz
              + d1ChromaEnvFiltDepth * (kEnvFiltCeiling - d1ChromaEnvFiltBaseHz);
   if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;

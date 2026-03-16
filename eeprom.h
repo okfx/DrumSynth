@@ -154,7 +154,9 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   // V1 slots used 33–69; V2+ uses 33–75 (D1_CHROMA_NOTE_MAX).
   uint8_t d1ChromaMax = (version <= 1) ? 69 : 75;
 
-  // Sequences are main-loop only (see concurrency contract in ext_sync.h)
+  // Sequences are main-loop only (see concurrency contract in ext_sync.h).
+  // If loading during playback, one step may fire from a mix of old/new data
+  // before this copy finishes — a brief glitch, not a crash.
   for (int step = 0; step < numSteps; step++) {
     d1Sequence[step] = slot.patterns.drum1[step] ? 1 : 0;  // sanitize to boolean
     d2Sequence[step] = slot.patterns.drum2[step] ? 1 : 0;

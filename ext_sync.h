@@ -420,6 +420,7 @@ void resetExternalClockState() {
   pendingStepCount = 0;
   subdivStepsRemaining = 0;
   subdivTimerDueUs = 0;
+  subdivIntervalUs = 0;
   wantSwitchToExt = false;
   armed = false;
   armPulseCountdown = 0;
@@ -483,7 +484,7 @@ void updateExtBpmDisplay() {
   uint32_t emaCopy = extIntervalEMA;
   uint32_t lastPCopy = lastPulseMicros;
   interrupts();
-  uint8_t ppqnCopy = ppqn;  // main-loop only — no critical section needed
+  uint8_t ppqnCopy = ppqn;  // uint8_t is ARM-atomic — no critical section needed
 
   // Show ext BPM if we've received pulses recently (within timeout)
   if (ppqnCopy == 0) return;  // defensive — ppqn should always be valid
