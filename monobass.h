@@ -83,16 +83,9 @@ extern char displayParameter1[24];
 extern char displayParameter2[24];
 extern uint32_t parameterOverlayStartTick;
 extern ShiftRegister74HC595<2> ledShiftReg;
-extern bool wfChromaMode;
-extern int8_t d1ChromaHeldStep;
-extern int8_t d2ChromaHeldStep;
-extern int8_t d3ChromaHeldStep;
+// chroma.h is included before monobass.h — chroma vars/funcs are in scope.
 // Functions defined in eeprom.h (included before monobass.h)
 extern void saveMonoBassStatusToEEPROM(bool active);
-
-// Functions defined in .ino
-extern void formatChromaNote(uint8_t midiNote, char* outName);
-extern float d1ChromaFreq(uint8_t midiNote);
 extern void applyD1Freq();
 extern void triggerD1();
 extern void setTransport(TransportState s);

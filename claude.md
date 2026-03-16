@@ -14,14 +14,19 @@ as one file. Headers are inline code segments, not independent modules.
 
 | File | Purpose | Notes |
 |------|---------|-------|
-| `DrumSynth.ino` | Main firmware (~3235 lines) | State, setup, loop, transport, triggers, buttons, knobs, display |
+| `DrumSynth.ino` | Main firmware (~1750 lines) | State, setup, loop, transport, triggers, knobs |
 | `audiotool.h` | Audio Design Tool output | **Auto-generated — NEVER full-file rewrite** |
 | `audio_init.h` | One-time audio object init | Codec, envelopes, filters, mixer gains |
 | `hw_setup.h` | Pin assignments, peripheral objects | Mux, shift register, OLED, constants |
 | `ext_sync.h` | External clock ISR + helpers | Concurrency contract documented at top |
 | `eeprom.h` | Pattern save/load, PPQN persistence | CRC-8, magic number versioning (0x4249) |
-| `knob_handlers.h` | 32 display + 32 engine functions | Table-driven dispatch via `knobTable[32]` |
+| `chroma.h` | Chromatic mode pitch/note/envelope | MIDI freq table, knob-to-note, dot animation |
 | `monobass.h` | MONOBASS mode (live keyboard) | Entry/exit, button handler, scope renderer |
+| `splash.h` | Boot splash animation | Wavefolding sine → version info |
+| `xcombo_overlay.h` | X-combo help overlay | Full-screen diagram + scrolling marquee |
+| `buttons.h` | Button state machine + combos | ButtonHandler, ComboModState, dispatch table |
+| `knob_handlers.h` | 32 display + 32 engine functions | Table-driven dispatch via `knobTable[32]` |
+| `display_ui.h` | OLED rendering + updateDisplay() | Top bar, scope, chroma dots, parameter overlay |
 | `oscilloscope.h` | Scope display | Circular buffer, auto-scale, AC-coupled |
 | `bitmaps.h` | OLED icons | Play/stop bitmaps |
 
@@ -29,7 +34,9 @@ as one file. Headers are inline code segments, not independent modules.
 
 ```
 audiotool.h → audio_init.h → bitmaps.h → hw_setup.h
-  → ext_sync.h → oscilloscope.h → eeprom.h → monobass.h → knob_handlers.h
+  → ext_sync.h → oscilloscope.h → eeprom.h
+  → chroma.h → monobass.h → splash.h → xcombo_overlay.h
+  → buttons.h → knob_handlers.h → display_ui.h
 ```
 
 ## Build Command
