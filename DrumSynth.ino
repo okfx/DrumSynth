@@ -291,7 +291,7 @@ volatile uint32_t lastFrameDrawTick = 0;
 static constexpr uint32_t OLED_WATCHDOG_TIMEOUT_MS = 750;
 static constexpr uint32_t OLED_FRAME_INTERVAL_MS = 42;        // ~24 fps
 static constexpr uint32_t OLED_FRAME_INTERVAL_EXT_MS = 100;   // ~10 fps (ext sync — reduces SPI blocking)
-static constexpr uint32_t OLED_SUBDIV_GUARD_US = 30000;      // Skip OLED frame if subdivision due within 30ms
+static constexpr uint32_t OLED_SUBDIV_GUARD_US = 5000;       // Skip OLED frame if subdivision due within 5ms (one page ~2ms)
 volatile bool requestOledReinit = false;  // Set by sysTickISR, cleared by main loop
 uint32_t displayBlockedUntilTick = 0;       // Suppress OLED push after drop-in (main-loop only)
 
@@ -936,6 +936,11 @@ void loop() {
     }
   }
 
+  // --- Chunked OLED page push (non-blocking) ---
+  // Push one SH1106 page per loop iteration (~2ms). USB audio interrupts
+  // can fire between pages, preventing buffer underruns that cause clicks.
+  oledPushOnePage();
+
   // --- External clock: lock-in handoff + timeout detection ---
 
   checkExtClockLockIn();
@@ -996,19 +1001,18 @@ void loop() {
       }
     }
     // Skip OLED push when a MONOBASS key event just fired — the SPI transfer
-    // would block the CPU for ~1-5ms, adding latency to the next key scan.
-    // The skipped frame renders on the next 42ms cycle (imperceptible).
+    // would add latency to the next key scan.
     bool skipForMonoBass = monoBassKeyEvent;
     monoBassKeyEvent = false;
-    if (!skipForSubdiv && !skipForMonoBass) {
+    // Don't rebuild framebuffer while a chunked push is still in progress
+    if (!skipForSubdiv && !skipForMonoBass && !oledPushInProgress()) {
       updateDisplay();
     }
   }
 
-  // --- Post-OLED step catch-up ---
-  // OLED refresh can block for 15-25ms. Run step processing again so any
-  // steps queued during the OLED stall fire promptly instead of waiting
-  // for the next full loop iteration. At high tempos this prevents audible lag.
+  // --- Post-display step catch-up ---
+  // Run step processing after display work so any steps queued during the
+  // page push or framebuffer build fire promptly.
   if (sequencePlaying) {
     playSequence();
   }
@@ -1716,14 +1720,66 @@ void updateKnobs() {
   knobScanGroup = (knobScanGroup + 1) & 3;  // 0,1,2,3 → cycle through 4 groups
 }
 
+// ============================================================================
+// Non-blocking OLED page push
+//
+// The SH1106 framebuffer is 8 pages × 128 bytes = 1024 bytes.  Pushing it all
+// at once via software SPI (bit-bang) blocks the CPU for 15-25 ms, which
+// starves USB audio packet delivery and causes audible clicks.
+//
+// Instead, we push one page (~131 bytes ≈ 2 ms) per loop() iteration.  USB
+// audio interrupts can fire between pages, eliminating the underrun window.
+// ============================================================================
+
+static int8_t oledPushPage = -1;  // -1 = idle, 0–7 = page being pushed next
+
+static inline void oledSwSpiWrite(uint8_t data) {
+  for (int8_t bit = 7; bit >= 0; bit--) {
+    digitalWriteFast(OLED_MOSI, (data >> bit) & 1);
+    digitalWriteFast(OLED_CLK, HIGH);
+    digitalWriteFast(OLED_CLK, LOW);
+  }
+}
+
+static inline void oledSwSpiCmd(uint8_t cmd) {
+  digitalWriteFast(OLED_DC, LOW);
+  oledSwSpiWrite(cmd);
+  digitalWriteFast(OLED_DC, HIGH);
+}
+
+// Push one SH1106 page (128 data bytes + 3 command bytes ≈ 2 ms).
+static void oledPushOnePage() {
+  if (oledPushPage < 0 || oledPushPage >= 8) return;
+
+  uint8_t* buf = display.getBuffer();
+  int page = oledPushPage;
+
+  oledSwSpiCmd(0xB0 | page);  // set page address
+  oledSwSpiCmd(0x02);         // lower column start (SH1106 2-pixel offset)
+  oledSwSpiCmd(0x10);         // upper column start
+
+  // Pixel data — DC already HIGH from oledSwSpiCmd exit
+  for (int col = 0; col < 128; col++) {
+    oledSwSpiWrite(buf[page * 128 + col]);
+  }
+
+  oledPushPage++;
+  if (oledPushPage >= 8) {
+    oledPushPage = -1;  // transfer complete
+  }
+}
+
+static inline bool oledPushInProgress() { return oledPushPage >= 0; }
+static inline void oledStartPush()      { oledPushPage = 0; }
+
 // Display rendering — top bar, scope overlays, chroma dots, parameter overlay,
 // MONOBASS sweep animation, and main updateDisplay() dispatcher.
 // Depends on: all prior headers, isSafeToPushOled() (defined below).
 #include "display_ui.h"
 
-// SPI push guard — returns true when it's safe to start a blocking OLED
-// transfer (~15-25ms). Returns false if audio timing work is pending or
-// imminent. Musical timing always wins over display updates.
+// SPI push guard — returns true when it's safe to start a chunked OLED
+// page transfer (~2ms per page). Returns false if audio timing work is
+// pending or imminent. Musical timing always wins over display updates.
 // Called from updateDisplay() for both the PPQN mode and normal display paths.
 bool isSafeToPushOled(uint32_t nowMs) {
   // Steps waiting: consume them first, never block with pending audio work
@@ -1738,7 +1794,7 @@ bool isSafeToPushOled(uint32_t nowMs) {
     }
   }
 
-  static constexpr int32_t OLED_GUARD_US = 25000;  // 25ms — worst-case SPI push
+  static constexpr int32_t OLED_GUARD_US = 3000;  // 3ms — one page push via chunked SPI
 
   // Internal clock: predict next stepISR from last-fired timestamp + period
   if (transportState == RUN_INT) {

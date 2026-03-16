@@ -471,8 +471,8 @@ void updateDisplay() {
     display.setCursor(52, 16);
     display.print(countdown);
 
-    // SPI push — no timing guard needed during count-in (no steps firing)
-    display.display();
+    // Chunked push — no timing guard needed during count-in (no steps firing)
+    oledStartPush();
     noInterrupts();
     lastFrameDrawTick = nowMs;
     interrupts();
@@ -505,7 +505,7 @@ void updateDisplay() {
     }
 
     if (isSafeToPushOled(nowMs)) {
-      display.display();
+      oledStartPush();
       noInterrupts();
       lastFrameDrawTick = nowMs;
       interrupts();
@@ -622,9 +622,9 @@ void updateDisplay() {
   }
 
   if (isSafeToPushOled(nowMs)) {
-    display.display();
+    oledStartPush();
 
-    // Update OLED watchdog timestamp only after a successful push.
+    // Update OLED watchdog timestamp only after a successful push start.
     // On skipped pushes, the stale timestamp causes an immediate retry
     // next loop iteration — by then step B has fired and the push succeeds.
     noInterrupts();
