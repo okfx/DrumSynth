@@ -148,10 +148,6 @@ static constexpr int kSweepTransitionW = 16;  // Bayer-dithered soft edge width 
 static uint8_t monoTextMask[168];
 static bool monoMasksReady = false;
 
-// ── X-Combo help overlay ────────────────────────────────────────────
-static uint32_t xComboOverlayStartMs = 0;
-
-
 static void cancelMonoAnim();
 
 static constexpr uint32_t CHROMA_STEP_HOLD_MS = 300;  // Hold step button this long to select note
@@ -571,8 +567,8 @@ uint8_t splashCapture[1024];  // captured splash framebuffer
 // Splash animation — version display with Bayer dissolve into idle UI.
 #include "splash.h"
 
-// X-Combo help overlay — full-screen spatial diagram + scrolling marquee.
-// Depends on: Picopixel font, display, xComboOverlayStartMs, isSafeToPushOled().
+// X-Combo help overlay — full-screen spatial diagram (header, circles, step buttons).
+// Depends on: Picopixel font, display, isSafeToPushOled().
 #include "xcombo_overlay.h"
 
 // Button handler state machine, combo dispatch, and scan loop.

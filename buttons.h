@@ -6,7 +6,7 @@
 // Depends on: hw_setup.h (mux, LEDs, constants), audiotool.h (audio objects),
 // chroma.h (startChromaRamp, cancelChromaAnim), monobass.h (MonoBassState),
 // eeprom.h (save/load), ext_sync.h (resetExternalClockState),
-// xcombo_overlay.h (prerenderScrollText), knob_handlers.h (applyKnobToEngine).
+// knob_handlers.h (applyKnobToEngine).
 // All included before this header in DrumSynth.ino.
 
 #pragma once
@@ -54,7 +54,6 @@ extern volatile uint8_t currentStep;
 extern MonoAnimPhase monoAnimPhase;
 extern uint32_t monoAnimStart;
 extern MonoBassState monoBass;
-extern uint32_t xComboOverlayStartMs;
 
 extern volatile ShuffleMode shuffleMode;
 
@@ -341,10 +340,6 @@ static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
 
   monoAnimPhase = MONO_ANIM_NONE;
 
-  // Pre-render scroll text for X-combo help overlay
-  xComboOverlayStartMs = nowTick;
-  prerenderScrollText();
-
   // Light combo-active step LEDs (0–9 = mem slots, 15 = shuffle)
   for (int i = 0; i < numSteps; ++i) {
     bool on = (i <= 9) || (i == 15);
@@ -376,6 +371,7 @@ static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {
   comboMod.held = false;
   self.enteredMode = false;
   self.enteredMode2 = false;
+  updateLEDs();  // restore step LEDs from combo-active pattern
 }
 
 static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs) {
