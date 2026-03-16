@@ -761,6 +761,8 @@ void setup() {
       display.print("EEPROM");
       display.display();  // blocking push OK — setup() runs before audio/ISR init
 
+      // All display.display() calls in this factory-reset block are blocking
+      // pushes — safe because setup() runs before audio/ISR init.
       bool held = true;
       for (int s = 5; s > 0 && held; s--) {
         display.fillRect(0, 48, 128, 16, 0);

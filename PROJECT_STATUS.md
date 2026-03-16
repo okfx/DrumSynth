@@ -99,15 +99,7 @@
 
 ## What Needs Polish
 
-- **Uncommitted audit fixes remain in the working tree** — concurrency guards (M2/M3), dead code removal (C2), MONOBASS LED dedup (M4), type width fixes (m2), and style cleanups (S2–S8) are staged but need to be committed and pushed.
-- **Magic numbers in `triggerD1()`.** The envelope filter ceiling `8000.0f` should be a named constant (`kEnvFiltCeiling`) for readability.
-- **`D1_ATTACK_MS` defined after `audio_init.h` include.** The constant exists but `audio_init.h` uses a literal `0.5f` instead because the `#define` comes later in include order. Moving the constant before the include fixes the dependency.
-- **`extern` on `isSafeToPushOled` declaration** in `display_ui.h` is redundant (function is defined in the same translation unit).
-- **`MONOBASS_DEBOUNCE_MS`** is `uint8_t` but holds value 200 — fits, but `uint16_t` is safer if the threshold is ever increased.
-- **Factory reset `display.display()` calls** are blocking but intentionally so (runs in `setup()` before ISR init). Deserves a comment so future editors don't "fix" it.
-- **`kShufflePercent` array** has a dummy index-1 entry for backward compatibility. Needs a comment explaining why.
-- **`updateLEDs()` MONOBASS animation phase check** could use a brief comment explaining the early-return logic.
-- **Inconsistent `extern` usage** across forward declarations in headers — some have it, some don't. Harmless in a single-TU build but inconsistent.
+All prior audit findings have been addressed. No outstanding polish items at this time.
 
 ---
 

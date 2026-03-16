@@ -62,7 +62,7 @@ extern uint8_t monoTextMask[];
 extern bool monoMasksReady;
 
 // --- Extern: functions (defined in .ino or earlier headers) ---
-bool isSafeToPushOled(uint32_t nowMs);
+extern bool isSafeToPushOled(uint32_t nowMs);
 extern void playSequence();
 
 // --- UI Helpers ---
