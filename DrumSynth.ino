@@ -737,13 +737,14 @@ void applyChokeToDecays() {
 }
 
 void setup() {
-  Serial.begin(115200);
   delay(200);
 
   // --- OLED display initialization ---
 
   // Args: (i2cAddr=0 unused for SPI, reset=true to hardware-reset the display)
   bool displayOk = display.begin(0, true);
+  Serial.begin(115200);
+  Serial.print("[BOOT] displayOk="); Serial.println(displayOk);
   if (displayOk) {
     display.clearDisplay();
 
