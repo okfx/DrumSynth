@@ -1027,8 +1027,7 @@ void loop() {
       {
         static uint8_t dbgFrames = 0;
         if (dbgFrames < 10) {
-          Serial.print("[DISP] frame="); Serial.print(dbgFrames);
-          Serial.print(" pushPage="); Serial.println(oledPushPage);
+          Serial.print("[DISP] frame="); Serial.println(dbgFrames);
           dbgFrames++;
         }
       }
