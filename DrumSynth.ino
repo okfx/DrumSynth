@@ -737,10 +737,7 @@ void applyChokeToDecays() {
 }
 
 void setup() {
-  Serial.begin(115200);
-  while (!Serial && millis() < 3000) {}  // wait up to 3s for USB serial
   delay(200);
-  Serial.println("[BOOT] setup() start");
 
   // --- OLED display initialization ---
 
@@ -799,35 +796,17 @@ void setup() {
     }
 
     // Animated splash screen
-    Serial.println("[BOOT] splash...");
     splashAnimation();
 
-    // --- Display diagnostic: verify screen updates after splash ---
-    Serial.println("[BOOT] display test frame...");
-    display.clearDisplay();
-    display.setFont(NULL);
-    display.setTextSize(2);
-    display.setTextColor(1);
-    display.setCursor(16, 24);
-    display.print("BOOT OK");
-    display.display();  // blocking push — same path as splash
-    delay(500);
-    Serial.println("[BOOT] display test done");
-
     // Precompute MONOBASS dither masks (renders text off-screen, reads back)
-    Serial.println("[BOOT] precomputeMonoMasks...");
     precomputeMonoMasks();
   }
 
   // --- Audio system initialization ---
 
-  Serial.println("[BOOT] AudioMemory(1200)...");
   AudioMemory(1200);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
-  Serial.println("[BOOT] sysTickTimer...");
   sysTickTimer.begin(sysTickISR, 1000);
-  Serial.println("[BOOT] audioInit...");
   audioInit();
-  Serial.println("[BOOT] audioInit done");
   d1AmpEnv.attack(D1_ATTACK_MS);  // permanent value — not set in audioInit (D1_ATTACK_MS not yet visible there)
   scopeQueue.begin();
 
@@ -895,23 +874,9 @@ void setup() {
   lastFrameDrawTick = sysTickMs;
   interrupts();
 
-  Serial.println("[BOOT] setup() complete — entering loop()");
 }
 
 void loop() {
-  // --- Debug: print once per second for first 5 seconds ---
-  {
-    static uint32_t dbgNext = 0;
-    static uint8_t dbgCount = 0;
-    uint32_t ms = millis();
-    if (dbgCount < 5 && ms >= dbgNext) {
-      Serial.print("[LOOP] tick="); Serial.print(ms);
-      Serial.print(" splashActive="); Serial.println(splashDissolveActive);
-      dbgNext = ms + 1000;
-      dbgCount++;
-    }
-  }
-
   // --- Accent preview timeout ---
 
   // Single stable timebase for top-of-loop checks
