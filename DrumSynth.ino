@@ -738,6 +738,7 @@ void applyChokeToDecays() {
 
 void setup() {
   Serial.begin(115200);
+  while (!Serial && millis() < 3000) {}  // wait up to 3s for USB serial
   delay(200);
   Serial.println("[BOOT] setup() start");
 
@@ -800,6 +801,18 @@ void setup() {
     // Animated splash screen
     Serial.println("[BOOT] splash...");
     splashAnimation();
+
+    // --- Display diagnostic: verify screen updates after splash ---
+    Serial.println("[BOOT] display test frame...");
+    display.clearDisplay();
+    display.setFont(NULL);
+    display.setTextSize(2);
+    display.setTextColor(1);
+    display.setCursor(16, 24);
+    display.print("BOOT OK");
+    display.display();  // blocking push — same path as splash
+    delay(500);
+    Serial.println("[BOOT] display test done");
 
     // Precompute MONOBASS dither masks (renders text off-screen, reads back)
     Serial.println("[BOOT] precomputeMonoMasks...");
@@ -886,6 +899,19 @@ void setup() {
 }
 
 void loop() {
+  // --- Debug: print once per second for first 5 seconds ---
+  {
+    static uint32_t dbgNext = 0;
+    static uint8_t dbgCount = 0;
+    uint32_t ms = millis();
+    if (dbgCount < 5 && ms >= dbgNext) {
+      Serial.print("[LOOP] tick="); Serial.print(ms);
+      Serial.print(" oledPage="); Serial.print(oledPushPage);
+      Serial.print(" splashActive="); Serial.println(splashDissolveActive);
+      dbgNext = ms + 1000;
+      dbgCount++;
+    }
+  }
 
   // --- Accent preview timeout ---
 
