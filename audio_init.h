@@ -15,12 +15,13 @@ extern float d2Volume;
 extern float d3Volume;
 
 // ============================================================================
-// A/B MASTER SETTINGS TOGGLE  (temporary — remove after evaluation)
+// A/B/C MASTER SETTINGS TOGGLE  (temporary — remove after evaluation)
 //
 // Profile A = current (old) settings.  Profile B = proposed optimised values.
+// Profile C = same filters/EQ as B, alternate AVC tuning.
 // Toggle with the LOAD button (remapped while this code is present).
 // ============================================================================
-static bool masterProfileB = false;   // false = A (old), true = B (new)
+static uint8_t masterProfile = 0;   // 0=A, 1=B, 2=C
 
 static void applyMasterSettingsA() {
   AudioNoInterrupts();
@@ -70,15 +71,36 @@ static void applyMasterSettingsB() {
   AudioInterrupts();
 }
 
-// Toggle between A and B. Returns the new profile label character ('A' or 'B').
+static void applyMasterSettingsC() {
+  AudioNoInterrupts();
+  // --- Filters & EQ identical to B ---
+  masterHighPass.frequency(30.0f);
+  masterHighPass.resonance(0.707f);
+  masterLowPass.frequency(12000.0f);
+  masterLowPass.resonance(0.3f);
+  masterBandPass.frequency(1000.0f);
+  masterBandPass.resonance(0.01f);
+  finalFilter.setLowShelf(0, 150.0f, 0.6f, 3.5f);
+  finalFilter.setNotch(1, 400.0f, 1.0f);
+  finalFilter.setNotch(2, 2500.0f, 2.0f);
+  finalFilter.setHighShelf(3, 4500.0f, 0.7f, 2.5f);
+  finalAmp.gain(2.8f);
+  sgtl5000_1.volume(0.80f);
+  sgtl5000_1.dacVolume(0.95f);
+  sgtl5000_1.eqBands(0.50f, -0.08f, -0.05f, 0.05f, 0.03f);
+  // --- Alternate AVC: slower, deeper threshold ---
+  sgtl5000_1.autoVolumeControl(0, 2, 1, -4.5f, 30.0f, 2.0f);
+  sgtl5000_1.autoVolumeEnable();
+  AudioInterrupts();
+}
+
+// Cycle A → B → C → A. Returns the new profile label character.
 static char toggleMasterProfile() {
-  masterProfileB = !masterProfileB;
-  if (masterProfileB) {
-    applyMasterSettingsB();
-    return 'B';
-  } else {
-    applyMasterSettingsA();
-    return 'A';
+  masterProfile = (masterProfile + 1) % 3;
+  switch (masterProfile) {
+    case 1:  applyMasterSettingsB(); return 'B';
+    case 2:  applyMasterSettingsC(); return 'C';
+    default: applyMasterSettingsA(); return 'A';
   }
 }
 

@@ -1,24 +1,25 @@
-# A/B Master Audio Settings Test
+# A/B/C Master Audio Settings Test
 
 ## What This Is
 
-The **L (LOAD) button** has been temporarily remapped to toggle between two master audio profiles so we can compare them in real time while playing.
+The **L (LOAD) button** has been temporarily remapped to cycle between three master audio profiles so we can compare them in real time while playing.
 
 - **Profile A** — the original settings (boots into this by default)
-- **Profile B** — the proposed optimised settings
+- **Profile B** — proposed optimised filters/EQ + fast AVC limiter
+- **Profile C** — same filters/EQ as B + alternate AVC tuning (slower, deeper threshold)
 
-Press **L** to switch. The OLED shows `MASTER PROFILE A` or `MASTER PROFILE B`.
+Press **L** to cycle: A → B → C → A. The OLED shows `MASTER PROFILE A`, `B`, or `C`.
 
 > **Combo + L (PPQN mode) still works** — only the standalone L press is remapped.
 > **LOAD is disabled** while this code is in place. Do not rely on pattern loading via L.
 
 ---
 
-## What Changed — Profile B vs Profile A
+## What Changed — Profiles B & C vs Profile A
 
-### End-Stage Master Filters
+### End-Stage Master Filters (B & C identical)
 
-| Filter | Parameter | A (Old) | B (New) | Rationale |
+| Filter | Parameter | A (Old) | B / C (New) | Rationale |
 |---|---|---|---|---|
 | `masterHighPass` | frequency | 60 Hz | **30 Hz** | Preserve sub-bass energy from kicks |
 | `masterHighPass` | resonance | 1.5 | **0.707** | Flat Butterworth — no resonant peak |
@@ -32,9 +33,9 @@ Press **L** to switch. The OLED shows `MASTER PROFILE A` or `MASTER PROFILE B`.
 | `finalFilter` stage 3 | High Shelf 4500 Hz | +3.5 dB, Q 0.7 | **+2.5 dB, Q 0.7** | Less bright/thin tilt |
 | `finalAmp` | gain | 3.5 | **2.8** | Less needed with fuller spectrum |
 
-### SGTL5000 Codec EQ
+### SGTL5000 Codec EQ (B & C identical)
 
-| Band | Frequency | A (Old) | B (New) | Rationale |
+| Band | Frequency | A (Old) | B / C (New) | Rationale |
 |---|---|---|---|---|
 | Band 1 | 115 Hz | +0.25 (~+3 dB) | **+0.50** (~+6 dB) | Double the bass foundation |
 | Band 2 | 330 Hz | -0.20 (~-2.4 dB) | **-0.08** (~-1 dB) | Preserve punch/body |
@@ -42,24 +43,27 @@ Press **L** to switch. The OLED shows `MASTER PROFILE A` or `MASTER PROFILE B`.
 | Band 4 | 3 kHz | +0.05 (~+0.6 dB) | +0.05 | No change |
 | Band 5 | 9.9 kHz | +0.05 (~+0.6 dB) | **+0.03** (~+0.4 dB) | Slight reduction to balance bass lift |
 
-### SGTL5000 Other Settings
+### SGTL5000 Other Settings (B & C identical)
 
-| Setting | A (Old) | B (New) | Rationale |
+| Setting | A (Old) | B / C (New) | Rationale |
 |---|---|---|---|
 | `volume()` | 0.75 | **0.80** | Slight bump for fuller output |
 | `dacVolume()` | 0.98 | **0.95** | More headroom with hotter bass |
 | `autoVolumeControl` | disabled | **enabled** | Safety limiter for boosted lows |
 
-### SGTL5000 Auto Volume Control (Profile B only)
+### SGTL5000 Auto Volume Control — B vs C
 
-| Parameter | Value | Rationale |
-|---|---|---|
-| `maxGain` | 0 (0 dB) | No upward expansion — limiter only |
-| `response` | 1 (25 ms) | Fast integration catches bass peaks |
-| `hardLimit` | 1 (limiter) | Hard limit for drum transients |
-| `threshold` | -3.0 dBFS | Catches boosted bass before clipping |
-| `attack` | 150.0 dB/s | Fast attack for percussive material |
-| `decay` | 500.0 dB/s | Fast release — won't duck the groove |
+| Parameter | A | B | C | Notes |
+|---|---|---|---|---|
+| `maxGain` | — | 0 (0 dB) | 0 (0 dB) | Both: no upward expansion |
+| `response` | — | 1 (25 ms) | 2 (50 ms) | C slower integration |
+| `hardLimit` | — | 1 (limiter) | 1 (limiter) | Both: hard limit |
+| `threshold` | — | -3.0 dBFS | **-4.5 dBFS** | C catches earlier |
+| `attack` | — | 150.0 dB/s | **30.0 dB/s** | C much slower attack |
+| `decay` | — | 500.0 dB/s | **2.0 dB/s** | C much slower release |
+
+**B** = fast, transparent limiter (quick catch-and-release for transients).
+**C** = slow, heavy-handed limiter (deep threshold, sluggish attack/decay — more audible compression character).
 
 ---
 
@@ -67,7 +71,7 @@ Press **L** to switch. The OLED shows `MASTER PROFILE A` or `MASTER PROFILE B`.
 
 | File | Change |
 |---|---|
-| `audio_init.h` | Added `masterProfileB` flag, `applyMasterSettingsA()`, `applyMasterSettingsB()`, and `toggleMasterProfile()` at the top of the file |
+| `audio_init.h` | Added `masterProfile` counter, `applyMasterSettingsA/B/C()`, and `toggleMasterProfile()` at the top of the file |
 | `buttons.h` | Replaced `btnLoadPress` body — standalone L press now calls `toggleMasterProfile()` instead of loading a pattern. Combo+L (PPQN) is untouched |
 
 ---
@@ -106,11 +110,11 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
 
 ### 2. Revert `audio_init.h`
 
-Delete the entire A/B block (everything between the `A/B MASTER SETTINGS TOGGLE` comment block and the `audioInit()` function).
+Delete the entire A/B/C block (everything between the `A/B/C MASTER SETTINGS TOGGLE` comment block and the `audioInit()` function).
 
-### 3. If keeping Profile B
+### 3. If keeping Profile B or C
 
-Update the values inside `audioInit()` to match `applyMasterSettingsB()`.
+Update the values inside `audioInit()` to match `applyMasterSettingsB()` or `applyMasterSettingsC()`.
 
 ### 4. Delete this file
 
