@@ -428,7 +428,7 @@ void audioInit() {
   masterHighPass.frequency(60.0f);
 
   masterLowPass.resonance(0.25f);
-  masterLowPass.frequency(7500.0f);
+  masterLowPass.frequency(9000.0f);
 
   masterBandPass.frequency(1000.0f);  // 1kHz bandpass — intentional coloring of master output
   masterBandPass.resonance(1.0f);

@@ -219,7 +219,7 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   if (cutoff < 20.0f) cutoff = 20.0f;
 
   // High resonance during the sweep gives the vocal "waaah" character
-  float resonance = 1.5f + 2.0f * monoBass.envFiltDepth * decay;  // peaks at 3.5, settles to 1.5
+  float resonance = 1.5f + 2.5f * monoBass.envFiltDepth * decay;  // peaks at 4.0, settles to 1.5
 
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);
@@ -270,7 +270,7 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
       AudioNoInterrupts();
       d1LowPass.frequency(peak);
-      d1LowPass.resonance(1.5f + 2.0f * monoBass.envFiltDepth);  // up to 3.5 at full depth
+      d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);  // up to 4.0 at full depth
       AudioInterrupts();
     }
 
@@ -305,7 +305,7 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
         if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
         AudioNoInterrupts();
         d1LowPass.frequency(peak);
-        d1LowPass.resonance(1.5f + 2.0f * monoBass.envFiltDepth);
+        d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);
         AudioInterrupts();
       }
       for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);

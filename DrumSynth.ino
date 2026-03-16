@@ -546,7 +546,7 @@ void drawOutlinedText(int x, int y, const char* text);
 bool isSafeToPushOled(uint32_t nowMs);
 
 // Shared constant: envelope filter ceiling used by both chroma and MONOBASS.
-static constexpr float kEnvFiltCeiling = 5000.0f;
+static constexpr float kEnvFiltCeiling = 8000.0f;
 
 // Chroma — MIDI pitch tables, note conversion, envelope filter, dot animation.
 // Depends on: audiotool.h, chroma state vars (defined above).
@@ -1148,10 +1148,10 @@ void triggerD1() {
     if (d1ChromaMode && d1ChromaEnvFiltDepth > 0.01f) {
       d1ChromaEnvFiltTrigger = sysTickMs;
       float peak = d1ChromaEnvFiltBaseHz
-                 + d1ChromaEnvFiltDepth * (5000.0f - d1ChromaEnvFiltBaseHz);
-      if (peak > 5000.0f) peak = 5000.0f;
+                 + d1ChromaEnvFiltDepth * (8000.0f - d1ChromaEnvFiltBaseHz);
+      if (peak > 8000.0f) peak = 8000.0f;
       d1LowPass.frequency(peak);
-      d1LowPass.resonance(1.5f + 2.0f * d1ChromaEnvFiltDepth);
+      d1LowPass.resonance(1.5f + 2.5f * d1ChromaEnvFiltDepth);
     }
   }
   AudioInterrupts();
