@@ -1123,14 +1123,14 @@ static void engineD3Decay(uint8_t idx, int knobValue) {
   applyD3Decay();
 }
 
-// Case 18: D3 Voice Mix -- 606 / FM / PERC
+// Case 18: D3 Voice Mix -- FM / 606 / PERC
 static void engineD3VoiceMix(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) return;
-  // Zone boundaries (pure solo regions for each voice)
-  const int ZONE_606_MAX  = int(1023 * 0.06f);
-  const int ZONE_FM_MIN   = int(1023 * 0.46f);
-  const int ZONE_FM_MAX   = int(1023 * 0.65f);
+  // Zone boundaries (pure solo regions for each voice): FM left, 606 centre, PERC right
+  const int ZONE_FM_MAX   = int(1023 * 0.06f);
+  const int ZONE_606_MIN  = int(1023 * 0.46f);
+  const int ZONE_606_MAX  = int(1023 * 0.65f);
   const int ZONE_PERC_MIN = int(1023 * 0.94f);
 
   const float MIX_SCALE = 0.9f;
@@ -1145,17 +1145,17 @@ static void engineD3VoiceMix(uint8_t idx, int knobValue) {
   float gainPerc = 0.0f;
 
   // Calculate voice gains based on knob position
-  if (knobValue <= ZONE_606_MAX) {
-    gain606 = 1.0f;
-  } else if (knobValue < ZONE_FM_MIN) {
-    const float blend = float(knobValue - ZONE_606_MAX) / float(ZONE_FM_MIN - ZONE_606_MAX);
-    gain606 = 1.0f - blend;
-    gainFM = blend;
-  } else if (knobValue <= ZONE_FM_MAX) {
+  if (knobValue <= ZONE_FM_MAX) {
     gainFM = 1.0f;
-  } else if (knobValue < ZONE_PERC_MIN) {
-    const float blend = float(knobValue - ZONE_FM_MAX) / float(ZONE_PERC_MIN - ZONE_FM_MAX);
+  } else if (knobValue < ZONE_606_MIN) {
+    const float blend = float(knobValue - ZONE_FM_MAX) / float(ZONE_606_MIN - ZONE_FM_MAX);
     gainFM = 1.0f - blend;
+    gain606 = blend;
+  } else if (knobValue <= ZONE_606_MAX) {
+    gain606 = 1.0f;
+  } else if (knobValue < ZONE_PERC_MIN) {
+    const float blend = float(knobValue - ZONE_606_MAX) / float(ZONE_PERC_MIN - ZONE_606_MAX);
+    gain606 = 1.0f - blend;
     gainPerc = blend;
   } else {
     gainPerc = 1.0f;

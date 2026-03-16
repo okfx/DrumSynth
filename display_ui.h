@@ -134,14 +134,14 @@ void renderVoiceRails() {
   } else if (activeRail == RAIL_D3_VOICE) {
     drawCaretRail(railX, railY, railW, railH, railX + (int)(uiMixD3Voice * railW));
     int third = railW / 3;
-    labelAtCenter("606", railX + third * 0 + third / 2, labelY);
-    labelAtCenter("FM", railX + third * 1 + third / 2, labelY);
+    labelAtCenter("FM", railX + third * 0 + third / 2, labelY);
+    labelAtCenter("606", railX + third * 1 + third / 2, labelY);
     labelAtCenter("PERC", railX + third * 2 + third / 2, labelY);
     // Zone thresholds match engine crossfade midpoints (case 18):
-    // 606 solo < 6%, crossfade 6–46%, FM solo 46–65%, crossfade 65–94%, PERC solo > 94%
-    int zone = (uiMixD3Voice < 0.27f)  ? 0    // 606 side (solo + crossfade into FM)
-             : (uiMixD3Voice < 0.80f)  ? 1    // FM zone (crossfade + solo + crossfade)
-                                       : 2;   // PERC side (crossfade from FM + solo)
+    // FM solo < 6%, crossfade 6–46%, 606 solo 46–65%, crossfade 65–94%, PERC solo > 94%
+    int zone = (uiMixD3Voice < 0.27f)  ? 0    // FM side (solo + crossfade into 606)
+             : (uiMixD3Voice < 0.80f)  ? 1    // 606 zone (crossfade + solo + crossfade)
+                                       : 2;   // PERC side (crossfade from 606 + solo)
     int zx = railX + zone * third + 1;
     int zw = third - 2;
     display.fillRect(zx, railY + 1, zw, railH - 2, 1);
@@ -513,8 +513,10 @@ void updateDisplay() {
     return;
   }
 
-  // X-Combo help overlay — full-screen takeover while X held, no combo fired yet
+  // X-Combo help overlay — full-screen takeover while X held, no combo fired yet.
+  // Delayed by COMBO_OVERLAY_DELAY_MS so quick combos don't flash the overlay.
   if (comboMod.held && !comboMod.comboFired
+      && (nowMs - comboMod.pressTick) >= COMBO_OVERLAY_DELAY_MS
       && !ppqnModeActive && monoAnimPhase == MONO_ANIM_NONE) {
     renderXComboOverlay(nowMs);
     return;

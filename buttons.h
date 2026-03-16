@@ -159,6 +159,18 @@ static void comboChromaWF() {
   wfChromaMode = !wfChromaMode;
 }
 
+// Reset all pattern state to blank defaults (sequences, chroma notes, chroma modes, shuffle).
+// Called when loading an empty or corrupt EEPROM slot.
+static void clearPatternState() {
+  for (int s = 0; s < numSteps; s++) {
+    d1Sequence[s] = 0; d2Sequence[s] = 0; d3Sequence[s] = 0;
+    d1ChromaNote[s] = 36; d2ChromaNote[s] = 48; d3ChromaNote[s] = 48;
+  }
+  d1ChromaMode = false; d2ChromaMode = false;
+  d3ChromaMode = false; wfChromaMode = false;
+  shuffleMode = SHUFFLE_OFF;
+}
+
 // Cycle shuffle mode: OFF → 1 → 2 → … → 7 → OFF.
 // Shows overlay "SHUFFLE OFF" or "SHUFFLE N / xx%".
 // Live-updates the step timer if internal clock is running.
@@ -424,14 +436,7 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   }
   if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
   if (!loadStateFromEEPROM(activeSaveSlot)) {
-    for (int step = 0; step < numSteps; step++) {
-      d1Sequence[step] = 0;
-      d2Sequence[step] = 0;
-      d3Sequence[step] = 0;
-      d1ChromaNote[step] = 36;
-      d2ChromaNote[step] = 48;
-      d3ChromaNote[step] = 48;
-    }
+    clearPatternState();
     updateLEDs();
     patternDirty = false;
     activeRail = RAIL_NONE;

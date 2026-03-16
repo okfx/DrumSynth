@@ -67,8 +67,9 @@ static constexpr uint8_t PPQN_OPTION_COUNT = sizeof(PPQN_OPTIONS) / sizeof(PPQN_
 
 // Combo button (MEM) timing — combo button is purely a modifier, no short press action.
 // Any button pressed while combo is held fires a combo immediately.
-static constexpr uint32_t COMBO_MONO_ANIM_MS     = 1750;  // MONOBASS warning animation starts
-static constexpr uint32_t COMBO_MONO_ENTER_MS    = 4000;  // MONOBASS mode enters/exits
+static constexpr uint32_t COMBO_OVERLAY_DELAY_MS = 300;   // delay before help overlay appears (suppress flash on quick combos)
+static constexpr uint32_t COMBO_MONO_ANIM_MS     = 3500;  // MONOBASS warning animation starts
+static constexpr uint32_t COMBO_MONO_ENTER_MS    = 8000;  // MONOBASS mode enters/exits
 // PPQN mode: combo short press cycles, combo long press saves
 static constexpr uint32_t PPQN_SAVE_HOLD_MS      = 1500;
 
@@ -129,7 +130,7 @@ enum MonoAnimPhase : uint8_t {
 
 static MonoAnimPhase monoAnimPhase = MONO_ANIM_NONE;
 static uint32_t monoAnimStart = 0;
-static constexpr uint32_t MONO_ANIM_DURATION_MS = 2000;  // fits within 1750→4000 window
+static constexpr uint32_t MONO_ANIM_DURATION_MS = 4000;  // fits within 3500→8000 window
 
 // Precomputed text mask for MONOBASS white-fill sweep animation.
 // Computed once in setup() since it depends on the font renderer.
@@ -1438,7 +1439,6 @@ void updateStepButtons() {
 
       // Combo+step: slot select (0-9), shuffle (15), or no-op (10-14)
       if (comboMod.held && btnState[i]) {
-        comboMod.comboFired = true;
         cancelMonoAnim();
 
         if (i >= 10 && i <= 14) {
@@ -1454,15 +1454,23 @@ void updateStepButtons() {
         }
 
         if (i == 15) {
-          // Step 15: cycle shuffle mode (OFF → 1 → … → 7 → OFF)
+          // Step 15: cycle shuffle mode (OFF → 1 → … → 7 → OFF).
+          // Keep comboFired=false so the overlay stays visible and the user can
+          // keep holding X and pressing step 15 to cycle further.
+          // Suppress MONOBASS entry (monoFired+monoAnimStarted) without clearing the overlay.
+          comboMod.monoAnimStarted = true;
+          comboMod.monoFired = true;
           cycleShuffle(nowTick);
         } else if (i <= 9) {
-          // Steps 0-9: select & load memory slot
+          // Steps 0-9: select & load memory slot.
+          // Set comboFired=true to clear the overlay and show the load message.
+          comboMod.comboFired = true;
           activeSaveSlot = i;
           if (loadStateFromEEPROM(i)) {
             snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
             snprintf(displayParameter2, sizeof(displayParameter2), "LOADED");
           } else {
+            clearPatternState();
             snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);
             snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
           }
