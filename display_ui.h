@@ -646,7 +646,15 @@ void updateDisplay() {
     }
   }
 
-  if (isSafeToPushOled(nowMs)) {
+  bool safeNow = isSafeToPushOled(nowMs);
+  {
+    static uint8_t dbgPush = 0;
+    if (dbgPush < 10) {
+      Serial.print("[PUSH] safe="); Serial.println(safeNow);
+      dbgPush++;
+    }
+  }
+  if (safeNow) {
     // Stamp watchdog only on successful push — stale timestamp causes an
     // immediate retry next iteration, by which time the step has fired.
     oledStartPushAndStamp(nowMs);
