@@ -726,14 +726,12 @@ void applyChokeToDecays() {
 }
 
 void setup() {
-  Serial.begin(115200);
   delay(200);
 
   // --- OLED display initialization ---
 
   // Args: (i2cAddr=0 unused for SPI, reset=true to hardware-reset the display)
   bool displayOk = display.begin(0, true);
-  Serial.println(displayOk ? "[OLED] begin OK" : "[OLED] begin FAILED");
   if (displayOk) {
     display.clearDisplay();
 
@@ -785,9 +783,7 @@ void setup() {
     }
 
     // Animated splash screen
-    Serial.println("[OLED] calling splashAnimation()");
     splashAnimation();
-    Serial.println("[OLED] splashAnimation() returned");
 
     // Precompute MONOBASS dither masks (renders text off-screen, reads back)
     precomputeMonoMasks();
@@ -867,11 +863,6 @@ void setup() {
 }
 
 void loop() {
-  static bool firstLoop = true;
-  if (firstLoop) {
-    firstLoop = false;
-    Serial.println("[LOOP] first iteration started");
-  }
 
   // --- Accent preview timeout ---
 
@@ -931,7 +922,6 @@ void loop() {
     interrupts();
 
     if (needsReinit) {
-      Serial.println("[OLED] watchdog fired — reinitializing");
       display.begin(0, true);  // i2cAddr=0 unused for SPI, reset=true
       display.clearDisplay();
       playSequence();  // drain any pending steps before blocking SPI push
@@ -1729,12 +1719,11 @@ void updateKnobs() {
 // Called from updateDisplay() for both the PPQN mode and normal display paths.
 bool isSafeToPushOled(uint32_t nowMs) {
   // Steps waiting: consume them first, never block with pending audio work
-  if (pendingStepCount > 0) { Serial.println("[OLED] blocked: pendingStepCount"); return false; }
+  if (pendingStepCount > 0) { return false; }
 
   // Drop-in display block (suppress push for 500ms after PLAY press)
   if (displayBlockedUntilTick > 0) {
     if ((int32_t)(displayBlockedUntilTick - nowMs) > 0) {
-      Serial.println("[OLED] blocked: displayBlockedUntilTick");
       return false;
     } else {
       displayBlockedUntilTick = 0;  // main-loop only — no interrupt guard required
@@ -1755,7 +1744,6 @@ bool isSafeToPushOled(uint32_t nowMs) {
     if (period > 0 && fired > 0) {
       int32_t remaining = (int32_t)((fired + period) - micros());
       if (remaining > 0 && remaining < OLED_GUARD_US) {
-        Serial.println("[OLED] blocked: RUN_INT guard");
         return false;
       }
     }
