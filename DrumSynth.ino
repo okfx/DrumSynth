@@ -748,10 +748,10 @@ void setup() {
       display.setTextWrap(false);
       display.setFont(NULL);
       display.setTextSize(2);
-      display.setCursor(22, 0);
-      display.print("FACTORY");
-      display.setCursor(34, 20);
-      display.print("RESET");
+      display.setCursor(34, 0);
+      display.print("CLEAR");
+      display.setCursor(28, 20);
+      display.print("EEPROM");
       display.display();
 
       bool held = true;
