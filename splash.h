@@ -1,7 +1,7 @@
 // splash.h — Boot splash: version display with Bayer dissolve into idle UI.
 //
-// Phase 1 (0–500ms):  White screen with FIRMWARE_VERSION centered in black.
-// Phase 2 (500–1500ms): Bayer 4×4 dissolve reveals normal UI underneath.
+// White screen with FIRMWARE_VERSION centered in black, immediately dissolves
+// into normal UI over 1000ms via Bayer 4×4 ordered dither.
 //
 // Depends on: hw_setup.h (display), FIRMWARE_VERSION (DrumSynth.ino),
 //             splashDissolveActive/splashDissolveStartMs/splashCapture (DrumSynth.ino).
@@ -56,7 +56,6 @@ static void splashAnimation() {
   display.setCursor((128 - textW) / 2, (64 - textH) / 2);
   display.print(FIRMWARE_VERSION);
   display.display();
-  delay(500);
 
   // Capture splash framebuffer for dissolve overlay
   memcpy(splashCapture, display.getBuffer(), 1024);
