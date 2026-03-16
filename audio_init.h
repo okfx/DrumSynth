@@ -115,8 +115,10 @@ void audioInit() {
   // SGTL5000 CODEC SETUP
   // ============================================================================
 
+  Serial.println("[BOOT]   codec disable/enable...");
   sgtl5000_1.disable();
   sgtl5000_1.enable();
+  Serial.println("[BOOT]   codec enabled");
 
   // Analog output staging
   sgtl5000_1.volume(0.75f);     // Headphone amp gain
@@ -151,6 +153,7 @@ void audioInit() {
     300.0f  // decay: dB/s
   );
   sgtl5000_1.autoVolumeDisable();
+  Serial.println("[BOOT]   codec setup done, starting oscillators...");
 
   // ============================================================================
   // D1 - KICK DRUM

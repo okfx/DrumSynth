@@ -737,7 +737,9 @@ void applyChokeToDecays() {
 }
 
 void setup() {
+  Serial.begin(115200);
   delay(200);
+  Serial.println("[BOOT] setup() start");
 
   // --- OLED display initialization ---
 
@@ -796,17 +798,23 @@ void setup() {
     }
 
     // Animated splash screen
+    Serial.println("[BOOT] splash...");
     splashAnimation();
 
     // Precompute MONOBASS dither masks (renders text off-screen, reads back)
+    Serial.println("[BOOT] precomputeMonoMasks...");
     precomputeMonoMasks();
   }
 
   // --- Audio system initialization ---
 
+  Serial.println("[BOOT] AudioMemory(1200)...");
   AudioMemory(1200);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
+  Serial.println("[BOOT] sysTickTimer...");
   sysTickTimer.begin(sysTickISR, 1000);
+  Serial.println("[BOOT] audioInit...");
   audioInit();
+  Serial.println("[BOOT] audioInit done");
   d1AmpEnv.attack(D1_ATTACK_MS);  // permanent value — not set in audioInit (D1_ATTACK_MS not yet visible there)
   scopeQueue.begin();
 
@@ -873,6 +881,8 @@ void setup() {
   noInterrupts();
   lastFrameDrawTick = sysTickMs;
   interrupts();
+
+  Serial.println("[BOOT] setup() complete — entering loop()");
 }
 
 void loop() {
