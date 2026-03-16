@@ -54,6 +54,8 @@ extern volatile uint8_t currentStep;
 //    subdivIntervalUs          — uint32_t, ISR sets, timer callback reads (chaining)
 //    subdivStepsRemaining      — uint8_t, atomic on ARM, ISR sets, timer callback decrements, main loop resets
 //    subdivTimerDueUs          — uint32_t, ISR sets, timer callback updates, main loop reads (SPI push guard)
+//    lastStepFiredUs           — uint32_t, stepISR writes (micros() timestamp), main loop reads (SPI push guard prediction)
+//    intStepPeriodUs           — uint32_t, stepISR writes (current step period), main loop reads (SPI push guard prediction)
 //
 //  Main loop writes (read by ISR):
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
@@ -121,6 +123,8 @@ volatile uint32_t subdivTimerDueUs = 0;     // Absolute timestamp when next one-
 // ============================================================================
 
 volatile uint8_t  pendingStepCount = 0;    // Step queue: stepISR, externalClockISR, and subdivTimerCallback write; main loop consumes
+volatile uint32_t lastStepFiredUs = 0;     // micros() when stepISR last fired — used by isSafeToPushOled() to predict next internal step
+volatile uint32_t intStepPeriodUs = 0;     // Period loaded for the current step — prediction input for isSafeToPushOled()
 
 // BPM display (main loop only, not volatile)
 float extBpmDisplay = 0.0f;
@@ -166,9 +170,10 @@ void stepISR() {
     if (pendingStepCount < 255) {
       currentStep = (currentStep + 1) % numSteps;
       pendingStepCount++;
-      // Apply shuffle: set the timer period for the *next* step.
-      // stepTimer.update() is ISR-safe (used by engineMasterTempo).
-      stepTimer.update(shuffledStepPeriodUs(currentStep));
+      uint32_t period = shuffledStepPeriodUs(currentStep);
+      stepTimer.update(period);
+      lastStepFiredUs = micros();
+      intStepPeriodUs = period;
     }
   }
 }
@@ -400,7 +405,10 @@ void externalClockISR() {
 // (Re)start the internal clock timer based on current BPM + shuffle
 void rearmStepTimer() {
   stepTimer.end();
-  stepTimer.begin(stepISR, shuffledStepPeriodUs(currentStep));
+  uint32_t period = shuffledStepPeriodUs(currentStep);
+  stepTimer.begin(stepISR, period);
+  lastStepFiredUs = micros();
+  intStepPeriodUs = period;
 }
 
 // Clear all external clock state — pulse tracking, subdivision, and display.

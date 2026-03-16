@@ -928,6 +928,7 @@ void loop() {
     if (needsReinit) {
       display.begin(0, true);  // i2cAddr=0 unused for SPI, reset=true
       display.clearDisplay();
+      playSequence();  // drain any pending steps before blocking SPI push
       display.display();
 
       uint32_t t;
@@ -1733,7 +1734,24 @@ bool isSafeToPushOled(uint32_t nowMs) {
     }
   }
 
-  // Protect steps B and A — read all ISR-shared timing variables atomically
+  static constexpr int32_t OLED_GUARD_US = 25000;  // 25ms — worst-case SPI push
+
+  // Internal clock: predict next stepISR from last-fired timestamp + period
+  if (transportState == RUN_INT) {
+    uint32_t fired;
+    uint32_t period;
+    noInterrupts();
+    fired  = lastStepFiredUs;
+    period = intStepPeriodUs;
+    interrupts();
+
+    if (period > 0 && fired > 0) {
+      int32_t remaining = (int32_t)((fired + period) - micros());
+      if (remaining > 0 && remaining < OLED_GUARD_US) return false;
+    }
+  }
+
+  // External clock: protect steps B (subdivision) and A (next pulse)
   if (transportState == RUN_EXT) {
     uint32_t subdivDue;
     uint32_t ema;
@@ -1749,13 +1767,13 @@ bool isSafeToPushOled(uint32_t nowMs) {
     // timestamp only makes remaining smaller, so we err toward skipping the push.
     if (subdivDue > 0) {
       int32_t remaining = (int32_t)(subdivDue - micros());
-      if (remaining > 0 && remaining < 25000) return false;
+      if (remaining > 0 && remaining < OLED_GUARD_US) return false;
     }
 
     // Step A: next pulse predicted within 25ms from EMA
     if (ema > 0 && lastP > 0) {
       int32_t remaining = (int32_t)((lastP + ema) - micros());
-      if (remaining > 0 && remaining < 25000) return false;
+      if (remaining > 0 && remaining < OLED_GUARD_US) return false;
     }
   }
 
