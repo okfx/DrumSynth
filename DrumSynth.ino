@@ -183,10 +183,11 @@ static bool monoMasksReady = false;
 // ── X-Combo help overlay ────────────────────────────────────────────
 static uint32_t xComboOverlayStartMs = 0;
 
-// Pre-rendered scroll buffer (Picopixel glyphs, 400px wide × 5px tall).
-// Byte-per-pixel (not bit-packed) for simple blit loop; 2KB is negligible on T4.
+// Pre-rendered scroll buffer (Picopixel glyphs, 400px wide × 6px tall).
+// 6 rows: 5px cap height + 1px descender (Q, g, p, etc.).
+// Byte-per-pixel (not bit-packed) for simple blit loop; 2.4KB is negligible on T4.
 static constexpr uint16_t SCROLL_BUF_W = 400;
-static constexpr uint8_t  SCROLL_BUF_H = 5;
+static constexpr uint8_t  SCROLL_BUF_H = 6;
 static uint8_t  scrollBuf[SCROLL_BUF_W * SCROLL_BUF_H];
 static uint16_t scrollBufWidth = 0;  // actual rendered width in pixels
 
@@ -1562,7 +1563,7 @@ static void comboChromaWF() {
 // table and blits columns into the flat pixel buffer.
 static void prerenderScrollText() {
   static const char scrollStr[] =
-    "                                                "  // 48 leading spaces
+    "          "  // 10 leading spaces ≈ 20px — text appears within ~1s
     "KEEP HOLDING X FOR MONOBASS MODE  ...  "
     "HOLD X + L TO SET PPQN  ...  ";
 
@@ -1588,7 +1589,7 @@ static void prerenderScrollText() {
 
     // Picopixel yAdvance=7, baseline at row 5 (0-indexed).
     // yo is relative to baseline (negative = above).
-    // Map glyph rows into scrollBuf rows 0..4.
+    // Map glyph rows into scrollBuf rows 0..5 (6 rows for descenders).
     // Baseline row in buf = 4, so glyph row r maps to bufY = 4 + yo + r.
     for (uint8_t r = 0; r < gh; ++r) {
       int bufY = 4 + yo + r;
@@ -1678,8 +1679,27 @@ static void renderXComboOverlay(uint32_t nowMs) {
       display.setCursor(x + 2, 46);
       display.print(numBuf);
     } else if (i <= 14) {
-      // Smaller buttons (5×7), offset 1px down
-      display.drawRect(x, 41, 5, 7, SH110X_WHITE);
+      // Smaller buttons (5×7), dotted outline — no combo function
+      uint8_t bx = x, by = 41, bw = 5, bh = 7;
+      // Four corners always solid
+      display.drawPixel(bx, by, SH110X_WHITE);
+      display.drawPixel(bx + bw - 1, by, SH110X_WHITE);
+      display.drawPixel(bx, by + bh - 1, SH110X_WHITE);
+      display.drawPixel(bx + bw - 1, by + bh - 1, SH110X_WHITE);
+      // Top/bottom edges — relative parity so all boxes match
+      for (int dx = bx + 1; dx < bx + bw - 1; dx++) {
+        if ((dx - bx) % 2 == 0) {
+          display.drawPixel(dx, by, SH110X_WHITE);
+          display.drawPixel(dx, by + bh - 1, SH110X_WHITE);
+        }
+      }
+      // Left/right edges — relative parity
+      for (int dy = by + 1; dy < by + bh - 1; dy++) {
+        if ((dy - by) % 2 == 0) {
+          display.drawPixel(bx, dy, SH110X_WHITE);
+          display.drawPixel(bx + bw - 1, dy, SH110X_WHITE);
+        }
+      }
     } else {
       // Step 15: full-size with centered 3×3 marker
       display.drawRect(x, 40, 7, 9, SH110X_WHITE);
@@ -1687,10 +1707,10 @@ static void renderXComboOverlay(uint32_t nowMs) {
     }
   }
 
-  // ── Scrolling marquee (y=57–63) ──
+  // ── Scrolling marquee (y=56–63, 8px tall) ──
   // White bar with manually rounded corners (skip 4 corner pixels)
-  display.fillRect(1, 57, 126, 7, SH110X_WHITE);
-  for (int ry = 58; ry <= 62; ++ry) {
+  display.fillRect(1, 56, 126, 8, SH110X_WHITE);
+  for (int ry = 57; ry <= 62; ++ry) {
     display.drawPixel(0, ry, SH110X_WHITE);
     display.drawPixel(127, ry, SH110X_WHITE);
   }
@@ -1699,12 +1719,12 @@ static void renderXComboOverlay(uint32_t nowMs) {
     uint32_t elapsed = nowMs - xComboOverlayStartMs;
     uint16_t scrollOff = (uint16_t)((elapsed * 2) / 75) % scrollBufWidth;
 
-    // Blit 126px window from scroll buffer, centered (x=1..126)
+    // Blit 126px window from scroll buffer (6 rows at y=57–62)
     for (int sx = 0; sx < 126; ++sx) {
       uint16_t srcX = (scrollOff + sx) % scrollBufWidth;
       for (int sy = 0; sy < SCROLL_BUF_H; ++sy) {
         if (scrollBuf[sy * SCROLL_BUF_W + srcX]) {
-          display.drawPixel(sx + 1, 58 + sy, SH110X_BLACK);
+          display.drawPixel(sx + 1, 57 + sy, SH110X_BLACK);
         }
       }
     }
@@ -1903,6 +1923,13 @@ static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
   // Pre-render scroll text for X-combo help overlay
   xComboOverlayStartMs = nowTick;
   prerenderScrollText();
+
+  // Light combo-active step LEDs (0–9 = mem slots, 15 = shuffle)
+  for (int i = 0; i < numSteps; ++i) {
+    bool on = (i <= 9) || (i == 15);
+    ledShiftReg.setNoUpdate(i, on);
+  }
+  ledShiftReg.updateRegisters();
 }
 
 static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {
@@ -2106,6 +2133,12 @@ void selectTrack(Track t) {
 
 void updateLEDs() {
   // Main-loop only — no ISR access to accentPreview*, no guards needed
+
+  // X-combo overlay — LEDs set by btnComboPress(), don't overwrite
+  if (comboMod.held && !comboMod.comboFired
+      && !ppqnModeActive && monoAnimPhase == MONO_ANIM_NONE) {
+    return;
+  }
 
   // MONOBASS mode — first 12 LEDs lit as usable-key indicators (12 notes/octave)
   if (monoBass.active) {
