@@ -260,11 +260,13 @@ static bool dispatchCombo(uint8_t btnIdx, uint32_t nowTick) {
   return false;
 }
 
-// Helper: show "DISABLED FOR MONOBASS" overlay and mark combo as fired.
-static void showMonoBassDisabled(uint32_t nowTick) {
-  snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-  snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
-  parameterOverlayStartTick = nowTick;
+// Helper: show "DISABLED FOR MONOBASS" via scope overlay and mark combo as fired.
+// Routes through monoBass.paramLabel/paramValue because the standard bottom
+// overlay is suppressed in MONOBASS mode (display_ui.h overlay guard).
+static void showMonoBassDisabled(uint32_t /*nowTick*/) {
+  snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "DISABLED FOR");
+  snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "MONOBASS");
+  monoBass.paramShowStart = sysTickMs;
   activeRail = RAIL_NONE;
   comboMod.comboFired = true;
 }
@@ -277,7 +279,7 @@ static void btnD1Press(ButtonHandler& self, uint32_t nowTick) {
     else { dispatchCombo(0, nowTick); }
     return;
   }
-  if (monoBass.active) return;
+  if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
   self.pressTick = nowTick;
   selectTrack(TRACK_D1);
 }
@@ -293,7 +295,7 @@ static void btnD2Press(ButtonHandler& self, uint32_t nowTick) {
     else { dispatchCombo(1, nowTick); }
     return;
   }
-  if (monoBass.active) return;
+  if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
   self.pressTick = nowTick;
   selectTrack(TRACK_D2);
 }
@@ -309,7 +311,7 @@ static void btnD3Press(ButtonHandler& self, uint32_t nowTick) {
     else { dispatchCombo(2, nowTick); }
     return;
   }
-  if (monoBass.active) return;
+  if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
   self.pressTick = nowTick;
   selectTrack(TRACK_D3);
 }
@@ -322,7 +324,8 @@ static void btnD3Hold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*held
 static void btnPlayPress(ButtonHandler& self, uint32_t nowTick) {
   // Combo+PLAY: WF chroma — NOT disabled in MONOBASS
   if (comboMod.held) { dispatchCombo(6, nowTick); return; }
-  if (monoBass.active) return;
+  if (ppqnModeActive) return;  // block transport while PPQN select screen is active
+  if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
   self.pressTick = nowTick;
   handlePlayStop();
 }
@@ -446,14 +449,24 @@ static void btnLoadPress(ButtonHandler& self, uint32_t nowTick) {
   }
   if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
   slotPending = false;
-  if (!loadStateFromEEPROM(activeSaveSlot)) {
+  LoadResult result = loadStateFromEEPROM(activeSaveSlot);
+  if (result != LOAD_OK) {
     clearPatternState();
     updateLEDs();
     patternDirty = false;
     activeRail = RAIL_NONE;
-    snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d",
-             activeSaveSlot + 1);
-    snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+    if (result == LOAD_CORRUPT) {
+      // CRC mismatch — slot has valid magic but damaged data.
+      // Write a clean empty pattern so the slot is usable again.
+      initializeEepromSlot(activeSaveSlot);
+      snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d CORRUPT",
+               activeSaveSlot + 1);
+      snprintf(displayParameter2, sizeof(displayParameter2), "INITIALIZED");
+    } else {
+      snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d",
+               activeSaveSlot + 1);
+      snprintf(displayParameter2, sizeof(displayParameter2), "EMPTY");
+    }
     parameterOverlayStartTick = nowTick;
   }
   flashStepLed(activeSaveSlot, 2);

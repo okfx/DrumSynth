@@ -129,12 +129,38 @@ bool patternDirty = false;
 //  Functions
 // ============================================================================
 
-bool loadStateFromEEPROM(uint8_t slotIndex) {
-  if (slotIndex >= SAVE_SLOT_COUNT) return false;
+// Return codes for loadStateFromEEPROM().
+enum LoadResult : uint8_t {
+  LOAD_EMPTY   = 0,  // magic mismatch — uninitialized slot
+  LOAD_CORRUPT = 1,  // magic OK but CRC mismatch — partial write or bit rot
+  LOAD_OK      = 2   // successful load
+};
+
+// Initialize a single EEPROM slot with a blank pattern and valid CRC.
+// Called to repair corrupt slots — writes a known-good empty state.
+void initializeEepromSlot(uint8_t slotIndex) {
+  if (slotIndex >= SAVE_SLOT_COUNT) return;
+  size_t addr = (size_t)slotIndex * sizeof(EepromSlot);
+  if (addr + sizeof(EepromSlot) > EEPROM.length()) return;
+
+  EepromSlot slot = {};
+  slot.magic = EEPROM_MAGIC;
+  slot.seq = 0;
+  for (int s = 0; s < numSteps; s++) {
+    slot.patterns.d1Chroma[s] = 36;
+    slot.patterns.d2Chroma[s] = 48;
+    slot.patterns.d3Chroma[s] = 48;
+  }
+  slot.crc = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
+  EEPROM.put((int)addr, slot);
+}
+
+LoadResult loadStateFromEEPROM(uint8_t slotIndex) {
+  if (slotIndex >= SAVE_SLOT_COUNT) return LOAD_EMPTY;
 
   // Calculate and verify address (type-safe)
   size_t addr = (size_t)slotIndex * sizeof(EepromSlot);
-  if (addr + sizeof(EepromSlot) > EEPROM.length()) return false;
+  if (addr + sizeof(EepromSlot) > EEPROM.length()) return LOAD_EMPTY;
 
   // Read slot from EEPROM
   EepromSlot slot;
@@ -145,11 +171,11 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
   if (slot.magic == EEPROM_MAGIC)       version = 3;
   else if (slot.magic == EEPROM_MAGIC_V2) version = 2;
   else if (slot.magic == EEPROM_MAGIC_V1) version = 1;
-  else return false;
+  else return LOAD_EMPTY;
 
   // Verify CRC8 over pattern data — catches partial writes and bit rot
   uint8_t expected = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));
-  if (slot.crc != expected) return false;
+  if (slot.crc != expected) return LOAD_CORRUPT;
 
   // D1 chroma upper bound depends on which version wrote the slot.
   // V1 slots used 33–69; V2+ uses 33–75 (D1_CHROMA_NOTE_MAX).
@@ -222,7 +248,7 @@ bool loadStateFromEEPROM(uint8_t slotIndex) {
 
   parameterOverlayStartTick = sysTickMs;
 
-  return true;
+  return LOAD_OK;
 }
 
 void saveStateToEEPROM(uint8_t slotIndex) {

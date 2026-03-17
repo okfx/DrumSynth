@@ -909,7 +909,10 @@ void loop() {
   if (ppqnModeActive) {
     if ((uint32_t)(loopNowTick - ppqnModeLastActivityTick) >= PPQN_MODE_TIMEOUT_MS) {
       ppqnModeActive = false;
-      // No save — just exit silently. Normal display resumes automatically.
+      activeRail = RAIL_NONE;
+      snprintf(displayParameter1, sizeof(displayParameter1), "PPQN");
+      snprintf(displayParameter2, sizeof(displayParameter2), "NOT SAVED");
+      parameterOverlayStartTick = loopNowTick;
     }
   }
 

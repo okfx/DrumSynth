@@ -86,6 +86,10 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 
 *Versioning reset to v1.0.0 for first public release (previously tracked as v1.05–v1.07 during development).*
 
+- **UX: MONOBASS disabled feedback** -- "DISABLED FOR MONOBASS" messages now route through the scope overlay instead of the standard bottom overlay, which was silently suppressed. Affects all disabled knobs and D1/D2/D3/PLAY buttons in MONOBASS mode.
+- **UX: PPQN mode guards** -- PLAY button blocked during PPQN select to prevent transport starting behind the full-screen PPQN display. Timeout exit now shows "NOT SAVED" overlay instead of exiting silently.
+- **UX: Corrupt EEPROM handling** -- Loading a corrupt slot (valid magic but CRC mismatch) now shows "SLOT N CORRUPT / INITIALIZED" and writes a clean empty pattern to that EEPROM address, distinguishing corruption from genuinely empty slots.
+- **UX: Chroma pitch hint** -- Turning the pitch knob in chroma mode with no step held now shows "HOLD STEP BUTTON / THEN TURN" instead of "LOCKED FOR / CHROMA".
 - **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates worst-case 15–25 ms blocking stalls in the audio loop. USB audio clicks when recording to a DAW are a separate issue caused by sample rate mismatch between the Teensy I2S clock (~44118 Hz) and DAW host expectations (44100 Hz); see [`Documentation/USB_AUDIO_MAC.md`](Documentation/USB_AUDIO_MAC.md). See [`Documentation/CHUNKED_OLED_PUSH.md`](Documentation/CHUNKED_OLED_PUSH.md) for OLED implementation details.
 - **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
 - **Master audio retuning** -- Master filters, EQ, codec settings, and output gain retuned after A/B/C evaluation:

@@ -162,12 +162,15 @@ static inline void displayMonoBassParam(const char* normalLabel, const char* bkL
   }
 }
 
-// For D2/D3/master cases disabled during MONOBASS — returns true if handled
+// For D2/D3/master cases disabled during MONOBASS — returns true if handled.
+// Routes through the MONOBASS scope overlay (paramLabel/paramValue) because
+// the standard bottom overlay is suppressed in MONOBASS mode.
 static inline bool displayDisabledInMonoBass() {
   if (!monoBass.active) return false;
   activeRail = RAIL_NONE;
-  snprintf(displayParameter1, sizeof(displayParameter1), "DISABLED FOR");
-  snprintf(displayParameter2, sizeof(displayParameter2), "MONOBASS");
+  snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "DISABLED FOR");
+  snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "MONOBASS");
+  monoBass.paramShowStart = sysTickMs;
   return true;
 }
 
@@ -237,8 +240,8 @@ static void displayD1Pitch(uint8_t idx, int knobValue) {
                "STEP %d", d1ChromaHeldStep + 1);
       snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
     } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
-      snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP BUTTON");
+      snprintf(displayParameter2, sizeof(displayParameter2), "THEN TURN");
     }
     return;
   }
@@ -318,8 +321,8 @@ static void displayD2Pitch(uint8_t idx, int knobValue) {
                "STEP %d", d2ChromaHeldStep + 1);
       snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
     } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
-      snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP BUTTON");
+      snprintf(displayParameter2, sizeof(displayParameter2), "THEN TURN");
     }
     return;
   }
@@ -399,8 +402,8 @@ static void displayD3Pitch(uint8_t idx, int knobValue) {
                "STEP %d", d3ChromaHeldStep + 1);
       snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
     } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "LOCKED FOR");
-      snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP BUTTON");
+      snprintf(displayParameter2, sizeof(displayParameter2), "THEN TURN");
     }
     return;
   }

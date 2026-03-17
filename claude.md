@@ -80,18 +80,18 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
 ### Dispatch Tables
 
 - **Knobs:** `knobTable[32]` in `knob_handlers.h` — each entry has `.display()` and `.engine()` function pointers
-- **Buttons:** `btnHandlers[10]` in `DrumSynth.ino` — each entry has `.onPress()`, `.onRelease()`, `.onHoldCheck()`
+- **Buttons:** `btnHandlers[10]` in `buttons.h` — each entry has `.onPress()`, `.onRelease()`, `.onHoldCheck()`
 
 ### Modes
 
 | Mode | Entry | Effect |
 |------|-------|--------|
 | **MONOBASS** | X hold 8s | Stops transport, D1 becomes live mono keyboard, D2/D3/BPM/choke knobs + MEM/LOAD/SAVE disabled |
-| **D1 Chroma** | D1 hold 1.5s | Per-step pitch, knob 3 → note select |
-| **D2 Chroma** | D2 hold 1.5s | Per-step pitch for snare osc |
-| **D3 Chroma** | D3 hold 1.5s | Per-step pitch for all D3 voices |
-| **WF Chroma** | PLAY hold 1.5s | Master wavefolder freq quantized to chromatic notes |
-| **PPQN Select** | X+LOAD hold 1.5s | Stops transport, cycles PPQN values, hold again to save |
+| **D1 Chroma** | X+D1 | Per-step pitch, knob 3 → note select |
+| **D2 Chroma** | X+D2 | Per-step pitch for snare osc |
+| **D3 Chroma** | X+D3 | Per-step pitch for all D3 voices |
+| **WF Chroma** | X+PLAY | Master wavefolder freq quantized to chromatic notes |
+| **PPQN Select** | X+LOAD hold 1.5s | Stops transport, cycles PPQN values, hold again to save; PLAY blocked; timeout shows "NOT SAVED" |
 | **Shuffle** | X+step15 | TR-909 shuffle (6 audible levels + OFF), internal clock only, disabled in MONOBASS |
 | **X-Combo Overlay** | Hold X (MEM) | Full-screen static help overlay showing available combos |
 
@@ -100,7 +100,7 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
 - 10 pattern slots × 102 bytes + 2 bytes PPQN + 2 bytes MONOBASS = 1024 of 1080 bytes (Teensy 4.0)
 - Slots 0–9 accessible via combo+step buttons; compile-time `static_assert` guards capacity
 - Magic `0x4249` (current), `0x4248`/`0x4247` (legacy backward compat)
-- CRC-8 over `PatternStore` — rejects corrupted slots
+- CRC-8 over `PatternStore` — corrupt slots auto-initialize on load (see `LoadResult` enum)
 - Stores: 3 sequences + 3 chroma note arrays + chroma mode flags (bits 0-3) + shuffle mode (bits 4-6) + MONOBASS active state
 
 ### Knob Map
@@ -129,7 +129,9 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
    `DrumSynth.ino` with the other `*Curve()` helpers and call it from both
    display and engine functions. Never duplicate the formula.
 5. **When disabling knobs/buttons in MONOBASS mode**, follow the existing pattern:
-   display shows `"DISABLED FOR"` / `"MONOBASS"`, engine returns early.
+   display routes `"DISABLED FOR"` / `"MONOBASS"` through the MONOBASS scope overlay
+   (`monoBass.paramLabel`/`paramValue`), NOT the standard bottom overlay
+   (`displayParameter1/2`) which is suppressed in MONOBASS. Engine returns early.
 6. **When asked to discuss or conceptualize**, do NOT explore the codebase unless asked.
 
 ## Sharp Edges
