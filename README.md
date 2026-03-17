@@ -11,7 +11,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **16-Step Sequencer** with per-step programming.
 
-**BPM** -- 60–400 BPM across the main knob range. Past 85%, the knob jumps into hyperdrive (900–999 BPM) for textural and noise-based use.
+**BPM** -- 60–300 BPM across the main knob range. Past 80%, the knob jumps into hyperdrive (800–999 BPM) for textural and noise-based use.
 
 **Master Wavefolder** -- Sine and saw oscillators through a waveshaping stage. Frequency sweeps exponentially across four octaves, fold drive has loudness compensation, and the two oscillators diverge across three zones for evolving harmonic content.
 

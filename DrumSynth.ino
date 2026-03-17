@@ -1608,14 +1608,14 @@ static inline float d3FilterCurve(int knobValue) {
 static inline float bpmFromKnob(int knobValue) {
   float norm = normalizeKnob(knobValue);
   float bpmValue;
-  if (norm <= 0.85f) {
-    // 0–85%: 60 → 400 BPM (normal range)
-    float blend = norm / 0.85f;
-    bpmValue = 60.0f + blend * (400.0f - 60.0f);
+  if (norm <= 0.80f) {
+    // 0–80%: 60 → 300 BPM (normal range)
+    float blend = norm / 0.80f;
+    bpmValue = 60.0f + blend * (300.0f - 60.0f);
   } else {
-    // 85–100%: 900 → 999 BPM (hyperspeed)
-    float blend = (norm - 0.85f) / 0.15f;
-    bpmValue = 900.0f + blend * (999.0f - 900.0f);
+    // 80–100%: 800 → 999 BPM (hyperspeed)
+    float blend = (norm - 0.80f) / 0.20f;
+    bpmValue = 800.0f + blend * (999.0f - 800.0f);
   }
   return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
 }
