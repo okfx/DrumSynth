@@ -19,6 +19,10 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **Shuffle** -- TR-909-style shuffle with 6 intensity levels. Hold X and press Step 16 to cycle through shuffle amounts.
 
+**Master Lowpass Filter** -- Ladder-style filter on the master bus.
+
+**Delay Line** -- Rhythmically synced delay with adjustable send per voice, feedback, and mix.
+
 **Audio Outputs** -- 1/4" and 1/8" line out, headphone out, and USB audio.
 
 **External Clock Sync** -- Accepts an external pulse clock with configurable PPQN, auto lock-in, and armed count-in with beat countdown.
