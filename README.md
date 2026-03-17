@@ -29,6 +29,12 @@ The master wavefolder can also be placed in CHROMA mode, snapping its frequency 
 
 CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by small dots at the bottom of the OLED.
 
+## MONOBASS Mode
+
+MONOBASS turns the step buttons into a live monophonic keyboard for D1. Hold the D1 button for several seconds to enter the mode. The 12 step buttons become chromatic keys covering one octave, with the remaining buttons used for octave shifting. D2 and D3 continue to play normally.
+
+The oscilloscope remains visible during MONOBASS, and an envelope filter sweep is available via the Snap knob. MONOBASS state persists across power cycles.
+
 ## Hardware
 
 - **MCU:** Teensy 4.0 (ARM Cortex-M7 @ 600 MHz)
