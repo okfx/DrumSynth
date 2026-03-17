@@ -14,7 +14,7 @@ as one file. Headers are inline code segments, not independent modules.
 
 | File | Purpose | Notes |
 |------|---------|-------|
-| `DrumSynth.ino` | Main firmware (~1860 lines) | State, setup, loop, transport, triggers, knobs |
+| `DrumSynth.ino` | Main firmware (~1850 lines) | State, setup, loop, transport, triggers, knobs |
 | `audiotool.h` | Audio Design Tool output | **Auto-generated — NEVER full-file rewrite** |
 | `audio_init.h` | One-time audio object init | Codec, envelopes, filters, mixer gains |
 | `hw_setup.h` | Pin assignments, peripheral objects | Mux, shift register, OLED, constants |
@@ -107,14 +107,18 @@ non-nestable; never add an `interrupts()` call inside a wider critical section.
 
 | 0–7 (D1) | 8–15 (D2) | 16–23 (D3) | 24–31 (Master) |
 |-----------|-----------|------------|----------------|
-| 0 Distort | 8 Pitch | 16 Pitch | 24 Delay Time |
+| 0 Distort | 8 Pitch | 16 Tune¹ | 24 Delay Time |
 | 1 Shape | 9 Decay | 17 Decay | 25 WF Freq |
 | 2 Decay | 10 Voice Mix | 18 Voice Mix | 26 Lowpass |
-| 3 Pitch | 11 WF Drive | 19 Distort | 27 BPM |
+| 3 Pitch | 11 Distort² | 19 Distort | 27 BPM³ |
 | 4 Volume | 12 Delay Send | 20 Delay Send | 28 Volume |
-| 5 Snap | 13 Reverb | 21 Filter | 29 Choke |
-| 6 Body/EQ | 14 Noise | 22 Accent | 30 WF Drive |
-| 7 Delay Send | 15 Volume | 23 Volume | 31 Delay Mix |
+| 5 Snap | 13 Reverb | 21 Lowpass | 29 Choke |
+| 6 Body | 14 Noise | 22 Accent | 30 WF Drive |
+| 7 Delay Send | 15 Volume | 23 Volume | 31 Delay Amount |
+
+¹ D3 Tune displays as `%` (relative offset across multi-osc bank), not Hz like D1/D2.
+² D2 knob 11 is wavefolder drive, displayed as "D2 DISTORTION" on OLED.
+³ BPM: 60–300 across 0–80% of knob travel; 800–999 (hyperdrive) from 80–100%.
 
 ## Editing Rules
 
