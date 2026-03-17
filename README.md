@@ -17,7 +17,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **Audio Outputs** -- 1/4" and 1/8" line out, headphone out, and USB audio.
 
-**External Clock Sync** -- Accepts an external pulse clock with configurable PPQN, auto lock-in, and armed count-in with beat countdown. See [`EXTERNAL_SYNC_ARCHITECTURE.md`](EXTERNAL_SYNC_ARCHITECTURE.md) for details.
+**External Clock Sync** -- Accepts an external pulse clock with configurable PPQN, auto lock-in, and armed count-in with beat countdown.
 
 **OLED Display** -- Real-time oscilloscope waveform view and parameter information.
 
@@ -53,11 +53,12 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 | `monobass.h` | MONOBASS live keyboard mode -- entry/exit, button handler, scope |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
-| `OLED_NONBLOCKING_PUSH.md` | Writeup of the non-blocking SH1106 OLED technique |
+| `Documentation/CHUNKED_OLED_PUSH.md` | Non-blocking SH1106 OLED page-push technique |
+| `Documentation/USB_AUDIO_MAC.md` | macOS USB audio clock drift fix |
 
 ## Changes (v1.0.0)
 
-- **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates the 15–25 ms blocking window that caused USB audio clicks when recording to a DAW. See [`OLED_NONBLOCKING_PUSH.md`](OLED_NONBLOCKING_PUSH.md) and [`CHUNKED_OLED_PUSH.md`](CHUNKED_OLED_PUSH.md) for details.
+- **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates the 15–25 ms blocking window that caused USB audio clicks when recording to a DAW. See [`Documentation/CHUNKED_OLED_PUSH.md`](Documentation/CHUNKED_OLED_PUSH.md) for details.
 - **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
 - **Master audio retuning** -- Master filters, EQ, codec settings, and output gain retuned after A/B/C evaluation:
   - Highpass lowered to 30 Hz (Butterworth) to preserve sub-bass energy
