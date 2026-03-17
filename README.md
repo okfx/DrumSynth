@@ -21,21 +21,11 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **Master Lowpass Filter** -- Ladder-style filter on the master bus.
 
-**Delay Line** -- Rhythmically synced delay with adjustable send per voice, feedback, and mix.
-
 **Audio Outputs** -- 1/4" and 1/8" line out, headphone out, and USB audio.
 
 **External Clock Sync** -- Accepts an external pulse clock with configurable PPQN, auto lock-in, and armed count-in with beat countdown.
 
 **OLED Display** -- Real-time oscilloscope waveform view and parameter information.
-
-## CHROMA Mode
-
-Toggle CHROMA on a per-channel basis by holding X and pressing D1, D2, D3, or ▶ (for the master wavefolder).
-
-CHROMA turns the drum machine into a step-sequenced synthesizer. Any voice can be switched from its normal drum sound to a chromatic pitch mode, where each step in the sequence plays its own programmable note. Layer multiple CHROMA voices to build basslines, melodies, and tonal textures on top of (or instead of) the drum pattern.
-
-CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by small dots at the bottom of the OLED.
 
 ## Memory Slots
 
@@ -43,13 +33,25 @@ Hold X and press step buttons 1–10 to select a slot, then use SAVE/LOAD to wri
 
 Each slot stores the drum pattern, CHROMA notes and mode state, and shuffle setting.
 
+## CHROMA Mode
+
+Toggle CHROMA on a per-channel basis by holding X and pressing D1, D2, D3, or ▶ (for the master wavefolder).
+
+CHROMA turns the drum machine into a step-sequenced synthesizer. Any voice can be switched from its normal drum sound to a chromatic pitch mode, where each step in the sequence plays its own programmable note. Layer multiple CHROMA voices to build basslines, melodies, and tonal textures on top of (or instead of) the drum pattern.
+
+When D1 CHROMA is active, the Body knob becomes a low-pass filter and the Snap knob becomes envelope filter amount -- the same behavior as MONOBASS mode. Active CHROMA channels are indicated by small dots at the bottom of the OLED.
+
 ## MONOBASS Mode
 
 Hold X for several seconds to enter MONOBASS mode.
 
 MONOBASS turns the step buttons into a live monophonic keyboard for D1. The 12 step buttons become chromatic keys covering one octave; the pitch knob shifts octaves. D2 and D3 continue to play normally.
 
-The Body knob becomes a low-pass filter and the Snap knob becomes envelope filter amount. The oscilloscope remains visible. MONOBASS state persists across power cycles.
+As in D1 Chroma mode, the Body knob becomes a low-pass filter and the Snap knob becomes envelope filter amount. The oscilloscope remains visible.
+
+## Delay Line
+
+Rhythmically synced delay with knobs for timing and feedback/mix. Each track has an independent delay send that is pre-distortion.
 
 ## Hardware
 
