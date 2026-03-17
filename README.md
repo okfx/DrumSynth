@@ -86,11 +86,11 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 
 *Versioning reset to v1.0.0 for first public release (previously tracked as v1.05–v1.07 during development).*
 
-- **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates the 15–25 ms blocking window that caused USB audio clicks when recording to a DAW. See [`Documentation/CHUNKED_OLED_PUSH.md`](Documentation/CHUNKED_OLED_PUSH.md) for details.
+- **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates worst-case 15–25 ms blocking stalls in the audio loop. USB audio clicks when recording to a DAW are a separate issue caused by sample rate mismatch between the Teensy I2S clock (~44118 Hz) and DAW host expectations (44100 Hz); see [`Documentation/USB_AUDIO_MAC.md`](Documentation/USB_AUDIO_MAC.md). See [`Documentation/CHUNKED_OLED_PUSH.md`](Documentation/CHUNKED_OLED_PUSH.md) for OLED implementation details.
 - **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
 - **Master audio retuning** -- Master filters, EQ, codec settings, and output gain retuned after A/B/C evaluation:
   - Highpass lowered to 30 Hz (Butterworth) to preserve sub-bass energy
-  - Lowpass opened to 12 kHz for more headroom up top
+  - Master lowpass knob range 1000–7500 Hz; boot default set above the knob range so the filter is fully open until the user adjusts it
   - Bandpass effectively bypassed (Q 0.01)
   - Final EQ gentler mid cuts, stronger bass shelf (+3.5 dB), reduced top air (+2.5 dB)
   - Output gain reduced from 3.5 to 2.8 (fuller spectrum needs less makeup)
@@ -160,7 +160,6 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 - D1 Body knob now responds immediately in Chroma mode when envelope filter is active but no note is decaying
 - Envelope filter sweep range widened: ceiling raised from 5000 Hz to 8000 Hz for more pronounced wah character
 - Envelope filter resonance peak raised from 3.5 to 4.0 at full depth (applies to both D1 Chroma and MONOBASS)
-- Master lowpass raised from 7500 Hz to 9000 Hz for a slightly brighter overall mix
 - Envelope filter minimum sweep time clamped to 100ms so the wah is always audible on short-decay kicks
 - Envelope filter depth knob uses a square curve — sweet spot is in the mid-range, full sweep still accessible at top
 - D1 Chroma snap transient reduced to 20% on chroma entry, restored to knob position on exit

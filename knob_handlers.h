@@ -404,6 +404,8 @@ static void displayD3Pitch(uint8_t idx, int knobValue) {
     }
     return;
   }
+  // Intentionally shows percent rather than Hz: D3 is a multi-oscillator bank with
+  // a relative tune curve, not a single absolute pitch like D1/D2.
   int tune = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
   snprintf(displayParameter1, sizeof(displayParameter1), "D3 TUNE");
   snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", tune);
@@ -498,8 +500,8 @@ static void displayWfFreq(uint8_t idx, int knobValue) {
       snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", noteName);
       monoBass.paramShowStart = sysTickMs;
     } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "WF %s", noteName);
-      snprintf(displayParameter2, sizeof(displayParameter2), "CHROMA");
+      snprintf(displayParameter1, sizeof(displayParameter1), "WF CHROMA");
+      snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
     }
   } else {
     int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
@@ -637,32 +639,32 @@ static void engineD1Shape(uint8_t idx, int knobValue) {
   float norm = normalizeKnob(knobValue);
 
   // Always keep a sine fundamental present
-  const float SIN_FLOOR = 0.35f;
-  const float SIN_CEIL = 0.85f;
-  const float G_SAW_MAX = 0.55f;
-  const float G_SQR_MAX = 0.55f;
+  static constexpr float kSinFloor  = 0.35f;
+  static constexpr float kSinCeil   = 0.85f;
+  static constexpr float kGSawMax   = 0.55f;
+  static constexpr float kGSqrMax   = 0.55f;
 
   // Calculate voice gains
-  float gainSine = SIN_CEIL - (SIN_CEIL - SIN_FLOOR) * norm;
+  float gainSine = kSinCeil - (kSinCeil - kSinFloor) * norm;
   float gainSaw = 0.0f;
   float gainSquare = 0.0f;
 
   // Harmonic crossfade: sine -> saw -> square
   if (norm <= 0.50f) {
     float blend = norm / 0.50f;
-    gainSaw = G_SAW_MAX * blend;
+    gainSaw = kGSawMax * blend;
   } else {
     float blend = (norm - 0.50f) / 0.50f;
-    gainSaw = G_SAW_MAX * (1.0f - blend);
-    gainSquare = G_SQR_MAX * blend;
+    gainSaw = kGSawMax * (1.0f - blend);
+    gainSquare = kGSqrMax * blend;
   }
 
   // Headroom management
   float sum = gainSine + gainSaw + gainSquare;
   float scale = 1.0f;
-  const float SUM_TARGET = 0.95f;
-  if (sum > SUM_TARGET) {
-    scale = SUM_TARGET / sum;
+  static constexpr float kSumTarget = 0.95f;
+  if (sum > kSumTarget) {
+    scale = kSumTarget / sum;
   }
 
   AudioNoInterrupts();
@@ -894,10 +896,10 @@ static void engineD2WfDrive(uint8_t idx, int knobValue) {
     }
 
     // Wet mix comes in gradually with quadratic curve
-    const float WET_START = 0.10f;
+    static constexpr float kWetStart = 0.10f;
     float wetNorm = 0.0f;
-    if (active > WET_START) {
-      float blend = (active - WET_START) / (1.0f - WET_START);
+    if (active > kWetStart) {
+      float blend = (active - kWetStart) / (1.0f - kWetStart);
       wetNorm = blend * blend;
     }
 
@@ -1029,14 +1031,14 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
   float norm = normalizeKnob(knobValue);
 
   // --- Shared pitch bend curve (all voices use the same shape) ---
-  const float BEND_START = 0.25f;
+  static constexpr float kBendStart = 0.25f;
   float pitchBend;
 
-  if (norm <= BEND_START) {
-    float blend = norm / BEND_START;
+  if (norm <= kBendStart) {
+    float blend = norm / kBendStart;
     pitchBend = 0.60f * blend;
   } else {
-    float blend = (norm - BEND_START) / (1.0f - BEND_START);
+    float blend = (norm - kBendStart) / (1.0f - kBendStart);
     pitchBend = 0.60f + 0.40f * (blend * blend);
   }
 
@@ -1128,33 +1130,33 @@ static void engineD3VoiceMix(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) return;
   // Zone boundaries (pure solo regions for each voice): FM left, 606 centre, PERC right
-  const int ZONE_FM_MAX   = int(1023 * 0.06f);
-  const int ZONE_606_MIN  = int(1023 * 0.46f);
-  const int ZONE_606_MAX  = int(1023 * 0.65f);
-  const int ZONE_PERC_MIN = int(1023 * 0.94f);
+  static constexpr int kZoneFmMax   = int(1023 * 0.06f);
+  static constexpr int kZone606Min  = int(1023 * 0.46f);
+  static constexpr int kZone606Max  = int(1023 * 0.65f);
+  static constexpr int kZonePercMin = int(1023 * 0.94f);
 
-  const float MIX_SCALE = 0.9f;
+  static constexpr float kMixScale = 0.9f;
 
   // Voice level trims (matched so each voice solos at similar perceived level)
-  const float TRIM_606  = 3.5f;
-  const float TRIM_FM   = 2.5f;
-  const float TRIM_PERC = 0.35f;
+  static constexpr float kTrim606  = 3.5f;
+  static constexpr float kTrimFM   = 2.5f;
+  static constexpr float kTrimPerc = 0.35f;
 
   float gain606  = 0.0f;
   float gainFM   = 0.0f;
   float gainPerc = 0.0f;
 
   // Calculate voice gains based on knob position
-  if (knobValue <= ZONE_FM_MAX) {
+  if (knobValue <= kZoneFmMax) {
     gainFM = 1.0f;
-  } else if (knobValue < ZONE_606_MIN) {
-    const float blend = float(knobValue - ZONE_FM_MAX) / float(ZONE_606_MIN - ZONE_FM_MAX);
+  } else if (knobValue < kZone606Min) {
+    const float blend = float(knobValue - kZoneFmMax) / float(kZone606Min - kZoneFmMax);
     gainFM = 1.0f - blend;
     gain606 = blend;
-  } else if (knobValue <= ZONE_606_MAX) {
+  } else if (knobValue <= kZone606Max) {
     gain606 = 1.0f;
-  } else if (knobValue < ZONE_PERC_MIN) {
-    const float blend = float(knobValue - ZONE_606_MAX) / float(ZONE_PERC_MIN - ZONE_606_MAX);
+  } else if (knobValue < kZonePercMin) {
+    const float blend = float(knobValue - kZone606Max) / float(kZonePercMin - kZone606Max);
     gain606 = 1.0f - blend;
     gainPerc = blend;
   } else {
@@ -1162,9 +1164,9 @@ static void engineD3VoiceMix(uint8_t idx, int knobValue) {
   }
 
   AudioNoInterrupts();
-  d3VoiceMixer.gain(0, gain606  * MIX_SCALE * TRIM_606);
-  d3VoiceMixer.gain(1, gainFM   * MIX_SCALE * TRIM_FM);
-  d3VoiceMixer.gain(2, gainPerc * MIX_SCALE * TRIM_PERC);
+  d3VoiceMixer.gain(0, gain606  * kMixScale * kTrim606);
+  d3VoiceMixer.gain(1, gainFM   * kMixScale * kTrimFM);
+  d3VoiceMixer.gain(2, gainPerc * kMixScale * kTrimPerc);
   AudioInterrupts();
 }
 
@@ -1415,7 +1417,7 @@ static void engineWfDrive(uint8_t idx, int knobValue) {
 static void engineMasterDelayMix(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
-  const float PEAK_LEVEL = 0.73f;
+  static constexpr float kPeakLevel = 0.73f;
 
   // Compute all gains before applying as one atomic update
   float ampGain, returnGain, fbGain;
@@ -1429,7 +1431,7 @@ static void engineMasterDelayMix(uint8_t idx, int knobValue) {
     // Early zone (2%-25%, ~7-9 o'clock): volume ramp only, no feedback.
     // sqrt curve for smoother audible control in the quiet zone.
     float blend = (norm - 0.02f) / (0.25f - 0.02f);  // 0->1 over 2%-25%
-    float level = sqrtf(blend) * PEAK_LEVEL;
+    float level = sqrtf(blend) * kPeakLevel;
     ampGain = level;
     returnGain = level;
     fbGain = 0.0f;
@@ -1437,15 +1439,15 @@ static void engineMasterDelayMix(uint8_t idx, int knobValue) {
     // Main zone (25%-97%, ~9 o'clock-5 o'clock): level locked at peak,
     // feedback ramps 0->0.5. Linear curve so echoes are audible by noon
     // and clearly building through 3 o'clock.
-    ampGain = PEAK_LEVEL;
-    returnGain = PEAK_LEVEL;
+    ampGain = kPeakLevel;
+    returnGain = kPeakLevel;
     float fbBlend = (norm - 0.25f) / (0.97f - 0.25f);  // 0->1 over 25%-97%
     fbGain = fbBlend * 0.5f;
   } else {
     // Top 3% (97%-100%): gentle oscillation zone. Feedback ramps 0.5->0.65.
     // Just past the oscillation threshold -- sustained but not blowout.
-    ampGain = PEAK_LEVEL;
-    returnGain = PEAK_LEVEL;
+    ampGain = kPeakLevel;
+    returnGain = kPeakLevel;
     float oscBlend = (norm - 0.97f) / 0.03f;  // 0->1 over 97%-100%
     fbGain = 0.5f + oscBlend * 0.15f;   // 0.5->0.65
   }

@@ -1603,8 +1603,8 @@ static inline float d3FilterCurve(int knobValue) {
   return 1200.0f * expf(norm * 2.303f);  // ln(12000/1200) ≈ 2.303
 }
 
-// BPM curve: 60–400 (first 85%) then 900–999 (remaining 15%, hyperspeed), rounded to 0.5
-// NOTE: The 400–900 gap is intentional — hyperspeed is a separate creative effect.
+// BPM curve: 60–300 (0–80% knob) then 800–999 (80–100% knob, hyperspeed), rounded to 0.5
+// NOTE: The 300–800 gap is intentional — hyperspeed is a separate creative effect.
 static inline float bpmFromKnob(int knobValue) {
   float norm = normalizeKnob(knobValue);
   float bpmValue;

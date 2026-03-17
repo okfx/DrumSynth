@@ -269,7 +269,7 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
       if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
       AudioNoInterrupts();
       d1LowPass.frequency(peak);
-      d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);  // up to 4.0 at full depth
+      d1LowPass.resonance(1.5f + 3.25f * monoBass.envFiltDepth);  // up to 4.75 at full depth
       AudioInterrupts();
     }
 
@@ -301,7 +301,7 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
         if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
         AudioNoInterrupts();
         d1LowPass.frequency(peak);
-        d1LowPass.resonance(1.5f + 2.5f * monoBass.envFiltDepth);
+        d1LowPass.resonance(1.5f + 3.25f * monoBass.envFiltDepth);
         AudioInterrupts();
       }
     } else {
