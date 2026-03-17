@@ -13,7 +13,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **Choke Knob** -- Global envelope tightening/loosening across all voices. Negative values shorten decays, positive values lengthen them. Each voice responds with tuned sensitivity for musical results.
 
-**16-Step Sequencer** with per-step programming and 10 pattern save/load slots.
+**16-Step Sequencer** with per-step programming and 10 pattern save/load slots. Hold X and press step buttons 1–10 to select a memory slot.
 
 **Shuffle** -- TR-909-style shuffle with 6 intensity levels. Hold X and press Step 16 to cycle through shuffle amounts.
 
