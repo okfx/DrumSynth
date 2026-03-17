@@ -15,6 +15,8 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **16-Step Sequencer** with per-step programming and 10 pattern save/load slots.
 
+**Shuffle** -- TR-909-style shuffle with 6 intensity levels. Hold X and press Step 16 to cycle through shuffle amounts.
+
 **Audio Outputs** -- 1/4" and 1/8" line out, headphone out, and USB audio.
 
 **External Clock Sync** -- Accepts an external pulse clock with configurable PPQN, auto lock-in, and armed count-in with beat countdown.
@@ -31,9 +33,9 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 
 ## MONOBASS Mode
 
-MONOBASS turns the step buttons into a live monophonic keyboard for D1. Hold the D1 button for several seconds to enter the mode. The 12 step buttons become chromatic keys covering one octave, with the remaining buttons used for octave shifting. D2 and D3 continue to play normally.
+MONOBASS turns the step buttons into a live monophonic keyboard for D1. Hold X for several seconds to enter the mode. The 12 step buttons become chromatic keys covering one octave; the pitch knob shifts octaves. D2 and D3 continue to play normally.
 
-The oscilloscope remains visible during MONOBASS, and an envelope filter sweep is available via the Snap knob. MONOBASS state persists across power cycles.
+The Body knob becomes a low-pass filter and the Snap knob becomes envelope filter amount. The oscilloscope remains visible. MONOBASS state persists across power cycles.
 
 ## Hardware
 
