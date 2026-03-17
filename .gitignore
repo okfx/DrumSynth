@@ -5,3 +5,21 @@ build/
 # Exclude hex files except release builds
 *.hex
 !Builds/**/*.hex
+
+# macOS
+.DS_Store
+
+# clangd — contains machine-specific build cache path
+.clangd
+
+# Task/planning docs
+*_TASK.md
+
+# Design mockups and assets
+*.html
+*.svg
+*.png
+*.gif
+
+# Misc
+DrumSynth.txt
