@@ -15,7 +15,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **16-Step Sequencer** with per-step programming.
 
-**10 Memory Slots** -- Save and load patterns. Hold X and press step buttons 1–10 to select a slot.
+**10 Memory Slots**
 
 **Shuffle** -- TR-909-style shuffle with 6 intensity levels. Hold X and press Step 16 to cycle through shuffle amounts.
 
@@ -32,6 +32,12 @@ Toggle CHROMA on a per-channel basis by holding X and pressing D1, D2, D3, or �
 CHROMA turns the drum machine into a step-sequenced synthesizer. Any voice can be switched from its normal drum sound to a chromatic pitch mode, where each step in the sequence plays its own programmable note. Layer multiple CHROMA voices to build basslines, melodies, and tonal textures on top of (or instead of) the drum pattern.
 
 CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by small dots at the bottom of the OLED.
+
+## Memory Slots
+
+Hold X and press step buttons 1–10 to select a slot, then use SAVE/LOAD to write or recall.
+
+Each slot stores the drum pattern, CHROMA notes and mode state, and shuffle setting.
 
 ## MONOBASS Mode
 
