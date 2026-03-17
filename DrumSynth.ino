@@ -1034,7 +1034,7 @@ void loop() {
 // the entire block in noInterrupts()/interrupts():
 //   handlePlayStop()    — also writes sequencePlaying, armed, armPulseCountdown
 //   enterMonoBassMode() — same (monobass.h)
-//   btnMemoryHold()     — also writes sequencePlaying
+//   comboPPQN()         — also writes sequencePlaying
 //
 // Callers that change only transportState need no guard (uint8_t is atomic):
 //   checkExtClockLockIn(), checkExtClockTimeout()
@@ -1159,7 +1159,7 @@ void triggerD1() {
                  + d1ChromaEnvFiltDepth * (kEnvFiltCeiling - d1ChromaEnvFiltBaseHz);
       if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
       d1LowPass.frequency(peak);
-      d1LowPass.resonance(1.5f + 2.5f * d1ChromaEnvFiltDepth);
+      d1LowPass.resonance(1.5f + 3.25f * d1ChromaEnvFiltDepth);
     }
   }
   AudioInterrupts();
@@ -1597,7 +1597,7 @@ static inline float d2DecayCurve(int knobValue) {
   }
 }
 
-// D3 Filter curve: 800–7500 Hz exponential (log-spaced for natural feel)
+// D3 Filter curve: 1200–12000 Hz exponential (log-spaced for natural feel)
 static inline float d3FilterCurve(int knobValue) {
   float norm = normalizeKnob(knobValue);
   return 1200.0f * expf(norm * 2.303f);  // ln(12000/1200) ≈ 2.303

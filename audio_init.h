@@ -412,7 +412,7 @@ void audioInit() {
   masterHighPass.frequency(30.0f);
   masterHighPass.resonance(0.707f);
 
-  masterLowPass.frequency(14000.0f);
+  masterLowPass.frequency(14000.0f);  // above knob range (1000–7500); initKnobsFromHardware() corrects at boot
   masterLowPass.resonance(0.3f);
 
   masterBandPass.frequency(1000.0f);

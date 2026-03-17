@@ -47,12 +47,12 @@ static void splashAnimation() {
   // Phase 1: white screen with centered version number
   display.fillRect(0, 0, 128, 64, SH110X_WHITE);
   display.setFont(NULL);
-  display.setTextSize(2);
+  display.setTextSize(1);
   display.setTextColor(SH110X_BLACK, SH110X_WHITE);
 
   uint8_t len = strlen(FIRMWARE_VERSION);
-  int16_t textW = len * 12;   // size 2: 6px base × 2
-  int16_t textH = 16;         // size 2: 8px base × 2
+  int16_t textW = len * 6;    // size 1: 6px per char
+  int16_t textH = 8;          // size 1: 8px tall
   display.setCursor((128 - textW) / 2, (64 - textH) / 2);
   display.print(FIRMWARE_VERSION);
   display.display();
