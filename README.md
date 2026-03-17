@@ -11,7 +11,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **Master Wavefolder** -- Sine and saw oscillators through a waveshaping stage. Frequency sweeps exponentially across four octaves, fold drive has loudness compensation, and the two oscillators diverge across three zones for evolving harmonic content.
 
-**Choke Knob** -- Global envelope tightening/loosening across all voices. Negative values shorten decays, positive values lengthen them. Each voice responds with tuned sensitivity for musical results.
+**Choke Knob** -- Global decay tightening/loosening across all voices. Negative values shorten decays, positive values lengthen them. Each voice responds with tuned sensitivity for musical results.
 
 **16-Step Sequencer** with per-step programming.
 
