@@ -29,7 +29,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 CHROMA turns the drum machine into a step-sequenced synthesizer. Any voice can be switched from its normal drum sound to a chromatic pitch mode, where each step in the sequence plays its own programmable note. Layer multiple CHROMA voices to build basslines, melodies, and tonal textures on top of (or instead of) the drum pattern.
 
-The master wavefolder can also be placed in CHROMA mode, snapping its frequency to semitones and turning it into a sequenced harmonic voice layered over the full mix.
+Toggle CHROMA on a per-channel basis by holding X and pressing D1, D2, D3, or ▶ (for the master wavefolder).
 
 CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by small dots at the bottom of the OLED.
 
