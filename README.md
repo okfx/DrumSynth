@@ -9,11 +9,13 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 - **D2 Snare/Clap** -- Snare body with tunable pitch, synthesized clap sound, wavefolder distortion, and reverb
 - **D3 Hats/Perc** -- Three models crossfaded via mix knob: 606-style analog, FM metallic, and perc (click-to-tone depending on decay); wavefolder distortion; accent pattern selection
 
+**16-Step Sequencer** with per-step programming.
+
+**BPM** -- 60–400 BPM across the main knob range. Past 85%, the knob jumps into hyperdrive (900–999 BPM) for textural and noise-based use.
+
 **Master Wavefolder** -- Sine and saw oscillators through a waveshaping stage. Frequency sweeps exponentially across four octaves, fold drive has loudness compensation, and the two oscillators diverge across three zones for evolving harmonic content.
 
 **Choke Knob** -- Global decay tightening/loosening across all voices. Negative values shorten decays, positive values lengthen them. Each voice responds with tuned sensitivity for musical results.
-
-**16-Step Sequencer** with per-step programming.
 
 **10 Memory Slots**
 
