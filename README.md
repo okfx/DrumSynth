@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.07.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.0.
 
 ## Features
 
@@ -55,7 +55,7 @@ CHROMA notes are saved per-pattern. Active CHROMA channels are indicated by smal
 | `bitmaps.h` | OLED transport icons (play/stop) |
 | `OLED_NONBLOCKING_PUSH.md` | Writeup of the non-blocking SH1106 OLED technique |
 
-## Changes (v1.07)
+## Changes (v1.0.0)
 
 - **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates the 15–25 ms blocking window that caused USB audio clicks when recording to a DAW. See [`OLED_NONBLOCKING_PUSH.md`](OLED_NONBLOCKING_PUSH.md) and [`CHUNKED_OLED_PUSH.md`](CHUNKED_OLED_PUSH.md) for details.
 - **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
