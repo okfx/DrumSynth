@@ -5,9 +5,9 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 ## Features
 
 **Three drum voices** with deep per-voice synthesis control:
-- **D1 Kick** -- Kick with selectable wave shape, pitch sweep, drive, and tone shaping
+- **D1 Kick** -- Kick with selectable wave shape, pitch sweep, wavefolder distortion, and tone shaping
 - **D2 Snare/Clap** -- Snare body with tunable pitch, synthesized clap sound, wavefolder distortion, and reverb
-- **D3 Hats/Perc** -- Three models crossfaded via mix knob: 606-style analog, FM metallic, and perc (click-to-tone depending on decay)
+- **D3 Hats/Perc** -- Three models crossfaded via mix knob: 606-style analog, FM metallic, and perc (click-to-tone depending on decay); wavefolder distortion
 
 **Master Wavefolder** -- Sine and saw oscillators through a waveshaping stage. Frequency sweeps exponentially across four octaves, fold drive has loudness compensation, and the two oscillators diverge across three zones for evolving harmonic content.
 
