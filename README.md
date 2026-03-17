@@ -2,6 +2,8 @@
 
 A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.0.
 
+📖 **[User Manual (PDF)](Documentation/DrumSynth_User_Manual.pdf)**
+
 ## Features
 
 **Three drum voices** with deep per-voice synthesis control:
