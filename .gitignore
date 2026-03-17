@@ -9,9 +9,6 @@ build/
 # macOS
 .DS_Store
 
-# clangd — contains machine-specific build cache path
-.clangd
-
 # Task/planning docs
 *_TASK.md
 
