@@ -84,6 +84,8 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 
 ## Changes (v1.0.0)
 
+*Versioning reset to v1.0.0 for first public release (previously tracked as v1.05–v1.07 during development).*
+
 - **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates the 15–25 ms blocking window that caused USB audio clicks when recording to a DAW. See [`Documentation/CHUNKED_OLED_PUSH.md`](Documentation/CHUNKED_OLED_PUSH.md) for details.
 - **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
 - **Master audio retuning** -- Master filters, EQ, codec settings, and output gain retuned after A/B/C evaluation:
