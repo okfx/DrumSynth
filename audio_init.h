@@ -23,7 +23,7 @@ void audioInit() {
   sgtl5000_1.disable();
   sgtl5000_1.enable();
 
-  // Analog output staging (Profile B)
+  // Analog output staging
   sgtl5000_1.volume(0.80f);     // Headphone amp gain
   sgtl5000_1.lineOutLevel(13);  // Line out max voltage swing (3.16 Vpp)
 
@@ -34,7 +34,7 @@ void audioInit() {
   sgtl5000_1.dacVolumeRamp();   // Smooth dacVolume changes
   sgtl5000_1.dacVolume(0.95f);  // Slight headroom
 
-  // 5-band graphic EQ: 115Hz, 330Hz, 990Hz, 3kHz, 9.9kHz (Profile B)
+  // 5-band graphic EQ: 115Hz, 330Hz, 990Hz, 3kHz, 9.9kHz
   sgtl5000_1.eqBands(0.50f, -0.08f, -0.05f, 0.05f, 0.03f);
 
   // Auto Volume Control — fast transparent safety limiter
@@ -50,11 +50,11 @@ void audioInit() {
   d1OscSine.amplitude(0.85f);
   d1OscSine.frequencyModulation(4);
 
-  d1OscSaw.begin(WAVEFORM_SAWTOOTH);
+  d1OscSaw.begin(WAVEFORM_BANDLIMIT_SAWTOOTH);
   d1OscSaw.amplitude(0.85f);
   d1OscSaw.frequencyModulation(4);
 
-  d1OscSquare.begin(WAVEFORM_SQUARE);
+  d1OscSquare.begin(WAVEFORM_BANDLIMIT_SQUARE);
   d1OscSquare.amplitude(0.85f);
   d1OscSquare.frequencyModulation(4);
 
@@ -258,12 +258,12 @@ void audioInit() {
 
   static constexpr float d3606baseFreq = 350.0f;
 
-  d3606Osc1.begin(0.5f, d3606baseFreq * 1.00f, WAVEFORM_SQUARE);  // 350.0
-  d3606Osc2.begin(0.5f, d3606baseFreq * 1.08f, WAVEFORM_SQUARE);  // 378.0
-  d3606Osc3.begin(0.5f, d3606baseFreq * 1.17f, WAVEFORM_SQUARE);  // 409.5
-  d3606Osc4.begin(0.5f, d3606baseFreq * 1.26f, WAVEFORM_SQUARE);  // 441.0
-  d3606Osc5.begin(0.5f, d3606baseFreq * 1.36f, WAVEFORM_SQUARE);  // 476.0
-  d3606Osc6.begin(0.5f, d3606baseFreq * 1.48f, WAVEFORM_SQUARE);  // 518.0
+  d3606Osc1.begin(0.5f, d3606baseFreq * 1.00f, WAVEFORM_BANDLIMIT_SQUARE);  // 350.0
+  d3606Osc2.begin(0.5f, d3606baseFreq * 1.08f, WAVEFORM_BANDLIMIT_SQUARE);  // 378.0
+  d3606Osc3.begin(0.5f, d3606baseFreq * 1.17f, WAVEFORM_BANDLIMIT_SQUARE);  // 409.5
+  d3606Osc4.begin(0.5f, d3606baseFreq * 1.26f, WAVEFORM_BANDLIMIT_SQUARE);  // 441.0
+  d3606Osc5.begin(0.5f, d3606baseFreq * 1.36f, WAVEFORM_BANDLIMIT_SQUARE);  // 476.0
+  d3606Osc6.begin(0.5f, d3606baseFreq * 1.48f, WAVEFORM_BANDLIMIT_SQUARE);  // 518.0
 
   d3606OscMixer1.gain(0, 0.25f);
   d3606OscMixer1.gain(1, 0.25f);
@@ -384,9 +384,9 @@ void audioInit() {
   masterWfInputMixer.gain(2, 0.0f);          // kick envelope
   masterWfInputMixer.gain(3, 0.0f);          // snare/clap envelope
 
-  // Final output amplifier (Profile B — lower gain, filters are more open)
-  finalAmp.gain(2.8f);
-  usbTrim.gain(0.5f);
+  // Final output amplifier
+  finalAmp.gain(6.0f);
+  usbTrim.gain(1.0f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
@@ -408,17 +408,17 @@ void audioInit() {
   delaySendMixer.gain(2, 0.0f);  // D3 send
   delaySendMixer.gain(3, 0.0f);  // feedback tap
 
-  // Master filters (Profile B — optimised)
+  // Master filters
   masterHighPass.frequency(30.0f);
   masterHighPass.resonance(0.707f);
 
-  masterLowPass.frequency(12000.0f);
+  masterLowPass.frequency(14000.0f);
   masterLowPass.resonance(0.3f);
 
   masterBandPass.frequency(1000.0f);
   masterBandPass.resonance(0.01f);   // effectively bypassed — transparent
 
-  // Master EQ (Profile B — optimised)
+  // Master EQ
   finalFilter.setLowShelf(0, 150.0f, 0.6f, 3.5f);    // +3.5dB warmth below 150Hz
   finalFilter.setNotch(1, 400.0f, 1.0f);              // gentle cut around 400Hz
   finalFilter.setNotch(2, 2500.0f, 2.0f);             // mild cut around 2.5kHz

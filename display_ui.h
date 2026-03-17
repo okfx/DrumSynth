@@ -513,9 +513,17 @@ void updateDisplay() {
     return;
   }
 
+  // Shuffle overlay active while X held (extended beyond 800 ms timer) or
+  // within 800 ms of last cycle. Computed early so X-combo overlay can yield.
+  bool shuffleOverlayActive =
+    shuffleOverlayStartTick &&
+    ((uint32_t)(nowMs - shuffleOverlayStartTick) < SHUFFLE_OVERLAY_DURATION_MS
+     || comboMod.held);
+
   // X-Combo help overlay — full-screen takeover while X held, no combo fired yet.
   // Delayed by COMBO_OVERLAY_DELAY_MS so quick combos don't flash the overlay.
-  if (comboMod.held && !comboMod.comboFired
+  // Yields to shuffle overlay once step 15 has been pressed.
+  if (comboMod.held && !comboMod.comboFired && !shuffleOverlayActive
       && (nowMs - comboMod.pressTick) >= COMBO_OVERLAY_DELAY_MS
       && !ppqnModeActive && !monoBass.active && monoAnimPhase == MONO_ANIM_NONE) {
     renderXComboOverlay(nowMs);
@@ -571,7 +579,7 @@ void updateDisplay() {
 
   // Scope area: chroma note select > oscilloscope, then MONOBASS overlay on top
   bool noteSelectActive = renderChromaNoteSelect();
-  if (!noteSelectActive) {
+  if (!noteSelectActive && !shuffleOverlayActive) {
     drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
   }
   renderMonoBassScope(nowMs);  // outlined overlay on top of scope
@@ -587,10 +595,7 @@ void updateDisplay() {
     }
   }
 
-  // Big shuffle overlay — centered text size 2, 800 ms duration.
-  bool shuffleOverlayActive =
-    shuffleOverlayStartTick &&
-    ((uint32_t)(nowMs - shuffleOverlayStartTick) < SHUFFLE_OVERLAY_DURATION_MS);
+  // Big shuffle overlay — centered text size 2.
   if (shuffleOverlayActive) {
     display.setTextSize(2);
     display.setTextColor(1);

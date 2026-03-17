@@ -213,7 +213,7 @@ static inline void updateD1ChromaEnvFilter(uint32_t nowMs) {
   float cutoff = d1ChromaEnvFiltBaseHz + (peak - d1ChromaEnvFiltBaseHz) * decay;
   if (cutoff < 20.0f) cutoff = 20.0f;
 
-  float resonance = 1.5f + 2.5f * d1ChromaEnvFiltDepth * decay;
+  float resonance = 1.5f + 3.25f * d1ChromaEnvFiltDepth * decay;
 
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);

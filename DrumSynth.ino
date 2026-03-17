@@ -24,7 +24,7 @@ static constexpr float D1_ATTACK_MS = 0.5f;  // 808-style instant punch — fixe
 // Full definition is in the button state machine section below.
 struct ButtonHandler;
 
-static constexpr const char* FIRMWARE_VERSION   = "1.07";
+static constexpr const char* FIRMWARE_VERSION   = "1.0.0";
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -354,42 +354,32 @@ RailMode activeRail = RAIL_NONE;
 // (must be included after sequences, ppqn, PPQN_OPTIONS, RailMode, UI overlay vars)
 #include "eeprom.h"
 
-// delay ratios (in quarter-note units)
-static constexpr float quantizeRatios[] = {
-  0.25f,        // 1/4  of a quarter  = 1/16
-  0.33333333f,  // 1/3  of a quarter  = 1/8T
-  0.375f,       // 3/8  of a quarter  = 1/16.
-  0.5f,         // 1/2  of a quarter  = 1/8
-  0.66666667f,  // 2/3  of a quarter = 1/4T
-  0.75f,        // 3/4  of a quarter = 1/8.
-  1.0f,         // 1    quarter      = 1/4
-  1.25f,        // 5/4  quarters     = 5/16
-  1.33333333f,  // 4/3  quarters     = 1/2T
-  1.5f,         // 3/2  quarters     = 1/4.
-  2.0f,         // 2    quarters     = 1/2
-  2.5f,         // 5/2  quarters     = 5/8
-  3.0f          // 3    quarters     = 1/2.
+// Fixed delay times in ms — BPM-independent, full range always available.
+// Values correspond to standard note divisions at 120 BPM (500ms/beat).
+static constexpr float kDelayTimesMs[] = {
+  125.0f,   // 1/16
+  167.0f,   // 1/8T
+  188.0f,   // 1/16.
+  250.0f,   // 1/8
+  333.0f,   // 1/4T
+  375.0f,   // 1/8.
+  500.0f,   // 1/4
+  625.0f,   // 5/16
+  667.0f,   // 1/2T
+  750.0f,   // 1/4.
+  1000.0f,  // 1/2
+  1250.0f,  // 5/8
+  1400.0f   // 1/2. (capped at delay buffer limit)
 };
 
-static constexpr const char* ratioLabels[] = {
-  "1/16",
-  "1/8T",
-  "1/16.",
-  "1/8",
-  "1/4T",
-  "1/8.",
-  "1/4",
-  "5/16",
-  "1/2T",
-  "1/4.",
-  "1/2",
-  "5/8",
-  "1/2."
+static constexpr const char* kDelayTimeLabels[] = {
+  "1/16", "1/8T", "1/16.", "1/8",  "1/4T", "1/8.", "1/4",
+  "5/16", "1/2T", "1/4.",  "1/2",  "5/8",  "1/2."
 };
 
-static constexpr int NUM_RATIOS = sizeof(quantizeRatios) / sizeof(quantizeRatios[0]);
-static_assert(sizeof(ratioLabels) / sizeof(ratioLabels[0]) == NUM_RATIOS,
-              "ratioLabels must match quantizeRatios count");
+static constexpr int NUM_DELAY_TIMES = sizeof(kDelayTimesMs) / sizeof(kDelayTimesMs[0]);
+static_assert(sizeof(kDelayTimeLabels) / sizeof(kDelayTimeLabels[0]) == NUM_DELAY_TIMES,
+              "kDelayTimeLabels must match kDelayTimesMs count");
 
 // master gain
 float masterNominalGain = 1.0f;
@@ -557,7 +547,7 @@ void drawOutlinedText(int x, int y, const char* text);
 bool isSafeToPushOled(uint32_t nowMs);
 
 // Shared constant: envelope filter ceiling used by both chroma and MONOBASS.
-static constexpr float kEnvFiltCeiling = 8000.0f;
+static constexpr float kEnvFiltCeiling = 10000.0f;
 
 // Chroma — MIDI pitch tables, note conversion, envelope filter, dot animation.
 // Depends on: audiotool.h, chroma state vars (defined above).
@@ -1639,22 +1629,10 @@ static inline uint8_t accentModeFromKnob(int knobValue) {
   return (uint8_t)constrain(zone, 1, (int)ACCENT_CASCADE);
 }
 
-// Delay ratio index from knob — finds the closest beat-synced ratio within delay limit
-static inline int delayRatioFromKnob(int knobValue, float currentBpm) {
-  float msPerBeat = 60000.0f / currentBpm;
-  float maxRatio = 1400.0f / msPerBeat;
-
-  int maxIdx = 0;
-  for (int ratioIndex = 0; ratioIndex < NUM_RATIOS; ratioIndex++) {
-    if (quantizeRatios[ratioIndex] <= maxRatio) {
-      maxIdx = ratioIndex;
-    } else {
-      break;
-    }
-  }
-
-  int ratioIdx = (int)(normalizeKnob(knobValue) * maxIdx + 0.5f);
-  return constrain(ratioIdx, 0, maxIdx);
+// Delay time index from knob — maps full knob range across all fixed delay steps
+static inline int delayIndexFromKnob(int knobValue) {
+  int idx = (int)(normalizeKnob(knobValue) * (NUM_DELAY_TIMES - 1) + 0.5f);
+  return constrain(idx, 0, NUM_DELAY_TIMES - 1);
 }
 
 // Knob handler dispatch table — 32 display + 32 engine functions.

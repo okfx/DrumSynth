@@ -119,7 +119,7 @@ extern float uiMixD3Voice;
 
 // --- Functions (static inline in .ino, visible in this translation unit) ---
 // normalizeKnob, mapFloat, d1DecayCurve, d2DecayCurve, d1PitchCurve,
-// bpmFromKnob, chokeOffsetFromKnob, delayRatioFromKnob,
+// bpmFromKnob, chokeOffsetFromKnob, delayIndexFromKnob,
 // d1ChromaKnobToNote, d2ChromaKnobToNote, d3ChromaKnobToNote,
 // accentModeFromKnob, accentMaskFromMode, formatChromaNote,
 // midiToFreq — all static inline, no extern needed.
@@ -475,15 +475,14 @@ static void displayD3Volume(uint8_t idx, int knobValue) {
 // Case 24: Master Delay Time
 static void displayMasterDelayTime(uint8_t idx, int knobValue) {
   (void)idx;
-  float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
-  int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
+  int delayIdx = delayIndexFromKnob(knobValue);
   if (monoBass.active) {
     snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "DLY TIME");
-    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", ratioLabels[ratioIdx]);
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", kDelayTimeLabels[delayIdx]);
     monoBass.paramShowStart = sysTickMs;
   } else {
     snprintf(displayParameter1, sizeof(displayParameter1), "DELAY TIME");
-    snprintf(displayParameter2, sizeof(displayParameter2), "%s", ratioLabels[ratioIdx]);
+    snprintf(displayParameter2, sizeof(displayParameter2), "%s", kDelayTimeLabels[delayIdx]);
   }
 }
 
@@ -1284,16 +1283,10 @@ static void engineD3Volume(uint8_t idx, int knobValue) {
   updateDrumDelayGains();
 }
 
-// Case 24: Master Delay Time (quantized to tempo)
+// Case 24: Master Delay Time
 static void engineMasterDelayTime(uint8_t idx, int knobValue) {
   (void)idx;
-  // Use external BPM when synced, fall back to internal knob BPM
-  float activeBpm = (extBpmDisplay > 0.0f) ? extBpmDisplay : bpm;
-  int ratioIdx = delayRatioFromKnob(knobValue, activeBpm);
-  float msPerBeat = 60000.0f / activeBpm;
-
-  float delayMs = msPerBeat * quantizeRatios[ratioIdx];
-  if (delayMs > 1400.0f) delayMs = 1400.0f;
+  float delayMs = kDelayTimesMs[delayIndexFromKnob(knobValue)];
 
   AudioNoInterrupts();
   masterDelay.delay(0, delayMs);

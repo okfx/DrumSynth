@@ -218,7 +218,7 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   if (cutoff < 20.0f) cutoff = 20.0f;
 
   // High resonance during the sweep gives the vocal "waaah" character
-  float resonance = 1.5f + 2.5f * monoBass.envFiltDepth * decay;  // peaks at 4.0, settles to 1.5
+  float resonance = 1.5f + 3.25f * monoBass.envFiltDepth * decay;  // peaks at 4.75, settles to 1.5
 
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);
