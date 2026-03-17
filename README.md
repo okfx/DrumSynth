@@ -2,7 +2,7 @@
 
 A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.0.
 
-**[User Manual (PDF)](Documentation/DrumSynth_User_Manual.pdf)**
+### [User Manual (PDF)](Documentation/DrumSynth_User_Manual.pdf)
 
 ## Features
 
@@ -10,6 +10,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 - **D1 Kick** -- Kick with selectable wave shape, wavefolder distortion, and tone shaping
 - **D2 Snare/Clap** -- Snare body with tunable pitch, synthesized clap sound, wavefolder distortion, and reverb
 - **D3 Hats/Perc** -- Three models crossfaded via mix knob: 606-style analog, FM metallic, and perc (click-to-tone depending on decay); wavefolder distortion; accent pattern selection
+- **Master** -- Master wavefolder, delay line, choke, and low-pass filter on the master bus
 
 **16-Step Sequencer** with per-step programming.
 
