@@ -410,15 +410,16 @@ enum AccentMode : uint8_t {
   ACCENT_TRIPLET,
   ACCENT_DOTTED_EIGHTH,
   ACCENT_BACK_HALF,
-  ACCENT_CASCADE
+  ACCENT_CASCADE,
+  ACCENT_ALL
 };
 
 static constexpr const char* accentNames[] = {
   "OFF", "PICKUP", "HALF", "QUARTER", "8TH DN", "8TH UP",
   "BOSSA", "OFFBEAT", "CLAVE", "3-2", "PAIRS",
-  "TRIPLET", "DOT 8TH", "BACK 1/2", "CASCADE"
+  "TRIPLET", "DOT 8TH", "BACK 1/2", "CASCADE", "ALL"
 };
-static_assert(sizeof(accentNames) / sizeof(accentNames[0]) == ACCENT_CASCADE + 1,
+static_assert(sizeof(accentNames) / sizeof(accentNames[0]) == ACCENT_ALL + 1,
               "accentNames must match AccentMode enum count");
 
 uint8_t d3AccentMode = ACCENT_OFF;
@@ -594,6 +595,7 @@ static inline uint16_t accentMaskFromMode(uint8_t mode) {
     case ACCENT_DOTTED_EIGHTH: return 0b1001001001001001;  // dotted eighth (steps 0, 3, 6, 9, 12, 15)
     case ACCENT_BACK_HALF:     return 0b0000111100001111;  // back halves (steps 4-7, 12-15)
     case ACCENT_CASCADE:       return 0b1010010010100101;  // steps 0, 2, 5, 8, 10, 13, 15
+    case ACCENT_ALL:           return 0b1111111111111111;  // all 16 steps
     default: return 0;
   }
 }
@@ -1623,13 +1625,13 @@ static inline float bpmFromKnob(int knobValue) {
   return floorf(bpmValue * 2.0f + 0.5f) * 0.5f;
 }
 
-// Accent mode from knob position — maps knob to one of 15 accent modes (OFF + 14 patterns).
-// AccentMode enum values are sequential (0=OFF, 1=PICKUP ... 14=CASCADE).
+// Accent mode from knob position — maps knob to one of 16 accent modes (OFF + 15 patterns).
+// AccentMode enum values are sequential (0=OFF, 1=PICKUP ... 15=ALL).
 static inline uint8_t accentModeFromKnob(int knobValue) {
   const int ACCENT_DEADBAND = 24;
   if (knobValue <= ACCENT_DEADBAND) return ACCENT_OFF;
-  int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 14);
-  return (uint8_t)constrain(zone, 1, (int)ACCENT_CASCADE);
+  int zone = map(knobValue, ACCENT_DEADBAND + 1, 1023, 1, 15);
+  return (uint8_t)constrain(zone, 1, (int)ACCENT_ALL);
 }
 
 // Delay time index from knob — maps full knob range across all fixed delay steps
@@ -1648,6 +1650,11 @@ static inline int delayIndexFromKnob(int knobValue) {
 // always replaced by the next knob touch.  RAIL_NONE is also set inside
 // displayDisabledInMonoBass() so MONOBASS-disabled knobs clear the rail bar.
 void updateParameterDisplay(uint8_t idx, int knobValue) {
+  // Suppress parameter overlays while splash dissolve is still rendering.
+  // Mux noise can exceed the boot-lock threshold during early startup,
+  // causing random parameter text to flash over the dissolve animation.
+  if (splashDissolveActive) return;
+
   // sysTickMs is a single aligned 32-bit read (atomic LDR on ARM Cortex-M7).
   // parameterOverlayStartTick is main-loop only — no guard needed.
   parameterOverlayStartTick = sysTickMs;
