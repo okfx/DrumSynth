@@ -386,7 +386,7 @@ void audioInit() {
 
   // Final output amplifier
   finalAmp.gain(6.0f);
-  usbTrim.gain(1.75f);
+  usbTrim.gain(1.25f);
 
   // Master mixer (dry drums + wavefolder + delay return)
   masterMixer.gain(0, 1.0f);  // dry drums
