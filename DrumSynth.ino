@@ -1695,6 +1695,24 @@ void updateKnobs() {
   // falsely unlock boot-locked knobs, causing stale overlays after dissolve ends.
   if (splashDissolveActive) return;
 
+  // Post-splash settling: re-read all knobs for several cycles to let the
+  // ResponsiveAnalogRead filters converge after the ~1s splash dissolve gap,
+  // then re-snapshot boot values so the boot-lock has a fresh baseline.
+  static constexpr uint8_t BOOT_SETTLE_CYCLES = 8;
+  static uint8_t bootSettleCount = 0;
+  if (bootSettleCount < BOOT_SETTLE_CYCLES) {
+    for (int i = 0; i < knobCount; i++) {
+      analog[i]->update(readKnobRaw(i));
+    }
+    bootSettleCount++;
+    if (bootSettleCount == BOOT_SETTLE_CYCLES) {
+      for (int i = 0; i < knobCount; i++) {
+        knobBootValue[i] = analog[i]->getValue();
+      }
+    }
+    return;
+  }
+
   static uint8_t knobScanGroup = 0;
   int start = knobScanGroup * 8;
   int end = start + 8;
