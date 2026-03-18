@@ -1650,11 +1650,6 @@ static inline int delayIndexFromKnob(int knobValue) {
 // always replaced by the next knob touch.  RAIL_NONE is also set inside
 // displayDisabledInMonoBass() so MONOBASS-disabled knobs clear the rail bar.
 void updateParameterDisplay(uint8_t idx, int knobValue) {
-  // Suppress parameter overlays while splash dissolve is still rendering.
-  // Mux noise can exceed the boot-lock threshold during early startup,
-  // causing random parameter text to flash over the dissolve animation.
-  if (splashDissolveActive) return;
-
   // sysTickMs is a single aligned 32-bit read (atomic LDR on ARM Cortex-M7).
   // parameterOverlayStartTick is main-loop only — no guard needed.
   parameterOverlayStartTick = sysTickMs;
@@ -1695,6 +1690,11 @@ void initKnobsFromHardware() {
 // OPTIMIZATION: round-robin knob scanning — reads 8 knobs per loop iteration
 // instead of all 32, reducing per-loop delayMicroseconds overhead by 4x
 void updateKnobs() {
+  // Skip knob scanning entirely during splash dissolve. initKnobsFromHardware()
+  // already set all engine params. Processing knobs here would let ADC noise
+  // falsely unlock boot-locked knobs, causing stale overlays after dissolve ends.
+  if (splashDissolveActive) return;
+
   static uint8_t knobScanGroup = 0;
   int start = knobScanGroup * 8;
   int end = start + 8;
