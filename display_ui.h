@@ -513,12 +513,18 @@ void updateDisplay() {
     return;
   }
 
-  // Shuffle overlay active while X held (extended beyond 800 ms timer) or
-  // within 800 ms of last cycle. Computed early so X-combo overlay can yield.
-  bool shuffleOverlayActive =
-    shuffleOverlayStartTick &&
-    ((uint32_t)(nowMs - shuffleOverlayStartTick) < SHUFFLE_OVERLAY_DURATION_MS
-     || comboMod.held);
+  // Shuffle overlay active within 800 ms of last cycle.
+  // Computed early so X-combo overlay can yield to a fresh shuffle toggle.
+  // Once the 800 ms timer expires, clear the start tick so a stale shuffle
+  // overlay doesn't re-activate every time X is held in the future.
+  bool shuffleOverlayActive = false;
+  if (shuffleOverlayStartTick) {
+    if ((uint32_t)(nowMs - shuffleOverlayStartTick) < SHUFFLE_OVERLAY_DURATION_MS) {
+      shuffleOverlayActive = true;
+    } else {
+      shuffleOverlayStartTick = 0;
+    }
+  }
 
   // X-Combo help overlay — full-screen takeover while X held, no combo fired yet.
   // Delayed by COMBO_OVERLAY_DELAY_MS so quick combos don't flash the overlay.
