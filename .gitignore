@@ -12,6 +12,14 @@ build/
 # Task/planning docs
 *_TASK.md
 
+# Local documentation (not tracked)
+Documentation/CHUNKED_OLED_PUSH.md
+Documentation/DrumSynth_Manual_Draft.md
+Documentation/DrumSynth_User_Manual_Booklet_Duplex.pdf
+Documentation/OLED_NONBLOCKING_PUSH.md
+Documentation/PROJECT_STATUS.md
+Documentation/UI_GUIDE.md
+
 # Design mockups and assets
 *.html
 *.svg
@@ -20,6 +28,3 @@ build/
 
 # Misc
 DrumSynth.txt
-Documentation/CHUNKED_OLED_PUSH.md
-Documentation/DrumSynth_Manual_Draft.md
-Documentation/DrumSynth_User_Manual_Booklet_Duplex.pdf
