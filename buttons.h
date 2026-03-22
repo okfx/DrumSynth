@@ -100,6 +100,7 @@ static int8_t activeComboIndex = -1;
 static void comboChromaD1() {
   startChromaRamp(0, !d1ChromaMode);
   d1ChromaMode = !d1ChromaMode;
+  patternDirty = true;
   if (d1ChromaMode) {
     d1FreqBeforeChroma = d1BaseFreq;
     selectTrack(TRACK_D1);
@@ -135,6 +136,7 @@ static void comboChromaD1() {
 static void comboChromaD2() {
   startChromaRamp(1, !d2ChromaMode);
   d2ChromaMode = !d2ChromaMode;
+  patternDirty = true;
   if (d2ChromaMode) {
     selectTrack(TRACK_D2);
   } else {
@@ -146,6 +148,7 @@ static void comboChromaD2() {
 static void comboChromaD3() {
   startChromaRamp(2, !d3ChromaMode);
   d3ChromaMode = !d3ChromaMode;
+  patternDirty = true;
   if (d3ChromaMode) {
     selectTrack(TRACK_D3);
   } else {
@@ -157,6 +160,7 @@ static void comboChromaD3() {
 static void comboChromaWF() {
   startChromaRamp(3, !wfChromaMode);
   wfChromaMode = !wfChromaMode;
+  patternDirty = true;
 }
 
 // Reset all pattern state to blank defaults (sequences, chroma notes, chroma modes, shuffle).
@@ -181,6 +185,7 @@ static void cycleShuffle(uint32_t nowTick) {
   uint8_t next = (uint8_t)shuffleMode + 1;
   if (next == SHUFFLE_1) next = SHUFFLE_2;  // skip dead setting
   shuffleMode = (next > SHUFFLE_7) ? SHUFFLE_OFF : (ShuffleMode)next;
+  patternDirty = true;
   // Big centered shuffle overlay (800 ms) instead of standard small overlay
   if (shuffleMode == SHUFFLE_OFF) {
     snprintf(shuffleOverlayText, sizeof(shuffleOverlayText), "OFF");
