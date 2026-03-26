@@ -904,6 +904,9 @@ void loop() {
     }
   }
 
+  // X-combo held — drive LED flash animation from loop so the blink toggles
+  if (comboMod.held && !comboMod.comboFired) updateLEDs();
+
   // Step LED flash animation (save/load/slot-select feedback)
   updateFlashLed();
 
@@ -1487,6 +1490,8 @@ void updateStepButtons() {
           // Steps 0-9: select memory slot (pending).
           // Does NOT load — user presses LOAD to commit.
           comboMod.comboFired = true;
+          comboMod.monoAnimStarted = true;  // suppress MONOBASS timer on re-hold
+          comboMod.monoFired = true;
           activeSaveSlot = i;
           slotPending = true;
           snprintf(displayParameter1, sizeof(displayParameter1), "SLOT %d", i + 1);

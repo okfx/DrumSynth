@@ -346,8 +346,8 @@ static void btnPlayHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t /*he
 // --- Combo button (index 7, MEM) ---
 //
 // Purely a modifier — no short-press action in normal mode.
-// Hold alone 1750ms: MONOBASS warning animation begins
-// Hold alone 4000ms: enter/exit MONOBASS mode
+// Hold alone 3500ms: MONOBASS warning animation begins
+// Hold alone 8000ms: enter/exit MONOBASS mode
 // Any button pressed while combo is held: combo dispatch (see comboTable)
 //
 // Exception: in PPQN mode, combo short press cycles PPQN values,
