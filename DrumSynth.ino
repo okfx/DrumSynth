@@ -1317,7 +1317,7 @@ void updateLEDs() {
   // monoAnimPhase check: allow normal LED updates during MONOBASS animation.
   if (comboMod.held && !comboMod.comboFired
       && !ppqnModeActive && monoAnimPhase == MONO_ANIM_NONE) {
-    bool flashOn = ((sysTickMs - comboMod.pressTick) / 300) % 2 == 0;
+    bool flashOn = ((sysTickMs - comboMod.pressTick) / 400) % 2 == 0;
     for (int i = 0; i < numSteps; ++i) {
       bool comboKey = (i <= 9) || (i == 15);
       ledShiftReg.setNoUpdate(i, comboKey && flashOn);
