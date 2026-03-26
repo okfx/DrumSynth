@@ -26,5 +26,9 @@ Documentation/UI_GUIDE.md
 *.png
 *.gif
 
+# IDE / tooling
+.clangd
+
 # Misc
 DrumSynth.txt
+AUDIT_PROMPT.md
