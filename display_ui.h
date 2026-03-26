@@ -526,15 +526,10 @@ void updateDisplay() {
     }
   }
 
-  // X-Combo help overlay — full-screen takeover while X held, no combo fired yet.
-  // Delayed by COMBO_OVERLAY_DELAY_MS so quick combos don't flash the overlay.
-  // Yields to shuffle overlay once step 15 has been pressed.
-  if (comboMod.held && !comboMod.comboFired && !shuffleOverlayActive
+  // X-combo overlay flag — rendered after normal UI, before OLED push.
+  bool xComboOverlayActive = comboMod.held && !comboMod.comboFired && !shuffleOverlayActive
       && (nowMs - comboMod.pressTick) >= COMBO_OVERLAY_DELAY_MS
-      && !ppqnModeActive && !monoBass.active && monoAnimPhase == MONO_ANIM_NONE) {
-    renderXComboOverlay(nowMs);
-    return;
-  }
+      && !ppqnModeActive && !monoBass.active && monoAnimPhase == MONO_ANIM_NONE;
 
   // Snapshot all state we will render so a single frame is coherent
   float bpmSnap;
@@ -655,6 +650,12 @@ void updateDisplay() {
     } else {
       applySplashDissolve((float)elapsed / 1000.0f);
     }
+  }
+
+  // X-combo overlay — rendered on top of normal UI (not a full-screen takeover).
+  // Large outlined "X" over scope + flashing D1/D2/D3/WF chroma status.
+  if (xComboOverlayActive) {
+    renderXComboOverlay(nowMs);
   }
 
   if (isSafeToPushOled(nowMs)) {

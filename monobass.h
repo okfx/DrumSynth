@@ -236,7 +236,7 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
 // Returns true if handled (caller should skip normal step logic).
 bool handleMonoBassButton(int buttonIndex, bool pressed) {
   if (!monoBass.active) return false;
-  if (buttonIndex >= 12) return true;  // only 12 notes per octave — ignore top 4 keys
+  if (buttonIndex >= 13) return true;  // 13 keys = one octave C-to-C — ignore top 3 keys
 
   if (pressed) {
     // Skip if already held (debounce edge case — prevents ghost stack entries)
@@ -312,9 +312,9 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     }
   }
 
-  // Light first 12 LEDs (usable keys) — single SPI transaction.
+  // Light first 13 LEDs (usable keys, C-to-C) — single SPI transaction.
   // Common to all paths: press, legato fallback, and gate-off.
-  for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
+  for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 13);
   ledShiftReg.updateRegisters();
   monoBassKeyEvent = true;  // tell loop() to skip next OLED frame for lower latency
   return true;

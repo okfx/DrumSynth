@@ -367,15 +367,9 @@ static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
 
   monoAnimPhase = MONO_ANIM_NONE;
 
-  // In MONOBASS, X only does the exit routine — skip combo LED pattern
+  // In MONOBASS, X only does the exit routine — skip combo LED flash
   if (monoBass.active) return;
-
-  // Light combo-active step LEDs (0–9 = mem slots, 15 = shuffle)
-  for (int i = 0; i < numSteps; ++i) {
-    bool on = (i <= 9) || (i == 15);
-    ledShiftReg.setNoUpdate(i, on);
-  }
-  ledShiftReg.updateRegisters();
+  // Combo-active LED flashing is handled by updateLEDs() while comboMod.held
 }
 
 static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {

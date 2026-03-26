@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.0.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.1.
 
 ### [User Manual (PDF)](Documentation/DrumSynth_User_Manual.pdf)
 
@@ -50,7 +50,7 @@ When D1 CHROMA is active, the Body knob becomes a low-pass filter and the Snap k
 
 Hold X for several seconds to enter MONOBASS mode.
 
-MONOBASS turns the step buttons into a live monophonic keyboard for D1. The 12 step buttons become chromatic keys covering one octave; the pitch knob shifts octaves. D2 and D3 continue to play normally.
+MONOBASS turns the step buttons into a live monophonic keyboard for D1. 13 step buttons become chromatic keys covering one full octave (C to C); the pitch knob shifts octaves. D2 and D3 continue to play normally.
 
 As in D1 Chroma mode, the Body knob becomes a low-pass filter and the Snap knob becomes envelope filter amount. The oscilloscope remains visible.
 
@@ -82,8 +82,16 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 | `monobass.h` | MONOBASS live keyboard mode -- entry/exit, button handler, scope |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
-| `Documentation/CHUNKED_OLED_PUSH.md` | Non-blocking SH1106 OLED page-push technique |
 | `Documentation/USB_AUDIO_MAC.md` | macOS USB audio clock drift fix |
+
+## Changes (v1.0.1)
+
+- **MONOBASS keyboard extended to 13 keys** -- Step buttons now cover a full octave C-to-C (was C-to-B, 12 keys). Button 13 plays the octave's high C. 13 LEDs light as usable-key indicators.
+- **X-combo overlay redesigned** -- Holding X no longer takes over the entire screen with a dense diagram. Instead, the normal idle UI stays visible with a large outlined "X" overlaid on the scope area. D1/D2/D3/WF chroma status labels appear below, with active modes shown inverted. Combo-active LEDs (memory slots 0-9 and shuffle) now flash at ~1.7 Hz instead of static-on, synced with the OLED labels.
+- **Boot overlay suppression improved** -- Knob scanning skipped entirely during splash dissolve, with 8-cycle post-splash settling to prevent ADC drift from falsely unlocking boot-locked knobs.
+- **EEPROM dirty flag for chroma/shuffle** -- Toggling chroma modes (D1/D2/D3/WF) or cycling shuffle now correctly marks the pattern dirty so SAVE works without showing "NOTHING TO SAVE".
+- **Shuffle overlay stale tick fix** -- `shuffleOverlayStartTick` now clears on timer expiry so subsequent X holds go straight to the combo overlay instead of briefly flashing stale shuffle text.
+- **D3 accent pattern: ALL** -- New accent mode with all 16 steps active.
 
 ## Changes (v1.0.0)
 
@@ -93,8 +101,7 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 - **UX: PPQN mode guards** -- PLAY button blocked during PPQN select to prevent transport starting behind the full-screen PPQN display. Timeout exit now shows "NOT SAVED" overlay instead of exiting silently.
 - **UX: Corrupt EEPROM handling** -- Loading a corrupt slot (valid magic but CRC mismatch) now shows "SLOT N CORRUPT / INITIALIZED" and writes a clean empty pattern to that EEPROM address, distinguishing corruption from genuinely empty slots.
 - **UX: Chroma pitch hint** -- Turning the pitch knob in chroma mode with no step held now shows "HOLD STEP BUTTON / THEN TURN" instead of "LOCKED FOR / CHROMA".
-- **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates worst-case 15–25 ms blocking stalls in the audio loop. USB audio clicks when recording to a DAW are a separate issue caused by sample rate mismatch between the Teensy I2S clock (~44118 Hz) and DAW host expectations (44100 Hz); see [`Documentation/USB_AUDIO_MAC.md`](Documentation/USB_AUDIO_MAC.md). See [`Documentation/CHUNKED_OLED_PUSH.md`](Documentation/CHUNKED_OLED_PUSH.md) for OLED implementation details.
-- **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
+- **Non-blocking OLED push** -- `display.display()` replaced with chunked page transfers (one page per `loop()` iteration, ~2 ms each). Eliminates worst-case 15–25 ms blocking stalls in the audio loop. USB audio clicks when recording to a DAW are a separate issue caused by sample rate mismatch between the Teensy I2S clock (~44118 Hz) and DAW host expectations (44100 Hz); see [`Documentation/USB_AUDIO_MAC.md`](Documentation/USB_AUDIO_MAC.md).- **DSB barriers for 600 MHz SPI timing** -- ARM Data Synchronization Barrier instructions added to the software SPI bit-bang. At 600 MHz, `digitalWriteFast()` toggles in ~2 ns — below the SH1106 minimum 100 ns clock cycle. Without DSB barriers the display receives no data.
 - **Master audio retuning** -- Master filters, EQ, codec settings, and output gain retuned after A/B/C evaluation:
   - Highpass lowered to 30 Hz (Butterworth) to preserve sub-bass energy
   - Master lowpass knob range 1000–7500 Hz; boot default set above the knob range so the filter is fully open until the user adjusts it
@@ -145,7 +152,7 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 - MONOBASS bass filter retuning: highpass lowered to 30 Hz, lowpass opened to 4 kHz, EQ flattened to preserve sub-bass energy
 - D1 CHROMA mode: highpass lowered to 30 Hz to match MONOBASS; BODY knob becomes FILTER sweep (same Moog LPF curve as MONOBASS)
 - D3 wavefolder frequency range extended down to 16.352 Hz (C0) for deeper sub-bass waveshaping
-- MONOBASS keyboard limited to 12 keys (buttons 13-16 dead); first 12 step LEDs stay lit as usable-key indicators
+- MONOBASS keyboard limited to 13 keys (C-to-C octave); first 13 step LEDs stay lit as usable-key indicators
 - MONOBASS note display repositioned to avoid bottom border occlusion
 - Oscilloscope rewritten: triggered waveform display with rising zero-crossing lock — sine, saw, and square shapes now visually distinct and stable
 - Chroma indicator dots no longer blank the oscilloscope; each dot clears only the pixels behind itself

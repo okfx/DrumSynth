@@ -24,7 +24,7 @@ static constexpr float D1_ATTACK_MS = 0.5f;  // 808-style instant punch — fixe
 // Full definition is in the button state machine section below.
 struct ButtonHandler;
 
-static constexpr const char* FIRMWARE_VERSION   = "1.0.0";
+static constexpr const char* FIRMWARE_VERSION   = "1.0.1";
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -1309,18 +1309,24 @@ void selectTrack(Track t) {
 void updateLEDs() {
   // Main-loop only — no ISR access to accentPreview*, no guards needed
 
-  // X-combo overlay — LEDs set by btnComboPress(), don't overwrite.
-  // monoAnimPhase check: allow LED updates during MONOBASS text animation
-  // so the entering/exiting sweep doesn't freeze the step LEDs.
+  // X-combo held — flash combo-active LEDs (0–9 = mem slots, 15 = shuffle).
+  // ~1.7 Hz blink, same phase as OLED chroma labels and slotPending blink.
+  // monoAnimPhase check: allow normal LED updates during MONOBASS animation.
   if (comboMod.held && !comboMod.comboFired
       && !ppqnModeActive && monoAnimPhase == MONO_ANIM_NONE) {
+    bool flashOn = (sysTickMs / 300) & 1;
+    for (int i = 0; i < numSteps; ++i) {
+      bool comboKey = (i <= 9) || (i == 15);
+      ledShiftReg.setNoUpdate(i, comboKey && flashOn);
+    }
+    ledShiftReg.updateRegisters();
     return;
   }
 
-  // MONOBASS mode — first 12 LEDs lit as usable-key indicators (12 notes/octave)
+  // MONOBASS mode — first 13 LEDs lit as usable-key indicators (C-to-C octave)
   if (monoBass.active) {
     for (int i = 0; i < numSteps; i++) {
-      ledShiftReg.setNoUpdate(i, i < 12);
+      ledShiftReg.setNoUpdate(i, i < 13);
     }
     ledShiftReg.updateRegisters();
     return;
