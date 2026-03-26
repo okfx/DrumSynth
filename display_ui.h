@@ -655,7 +655,7 @@ void updateDisplay() {
   // X-combo overlay — rendered on top of normal UI (not a full-screen takeover).
   // Large outlined "X" over scope + flashing D1/D2/D3/WF chroma status.
   if (xComboOverlayActive) {
-    renderXComboOverlay(nowMs);
+    renderXComboOverlay(nowMs, comboMod.pressTick);
   }
 
   if (isSafeToPushOled(nowMs)) {

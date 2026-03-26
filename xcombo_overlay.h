@@ -15,10 +15,10 @@ extern bool d2ChromaMode;
 extern bool d3ChromaMode;
 extern bool wfChromaMode;
 
-static void renderXComboOverlay(uint32_t nowMs) {
+static void renderXComboOverlay(uint32_t nowMs, uint32_t pressTick) {
   // Flash phase — shared with LED flashing in updateLEDs().
-  // ~1.7 Hz: 300ms on, 300ms off (matches slotPending blink rate).
-  bool flashOn = (nowMs / 300) & 1;
+  // ~1.7 Hz: 300ms on, 300ms off. Offset from pressTick so first phase is always "on".
+  bool flashOn = ((nowMs - pressTick) / 300) % 2 == 0;
 
   // Large outlined "X" centered over scope area (same size as "MONOBASS").
   // Scope area is roughly y=18..54, x=0..127.
