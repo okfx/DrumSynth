@@ -796,7 +796,7 @@ void setup() {
 
   // --- Audio system initialization ---
 
-  AudioMemory(1200);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
+  AudioMemory(1400);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
   sysTickTimer.begin(sysTickISR, 1000);
   audioInit();
   d1AmpEnv.attack(D1_ATTACK_MS);  // permanent value — not set in audioInit (D1_ATTACK_MS not yet visible there)

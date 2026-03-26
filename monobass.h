@@ -153,8 +153,8 @@ void enterMonoBassMode() {
   float snapNorm = normalizeKnob(analog[5]->getValue());
   monoBass.envFiltDepth = snapNorm * snapNorm;  // square curve, matches engineD1Snap
   monoBass.envFiltTrigger = 0;
-  // Light first 12 LEDs as usable-key indicators (12 notes per octave)
-  for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 12);
+  // Light first 13 LEDs as usable-key indicators (C-to-C octave)
+  for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 13);
   ledShiftReg.updateRegisters();
 }
 
