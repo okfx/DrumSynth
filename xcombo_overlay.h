@@ -13,6 +13,7 @@ extern Adafruit_SH1106G display;
 extern bool d1ChromaMode;
 extern bool d2ChromaMode;
 extern bool d3ChromaMode;
+extern volatile ShuffleMode shuffleMode;
 static void renderXComboOverlay(uint32_t nowMs, uint32_t pressTick) {
   // Flash phase — shared with LED flashing in updateLEDs().
   // Offset from pressTick so first phase is always "on".
@@ -23,6 +24,17 @@ static void renderXComboOverlay(uint32_t nowMs, uint32_t pressTick) {
   display.setTextSize(2);
   drawOutlinedText(55, 22, "X");
   display.setTextSize(1);
+
+  // Shuffle indicator — top-right, always visible (not flashed).
+  // Shows "SHUFFLE x" when active, nothing when off.
+  if (shuffleMode != SHUFFLE_OFF) {
+    display.setFont(NULL);
+    display.setTextSize(2);
+    char sBuf[10];
+    snprintf(sBuf, sizeof(sBuf), "SHFL %d", (int)shuffleMode);
+    drawOutlinedText(13, 40, sBuf);
+    display.setTextSize(1);
+  }
 
   // Chroma status labels below the X, evenly spaced across the display.
   // WF is always chromatic so not shown here — only D1/D2/D3 toggle.

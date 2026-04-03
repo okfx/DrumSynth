@@ -84,7 +84,7 @@ struct PatternStore {
   uint8_t d1Chroma[numSteps];     // Per-step MIDI note for D1 chroma mode
   uint8_t d2Chroma[numSteps];     // Per-step MIDI note for D2 chroma mode
   uint8_t d3Chroma[numSteps];     // Per-step MIDI note for D3 chroma mode
-  uint8_t flags;                  // bits 0-3: d1/d2/d3/wfChromaMode, bits 4-6: shuffleMode, bit 7: reserved
+  uint8_t flags;                  // bits 0-3: d1/d2/d3/wfChromaMode, bits 4-7: shuffleMode (0–8)
 };
 
 struct EepromSlot {
@@ -199,9 +199,9 @@ LoadResult loadStateFromEEPROM(uint8_t slotIndex) {
   d3ChromaMode = (slot.patterns.flags & 0x04) != 0;
   // bit 3 (wfChromaMode) ignored on load — WF is always chromatic
 
-  // Restore shuffle mode from bits 4-6 (0 = SHUFFLE_OFF for old patterns)
-  uint8_t rawShuffle = (slot.patterns.flags >> 4) & 0x07;
-  shuffleMode = (rawShuffle <= SHUFFLE_7) ? (ShuffleMode)rawShuffle : SHUFFLE_OFF;
+  // Restore shuffle mode from bits 4-7 (0 = SHUFFLE_OFF for old patterns)
+  uint8_t rawShuffle = (slot.patterns.flags >> 4) & 0x0F;
+  shuffleMode = (rawShuffle <= SHUFFLE_8) ? (ShuffleMode)rawShuffle : SHUFFLE_OFF;
 
   // If D1 chroma was just enabled by load, save current freq for restore on exit
   if (d1ChromaMode && !wasD1Chroma) {
@@ -278,7 +278,7 @@ void saveStateToEEPROM(uint8_t slotIndex) {
                       | (d2ChromaMode ? 0x02 : 0)
                       | (d3ChromaMode ? 0x04 : 0)
                       | (wfChromaMode ? 0x08 : 0)
-                      | (((uint8_t)shuffleMode & 0x07) << 4);
+                      | (((uint8_t)shuffleMode & 0x0F) << 4);
 
   // CRC8 over pattern data — detects partial writes on load
   slot.crc = crc8((const uint8_t*)&slot.patterns, sizeof(PatternStore));

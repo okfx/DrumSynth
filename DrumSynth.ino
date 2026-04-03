@@ -97,22 +97,24 @@ float d3VmGain606 = 1.0f, d3VmGainFM = 0.0f, d3VmGainPerc = 0.0f;
 // Wavefolder is always chromatic (quantized to semitones)
 bool wfChromaMode = true;
 
-// Shuffle state (TR-909 style, 6 audible settings + OFF)
+// Shuffle state (TR-909 style, 8 levels + OFF)
 // Delay ticks are on a 96-PPQN grid: each 16th = 24 ticks.
-// Even 16th notes are delayed by kShuffleDelayTicks[mode] ticks.
-// SHUFFLE_1 (0 ticks) is kept in the enum/tables for EEPROM backward
-// compat but skipped when cycling — it's identical to OFF.
+// Each level delays the even 16th note by kShuffleDelayTicks[mode] ticks,
+// stretching the long gap and compressing the short gap while preserving
+// pair duration.  Levels 1–8 map to ticks 1–8, giving ~2% increments
+// from 52% to 67% (triplet).
 enum ShuffleMode : uint8_t {
-  SHUFFLE_OFF = 0, SHUFFLE_1, SHUFFLE_2, SHUFFLE_3,
-  SHUFFLE_4, SHUFFLE_5, SHUFFLE_6, SHUFFLE_7
+  SHUFFLE_OFF = 0,
+  SHUFFLE_1, SHUFFLE_2, SHUFFLE_3, SHUFFLE_4,
+  SHUFFLE_5, SHUFFLE_6, SHUFFLE_7, SHUFFLE_8
 };
+static constexpr uint8_t SHUFFLE_COUNT = 9;  // OFF + 8 levels
 // ISR reads via shuffledStepPeriodUs(), main loop writes via combo handler.
 // Benign TOCTOU: ISR may read stale shuffleMode for one step after a change —
 // musically imperceptible (one step with slightly wrong shuffle timing).
 static volatile ShuffleMode shuffleMode = SHUFFLE_OFF;
-static constexpr uint8_t kShuffleDelayTicks[8] = { 0, 0, 2, 4, 6, 8, 10, 12 };
-// Index 1 (SHUFFLE_1) is kept for EEPROM backward compat — identical to OFF (50%).
-static constexpr uint8_t kShufflePercent[8]    = { 50, 50, 54, 58, 63, 67, 71, 75 };
+static constexpr uint8_t kShuffleDelayTicks[SHUFFLE_COUNT] = { 0, 1, 2, 3, 4, 5, 6, 7, 8 };
+static constexpr uint8_t kShufflePercent[SHUFFLE_COUNT]    = { 50, 52, 54, 56, 58, 60, 63, 65, 67 };
 static uint32_t shuffleOverlayStartTick = 0;   // big shuffle display trigger (0 = inactive)
 static char     shuffleOverlayText[16]  = "";   // cached label: "OFF" or "3 / 58%"
 
