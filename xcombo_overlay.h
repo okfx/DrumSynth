@@ -13,11 +13,9 @@ extern Adafruit_SH1106G display;
 extern bool d1ChromaMode;
 extern bool d2ChromaMode;
 extern bool d3ChromaMode;
-extern bool wfChromaMode;
-
 static void renderXComboOverlay(uint32_t nowMs, uint32_t pressTick) {
   // Flash phase — shared with LED flashing in updateLEDs().
-  // ~1.7 Hz: 300ms on, 300ms off. Offset from pressTick so first phase is always "on".
+  // Offset from pressTick so first phase is always "on".
   bool flashOn = ((nowMs - pressTick) / 400) % 2 == 0;
 
   // Large outlined "X" centered over scope area (same size as "MONOBASS").
@@ -27,22 +25,20 @@ static void renderXComboOverlay(uint32_t nowMs, uint32_t pressTick) {
   display.setTextSize(1);
 
   // Chroma status labels below the X, evenly spaced across the display.
-  // Flash at same rate/phase as the LEDs.
+  // WF is always chromatic so not shown here — only D1/D2/D3 toggle.
   if (flashOn) {
     display.setFont(NULL);
     display.setTextSize(1);
 
-    // Four labels evenly spaced: at x ~ 8, 40, 72, 104
-    static const char* labels[] = { "D1", "D2", "D3", "WF" };
-    static const uint8_t xPos[] = { 8, 40, 72, 104 };
-    const bool active[] = { d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode };
+    static const char* labels[] = { "D1", "D2", "D3" };
+    static const uint8_t xPos[] = { 16, 56, 96 };
+    const bool active[] = { d1ChromaMode, d2ChromaMode, d3ChromaMode };
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
       int lx = xPos[i];
       int ly = 42;
 
       if (active[i]) {
-        // Inverted: white background, black text
         display.fillRect(lx - 2, ly - 1, 16, 10, SH110X_WHITE);
         display.setTextColor(SH110X_BLACK);
         display.setCursor(lx, ly);

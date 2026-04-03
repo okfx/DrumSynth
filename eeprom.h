@@ -198,7 +198,7 @@ LoadResult loadStateFromEEPROM(uint8_t slotIndex) {
   d1ChromaMode = (slot.patterns.flags & 0x01) != 0;
   d2ChromaMode = (slot.patterns.flags & 0x02) != 0;
   d3ChromaMode = (slot.patterns.flags & 0x04) != 0;
-  wfChromaMode = (version >= 3) ? ((slot.patterns.flags & 0x08) != 0) : false;
+  // bit 3 (wfChromaMode) ignored on load — WF is always chromatic
 
   // Restore shuffle mode from bits 4-6 (0 = SHUFFLE_OFF for old patterns)
   uint8_t rawShuffle = (slot.patterns.flags >> 4) & 0x07;
@@ -259,7 +259,7 @@ void saveStateToEEPROM(uint8_t slotIndex) {
 
   EepromSlot slot = {};
   eepromSeq++;
-  if (eepromSeq == 0 || eepromSeq == 0xFFFF) eepromSeq = 1;  // Skip 0 and 0xFFFF (erased-EEPROM sentinels)
+  if (eepromSeq == 0) eepromSeq = 1;  // Skip 0 (erased-EEPROM sentinel)
 
   slot.magic = EEPROM_MAGIC;
   slot.seq = eepromSeq;

@@ -19,10 +19,10 @@ extern AudioFilterStateVariable    d1LowPass;
 extern bool d1ChromaMode;
 extern bool d2ChromaMode;
 extern bool d3ChromaMode;
-extern bool wfChromaMode;
 extern float d1ChromaEnvFiltDepth;
 extern float d1ChromaEnvFiltBaseHz;
 extern uint32_t d1ChromaEnvFiltTrigger;
+extern float d1EnvFiltTauMs;
 extern float d1EffectiveDecay;
 extern volatile uint32_t sysTickMs;
 
@@ -36,8 +36,8 @@ extern bool chromaAnimAppearing;
 // variable definition is visible at file scope.
 extern ChromaAnimPhase chromaAnimPhase;
 
-static constexpr uint32_t CHROMA_COMBO_RAMP_MS = 800;   // fast dither during X+button combo
-static constexpr uint32_t CHROMA_SETTLE_MS     = 80;    // snap duration after ramp
+static constexpr uint32_t CHROMA_COMBO_RAMP_MS = 120;   // fast dither during X+button combo
+static constexpr uint32_t CHROMA_SETTLE_MS     = 20;    // snap duration after ramp
 
 static void startChromaRamp(uint8_t dotIndex, bool appearing) {
   chromaAnimDot = dotIndex;
@@ -188,7 +188,7 @@ static inline void applyD3ChromaFreq(uint8_t midiNote) {
 
 // Per-frame envelope filter update for D1 chroma mode.
 // Drives d1LowPass frequency + resonance from an exponential decay envelope
-// triggered on each D1 note. Depth controlled by snap knob.
+// triggered on each D1 note. Depth controlled by body knob.
 static inline void updateD1ChromaEnvFilter(uint32_t nowMs) {
   if (!d1ChromaMode) return;
   if (d1ChromaEnvFiltDepth < 0.01f) return;
@@ -203,17 +203,18 @@ static inline void updateD1ChromaEnvFilter(uint32_t nowMs) {
   }
 
   uint32_t elapsed = nowMs - d1ChromaEnvFiltTrigger;
-  float tauMs = fmaxf(d1EffectiveDecay * 0.6f + 40.0f, 100.0f);
-  float decay = expf(-(float)elapsed / tauMs);
+  // Filter tau scales with attack knob: 60ms (punchy) → 250ms (slow pad)
+  float decay = expf(-(float)elapsed / d1EnvFiltTauMs);
 
-  // kEnvFiltCeiling defined in DrumSynth.ino before this include
+  // Sweep from ceiling down to base cutoff — the "bow" is on the attack
   float peak = d1ChromaEnvFiltBaseHz
              + d1ChromaEnvFiltDepth * (kEnvFiltCeiling - d1ChromaEnvFiltBaseHz);
   if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
   float cutoff = d1ChromaEnvFiltBaseHz + (peak - d1ChromaEnvFiltBaseHz) * decay;
   if (cutoff < 20.0f) cutoff = 20.0f;
 
-  float resonance = 1.5f + 3.25f * d1ChromaEnvFiltDepth * decay;
+  // Resonance bump gives the acid character
+  float resonance = 1.5f + 4.0f * d1ChromaEnvFiltDepth * decay;
 
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);

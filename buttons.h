@@ -20,7 +20,6 @@ extern AudioMixer4              d1VoiceMixer;
 extern bool d1ChromaMode;
 extern bool d2ChromaMode;
 extern bool d3ChromaMode;
-extern bool wfChromaMode;
 extern float d1FreqBeforeChroma;
 extern float d1BaseFreq;
 extern float d1ChromaEnvFiltDepth;
@@ -106,15 +105,15 @@ static void comboChromaD1() {
     selectTrack(TRACK_D1);
     AudioNoInterrupts();
     d1HighPass.frequency(30.0f);
-    d1HighPass.resonance(0.7f);
+    d1HighPass.resonance(1.5f);
+    // Restore snap transient to ~50% (pitchMod=0.80, gain=0.925)
+    d1Snap.pitchMod(0.80f);
+    d1VoiceMixer.gain(1, 0.925f);
     AudioInterrupts();
-    applyKnobToEngine(6, analog[6]->getValue());
-    float snapNorm = normalizeKnob(analog[5]->getValue());
-    d1ChromaEnvFiltDepth = snapNorm * snapNorm;
     d1ChromaEnvFiltTrigger = 0;
-    AudioNoInterrupts();
-    d1VoiceMixer.gain(1, 0.20f);
-    AudioInterrupts();
+    // Body knob (6) drives envelope filter, snap knob (5) drives attack
+    applyKnobToEngine(6, analog[6]->getValue());
+    applyKnobToEngine(5, analog[5]->getValue());
   } else {
     d1ChromaHeldStep = -1;
     d1ChromaEnvFiltTrigger = 0;
@@ -157,11 +156,6 @@ static void comboChromaD3() {
   applyKnobToEngine(16, analog[16]->getValue());
 }
 
-static void comboChromaWF() {
-  startChromaRamp(3, !wfChromaMode);
-  wfChromaMode = !wfChromaMode;
-  patternDirty = true;
-}
 
 // Reset all pattern state to blank defaults (sequences, chroma notes, chroma modes, shuffle).
 // Called when loading an empty or corrupt EEPROM slot.
@@ -174,7 +168,7 @@ static void clearPatternState() {
     d1ChromaNote[s] = 36; d2ChromaNote[s] = 48; d3ChromaNote[s] = 48;
   }
   d1ChromaMode = false; d2ChromaMode = false;
-  d3ChromaMode = false; wfChromaMode = false;
+  d3ChromaMode = false;
   shuffleMode = SHUFFLE_OFF;
 }
 
@@ -227,7 +221,6 @@ static void comboPPQN() {
 // |  D1  |      0 | D1 Chroma   |
 // |  D2  |      0 | D2 Chroma   |
 // |  D3  |      0 | D3 Chroma   |
-// | PLAY |      0 | WF Chroma   |
 // | LOAD |   1500 | PPQN select |
 struct XComboEntry {
   uint8_t  buttonIndex;
@@ -240,7 +233,6 @@ static const XComboEntry comboTable[] = {
   { 0, 0,                   comboChromaD1, "D1 CHROMA" },
   { 1, 0,                   comboChromaD2, "D2 CHROMA" },
   { 2, 0,                   comboChromaD3, "D3 CHROMA" },
-  { 6, 0,                   comboChromaWF, "WF CHROMA" },
   { 8, PPQN_LONG_PRESS_MS,  comboPPQN,    "PPQN"      },
 };
 static constexpr int COMBO_COUNT = (int)(sizeof(comboTable) / sizeof(comboTable[0]));
@@ -375,10 +367,11 @@ static void btnComboPress(ButtonHandler& self, uint32_t nowTick) {
 static void btnComboRelease(ButtonHandler& self, uint32_t nowTick) {
   // PPQN mode special case: short press cycles PPQN value
   if (ppqnModeActive && !comboMod.comboFired && !self.enteredMode) {
-    uint8_t idx = 0;
+    int idx = -1;
     for (int j = 0; j < PPQN_OPTION_COUNT; j++) {
       if (PPQN_OPTIONS[j] == ppqnModeSelection) { idx = j; break; }
     }
+    if (idx < 0) idx = 0;  // corrupted value — reset to first option
     ppqnModeSelection = PPQN_OPTIONS[(idx + 1) % PPQN_OPTION_COUNT];
     ppqnModeLastActivityTick = nowTick;
   }
@@ -407,6 +400,10 @@ static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs)
     ppqn = ppqnModeSelection;
     savePpqnToEEPROM(ppqn);
     ppqnModeActive = false;
+    // Clean up stale subdivision timer from any prior external clock session
+    subdivTimer.end();
+    subdivStepsRemaining = 0;
+    subdivTimerDueUs = 0;
     snprintf(displayParameter1, sizeof(displayParameter1), "PPQN %d", ppqn);
     snprintf(displayParameter2, sizeof(displayParameter2), "SAVED");
     parameterOverlayStartTick = nowTick;
@@ -415,7 +412,7 @@ static void btnComboHold(ButtonHandler& self, uint32_t nowTick, uint32_t heldMs)
     return;
   }
 
-  // MONOBASS warning animation at 1750ms (only if no combo fired, combo button held alone)
+  // MONOBASS warning animation at 3500ms (only if no combo fired, combo button held alone)
   if (!comboMod.monoAnimStarted && heldMs >= COMBO_MONO_ANIM_MS) {
     monoAnimPhase = monoBass.active ? MONO_ANIM_EXITING : MONO_ANIM_ENTERING;
     monoAnimStart = nowTick - (heldMs - COMBO_MONO_ANIM_MS);  // backdate to threshold crossing
@@ -487,7 +484,10 @@ static void btnLoadHold(ButtonHandler& self, uint32_t /*nowTick*/, uint32_t held
   }
 }
 
-// --- SAVE button (index 9): press=save, X+SAVE suppressed ---
+// --- SAVE button (index 9): double-press to confirm, X+SAVE suppressed ---
+
+static uint32_t saveConfirmTick = 0;          // when "press again" was shown
+static constexpr uint32_t SAVE_CONFIRM_MS = 2000;  // confirmation window
 
 static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
   (void)self;
@@ -499,15 +499,27 @@ static void btnSavePress(ButtonHandler& self, uint32_t nowTick) {
   }
   if (monoBass.active) { showMonoBassDisabled(nowTick); return; }
 
-  // Normal save
   slotPending = false;
   activeRail = RAIL_NONE;
-  if (patternDirty) {
+
+  if (!patternDirty) {
+    snprintf(displayParameter1, sizeof(displayParameter1), "NOTHING TO");
+    snprintf(displayParameter2, sizeof(displayParameter2), "SAVE");
+    parameterOverlayStartTick = nowTick;
+    return;
+  }
+
+  // Double-press confirmation: first press shows prompt, second press saves
+  if ((uint32_t)(nowTick - saveConfirmTick) <= SAVE_CONFIRM_MS) {
+    // Second press within window — save
+    saveConfirmTick = 0;
     saveStateToEEPROM(activeSaveSlot);
     flashStepLed(activeSaveSlot, 2);
   } else {
-    snprintf(displayParameter1, sizeof(displayParameter1), "NOTHING TO");
-    snprintf(displayParameter2, sizeof(displayParameter2), "SAVE");
+    // First press — show confirmation prompt
+    saveConfirmTick = nowTick;
+    snprintf(displayParameter1, sizeof(displayParameter1), "PRESS AGAIN");
+    snprintf(displayParameter2, sizeof(displayParameter2), "TO SAVE");
     parameterOverlayStartTick = nowTick;
   }
 }

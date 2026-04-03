@@ -40,12 +40,13 @@ struct MonoBassState {
   char paramValue[16] = "";     // value string for large-font param display
   uint32_t paramShowStart = 0;  // when param display started
   uint32_t noteShowStart = 0;   // when note display was triggered
-  bool savedWfChroma = false;   // wfChromaMode state before entering MONOBASS
+  // (savedWfChroma removed — WF is always chromatic)
   uint32_t modeEnteredAt = 0;   // sysTickMs when MONOBASS was entered (for splash grid)
 
-  // Envelope filter state (snap knob repurposed)
-  float envFiltDepth = 0.0f;    // 0–1 from snap knob — how far filter opens above base
+  // Envelope filter state (body knob repurposed)
+  float envFiltDepth = 0.0f;    // 0–1 from body knob — how far filter opens above base
   float envFiltBaseHz = 100.0f; // base cutoff in Hz (cached from body knob)
+  float envFiltTauMs = 60.0f;   // filter decay tau — scales with attack knob
   uint32_t envFiltTrigger = 0;  // sysTickMs of last noteOn
 
   // Last-note-priority key stack for polyphonic trill
@@ -60,6 +61,7 @@ extern MonoBassState monoBass;
 // Idle grid dissolve state
 static uint32_t monoGridShowStartMs = 0;  // when the idle grid first appeared
 static bool monoGridDismissed = false;     // true after dissolve completes
+static bool monoGridShownOnce = false;     // true after first entry — grid only shows once per power cycle
 
 // ============================================================================
 //  External dependencies — defined in main .ino
@@ -107,9 +109,7 @@ void enterMonoBassMode() {
   monoBass.active = true;
   monoBass.modeEnteredAt = sysTickMs;
   saveMonoBassStatusToEEPROM(true);
-  // Force wavefolder into chroma mode (save previous state for exit)
-  monoBass.savedWfChroma = wfChromaMode;
-  wfChromaMode = true;
+  // wfChromaMode is always true — no save/restore needed
   // Stop transport if running
   noInterrupts();
   sequencePlaying = false;
@@ -123,14 +123,14 @@ void enterMonoBassMode() {
   monoBass.showOctave = false;
   monoBass.noteShowStart = 0;
   monoGridShowStartMs = 0;
-  monoGridDismissed = false;
+  monoGridDismissed = monoGridShownOnce;  // skip grid on subsequent entries
   // Clear any chroma note-select state so it doesn't persist across mode switch
   d1ChromaHeldStep = -1;
   d2ChromaHeldStep = -1;
   d3ChromaHeldStep = -1;
   // Gate-style bass synth envelope: fixed fast attack, full sustain, short release
   AudioNoInterrupts();
-  d1AmpEnv.attack(0.5f);       // fixed minimum — snap knob repurposed as env filter
+  d1AmpEnv.attack(0.5f);       // fixed minimum — snap knob repurposed as attack
   d1AmpEnv.hold(0.0f);         // no hold phase — sustain takes over
   d1AmpEnv.decay(0.0f);        // no decay — sustain at full level
   d1AmpEnv.sustain(1.0f);      // hold at full amplitude while key pressed
@@ -146,13 +146,14 @@ void enterMonoBassMode() {
   d1EQ.setHighShelf(2, 3500.0f, 0.0f, 1.0f); // flat shelf — no cut
   // Stage 3 intentionally unchanged — retains pre-entry EQ setting.
   // exitMonoBassMode() restores it to lowpass 8 kHz.
-  d1VoiceMixer.gain(1, 0.0f);  // mute snap transient — knob 5 is now env filter depth
+  d1VoiceMixer.gain(0, 0.5f);  // boost dry osc to compensate for muted snap transient
+  d1VoiceMixer.gain(1, 0.0f);  // mute snap transient — knob 5 is attack in MONOBASS
   d1AmpEnv.noteOff();          // kill any note held over from the sequencer
   AudioInterrupts();
-  // Init envelope filter depth from current snap knob position
-  float snapNorm = normalizeKnob(analog[5]->getValue());
-  monoBass.envFiltDepth = snapNorm * snapNorm;  // square curve, matches engineD1Snap
+  // Body knob (6) drives envelope filter, snap knob (5) drives attack
   monoBass.envFiltTrigger = 0;
+  applyKnobToEngine(6, analog[6]->getValue());
+  applyKnobToEngine(5, analog[5]->getValue());
   // Light first 13 LEDs as usable-key indicators (C-to-C octave)
   for (int i = 0; i < numSteps; i++) ledShiftReg.setNoUpdate(i, i < 13);
   ledShiftReg.updateRegisters();
@@ -162,8 +163,7 @@ void enterMonoBassMode() {
 void exitMonoBassMode() {
   monoBass.active = false;
   saveMonoBassStatusToEEPROM(false);
-  // Restore wavefolder chroma mode to pre-MONOBASS state
-  wfChromaMode = monoBass.savedWfChroma;
+  // wfChromaMode is always true — no restore needed
   AudioNoInterrupts();
   d1AmpEnv.attack(D1_ATTACK_MS);
   d1AmpEnv.hold(d1CachedHoldMs);
@@ -180,6 +180,7 @@ void exitMonoBassMode() {
     d1HighPass.frequency(85.0f);
     d1HighPass.resonance(2.0f);
   }
+  d1VoiceMixer.gain(0, 0.3f);  // restore dry osc to normal drum level
   d1LowPass.frequency(1800.0f);
   d1LowPass.resonance(1.5f);
   d1EQ.setLowpass(3, 8000.0f, 0.707f);
@@ -205,20 +206,17 @@ void updateMonoBassEnvFilter(uint32_t nowMs) {
   if (monoBass.envFiltTrigger == 0) return;
 
   uint32_t elapsed = nowMs - monoBass.envFiltTrigger;
-  // Time constant: 0.6× release time, minimum 100ms — floor ensures audible wah sweep
-  float tauMs = fmaxf(monoBass.releaseMs * 0.6f + 40.0f, 100.0f);
-  float decay = expf(-(float)elapsed / tauMs);  // 1.0 at trigger → 0.0 as time → ∞
+  // Filter tau scales with attack knob: 60ms (punchy) → 250ms (slow pad)
+  float decay = expf(-(float)elapsed / monoBass.envFiltTauMs);
 
-  // Fixed ceiling: always sweep to kEnvFiltCeiling at full depth regardless of base.
-  // This guarantees a wide, audible wah regardless of where the body knob is set.
   float peak = monoBass.envFiltBaseHz
              + monoBass.envFiltDepth * (kEnvFiltCeiling - monoBass.envFiltBaseHz);
   if (peak > kEnvFiltCeiling) peak = kEnvFiltCeiling;
   float cutoff = monoBass.envFiltBaseHz + (peak - monoBass.envFiltBaseHz) * decay;
   if (cutoff < 20.0f) cutoff = 20.0f;
 
-  // High resonance during the sweep gives the vocal "waaah" character
-  float resonance = 1.5f + 3.25f * monoBass.envFiltDepth * decay;  // peaks at 4.75, settles to 1.5
+  // Resonance bump gives the acid character
+  float resonance = 1.5f + 4.0f * monoBass.envFiltDepth * decay;
 
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);
@@ -255,8 +253,7 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     }
 
     // Play the new top key
-    uint8_t midiNote = (36 + monoBass.octave * 12) + buttonIndex;
-    if (midiNote > 75) midiNote = 75;
+    int midiNote = constrain(36 + monoBass.octave * 12 + buttonIndex, 36, 75);
     d1BaseFreq = d1ChromaFreq(midiNote);
     applyD1Freq();
     triggerD1();
@@ -287,8 +284,7 @@ bool handleMonoBassButton(int buttonIndex, bool pressed) {
     int8_t top = monoBass.topKey();
     if (top >= 0) {
       // Fall back to previous held key
-      uint8_t midiNote = (36 + monoBass.octave * 12) + top;
-      if (midiNote > 75) midiNote = 75;
+      int midiNote = constrain(36 + monoBass.octave * 12 + top, 36, 75);
       d1BaseFreq = d1ChromaFreq(midiNote);
       applyD1Freq();
       triggerD1();
@@ -363,6 +359,7 @@ static void renderMonoBassIdleGrid(uint32_t nowMs) {
   uint32_t elapsed = nowMs - monoGridShowStartMs;
   if (elapsed >= GRID_SHOW_MS + GRID_DISSOLVE_MS) {
     monoGridDismissed = true;
+    monoGridShownOnce = true;
     return;
   }
   static constexpr int kRowStartY  = 24;
@@ -372,8 +369,8 @@ static void renderMonoBassIdleGrid(uint32_t nowMs) {
   static constexpr int kLeftKnobCx = 56;
   static constexpr int kRightKnobCx = 68;
 
-  static const char* const leftLabels[]  = { "OCTAVE", "DECAY", "OSC", "WAVFLDR" };
-  static const char* const rightLabels[] = { "VOLUME", "ENV FLT", "FILTER", "DLY SND" };
+  static const char* const leftLabels[]  = { "WAVFLDR", "OSC", "RELEASE", "OCTAVE" };
+  static const char* const rightLabels[] = { "VOLUME", "ATTACK", "ENV FLT", "DLY SND" };
 
   display.setTextSize(1);
   display.setTextColor(SH110X_WHITE);
@@ -421,16 +418,8 @@ static inline void monoBassOutlinedCenter(const char* text, int y, uint8_t textS
 void renderMonoBassScope(uint32_t nowMs) {
   if (!monoBass.active) return;
 
-  // Reset idle grid timer whenever a note is playing or an overlay is active
-  if (monoBass.topKey() >= 0) {
-    monoGridShowStartMs = 0;
-    monoGridDismissed = false;
-  }
-
   // Priority 1: Parameter knob changed recently
   if (monoBass.paramLabel[0] && (nowMs - monoBass.paramShowStart < MONOBASS_PARAM_DISPLAY_MS)) {
-    monoGridShowStartMs = 0;
-    monoGridDismissed = false;
     monoBassOutlinedCenter(monoBass.paramLabel, 24, 1);
     monoBassOutlinedCenter(monoBass.paramValue, 37, 2);
     return;

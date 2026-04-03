@@ -43,7 +43,6 @@ extern uint8_t activeSaveSlot;
 extern bool d1ChromaMode;
 extern bool d2ChromaMode;
 extern bool d3ChromaMode;
-extern bool wfChromaMode;
 extern int8_t d1ChromaHeldStep;
 extern int8_t d2ChromaHeldStep;
 extern int8_t d3ChromaHeldStep;
@@ -68,11 +67,14 @@ extern void playSequence();
 // --- UI Helpers ---
 
 // Draw white text with a 2-pixel black outline for readability over the scope waveform.
-// Stamps black text at 8 offsets (4 cardinal + 4 diagonal, 2px each) then white on top.
+// Stamps black text at all offsets within a 2px radius, then white on top.
 void drawOutlinedText(int x, int y, const char* text) {
   static const int8_t offsets[][2] = {
-    {-2, 0}, {2, 0}, {0, -2}, {0, 2},   // cardinal 2px
-    {-2,-2}, {2,-2}, {-2, 2}, {2, 2}     // diagonal 2px
+    {-1, 0}, {1, 0}, {0,-1}, {0, 1},    // cardinal 1px
+    {-1,-1}, {1,-1}, {-1,1}, {1, 1},    // diagonal 1px
+    {-2, 0}, {2, 0}, {0,-2}, {0, 2},    // cardinal 2px
+    {-2,-1}, {-2,1}, {2,-1}, {2, 1},    // mid offsets (fill gaps)
+    {-1,-2}, {1,-2}, {-1,2}, {1, 2},    // mid offsets (fill gaps)
   };
   display.setTextColor(0);
   for (auto& o : offsets) {
@@ -270,22 +272,20 @@ bool renderChromaNoteSelect() {
 void renderChromaDots(uint32_t nowMs) {
   if (monoBass.active) return;
 
-  const bool chromaActive[4] = {
-    d1ChromaMode, d2ChromaMode, d3ChromaMode, wfChromaMode
-  };
-  const int dotCenters[4] = { 16, 48, 80, 112 };
-  static constexpr int kSteadySize = 8;
-  static constexpr int kClearSize = 12;
-  static constexpr int kCenterY = 60;
-  static constexpr int kHalf = 4;
+  const bool chromaActive[3] = { d1ChromaMode, d2ChromaMode, d3ChromaMode };
+  const int dotCenters[3] = { 32, 64, 96 };
+  static constexpr int kSteadySize = 12;
+  static constexpr int kClearSize = 16;
+  static constexpr int kCenterY = 58;
+  static constexpr int kHalf = 6;
 
   bool animActive = (chromaAnimDot >= 0 && chromaAnimPhase != CHROMA_ANIM_NONE);
   uint32_t animElapsed = animActive ? (nowMs - chromaAnimStart) : 0;
 
   if (!chromaActive[0] && !chromaActive[1] && !chromaActive[2]
-      && !chromaActive[3] && !animActive) return;
+      && !animActive) return;
 
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 3; i++) {
     int cx = dotCenters[i];
 
     if (animActive && i == chromaAnimDot) {
@@ -324,20 +324,24 @@ void renderChromaDots(uint32_t nowMs) {
               }
             }
           } else {
-            // Phase 3: full square, center hollows out
+            // Phase 3: bordered square, center hollows out
             float t = (progress - 0.8f) / 0.2f;
-            display.fillRect(cx - kHalf, kCenterY - kHalf, kHalf * 2, kHalf * 2, SH110X_WHITE);
-            for (int py = kCenterY - 1; py <= kCenterY; py++) {
-              for (int px = cx - 1; px <= cx; px++) {
+            display.fillRect(cx - kHalf, kCenterY - kHalf, kSteadySize, kSteadySize, SH110X_BLACK);
+            display.fillRect(cx - kHalf + 2, kCenterY - kHalf + 2,
+                             kSteadySize - 4, kSteadySize - 4, SH110X_WHITE);
+            for (int py = kCenterY - 2; py <= kCenterY + 1; py++) {
+              for (int px = cx - 2; px <= cx + 1; px++) {
                 if (bayerDither(px, py, t))
                   display.drawPixel(px, py, SH110X_BLACK);
               }
             }
           }
         } else {
-          // Disappearing: steady dot dissolves via dither
-          display.fillRect(cx - kHalf, kCenterY - kHalf, 8, 8, SH110X_WHITE);
-          display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
+          // Disappearing: bordered dot dissolves via dither
+          display.fillRect(cx - kHalf, kCenterY - kHalf, kSteadySize, kSteadySize, SH110X_BLACK);
+          display.fillRect(cx - kHalf + 2, kCenterY - kHalf + 2,
+                           kSteadySize - 4, kSteadySize - 4, SH110X_WHITE);
+          display.fillRect(cx - 2, kCenterY - 2, 4, 4, SH110X_BLACK);
           for (int py = kCenterY - kHalf; py < kCenterY + kHalf; py++) {
             for (int px = cx - kHalf; px < cx + kHalf; px++) {
               if (bayerDither(px, py, progress))
@@ -348,16 +352,18 @@ void renderChromaDots(uint32_t nowMs) {
       } else {
         // SETTLING: snap to steady state
         if (chromaAnimAppearing) {
-          display.fillRect(cx - kHalf, kCenterY - kHalf, 8, 8, SH110X_WHITE);
-          display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
+          display.fillRect(cx - kHalf, kCenterY - kHalf, kSteadySize, kSteadySize, SH110X_BLACK);
+          display.fillRect(cx - kHalf + 2, kCenterY - kHalf + 2,
+                           kSteadySize - 4, kSteadySize - 4, SH110X_WHITE);
+          display.fillRect(cx - 2, kCenterY - 2, 4, 4, SH110X_BLACK);
         }
       }
     } else if (chromaActive[i]) {
-      // Steady state: hollow 8×8 (white border, 2×2 black center)
-      display.fillRect(cx - kHalf - 1, kCenterY - kHalf - 1,
-                       kSteadySize + 2, kSteadySize + 2, SH110X_BLACK);
-      display.fillRect(cx - kHalf, kCenterY - kHalf, kSteadySize, kSteadySize, SH110X_WHITE);
-      display.fillRect(cx - 1, kCenterY - 1, 2, 2, SH110X_BLACK);
+      // Steady state: black-outlined square (2px black border, 8×8 white, 4×4 black center)
+      display.fillRect(cx - kHalf, kCenterY - kHalf, kSteadySize, kSteadySize, SH110X_BLACK);
+      display.fillRect(cx - kHalf + 2, kCenterY - kHalf + 2,
+                       kSteadySize - 4, kSteadySize - 4, SH110X_WHITE);
+      display.fillRect(cx - 2, kCenterY - 2, 4, 4, SH110X_BLACK);
     }
   }
 }
@@ -412,15 +418,15 @@ void renderParameterOverlay(uint8_t railSnap, const char* param1Snap,
                             const char* param2Snap) {
   if (railSnap == RAIL_NONE) {
     display.setTextSize(1);
-    const int bottomY = 56;
+    const int midY = 38;   // vertically centered in scope area (y 22–62)
     if (param1Snap[0]) {
-      drawOutlinedText(5, bottomY, param1Snap);
+      drawOutlinedText(5, midY, param1Snap);
     }
     if (param2Snap[0]) {
       int16_t x1, y1;
       uint16_t w2, h2;
       display.getTextBounds(param2Snap, 0, 0, &x1, &y1, &w2, &h2);
-      drawOutlinedText(128 - w2 - 2, bottomY, param2Snap);
+      drawOutlinedText(128 - w2 - 2, midY, param2Snap);
     }
   } else {
     renderVoiceRails();
@@ -545,10 +551,8 @@ void updateDisplay() {
   // Snapshot ISR-shared state with interrupts disabled
   noInterrupts();
   playingSnap = sequencePlaying;
-  interrupts();
-
-  // bpm is volatile but 32-bit aligned — ARM-atomic read, no guard needed
   bpmSnap = bpm;
+  interrupts();
   trackSnap = activeTrack;
   chokeSnap = chokeDisplayPercent;
   slotSnap = activeSaveSlot;
@@ -620,14 +624,15 @@ void updateDisplay() {
   // Suppress small parameter overlay when scope area owns the display.
   // In MONOBASS, allow D1 voice rail through (D1 shape knob is still active).
   if (noteSelectActive) overlayActiveNow = false;
+  // Chroma dots render first — parameter overlay and other text draw on top.
+  if (!shuffleOverlayActive) {
+    renderChromaDots(nowMs);
+  }
+
   if (monoBass.active && railSnap != RAIL_D1_SHAPE) overlayActiveNow = false;
   if (shuffleOverlayActive) overlayActiveNow = false;
   if (overlayActiveNow) {
     renderParameterOverlay(railSnap, param1Snap, param2Snap);
-  } else if (!shuffleOverlayActive) {
-    // Chroma dots share the bottom strip with the parameter overlay —
-    // only draw them when the overlay is not visible.
-    renderChromaDots(nowMs);
   }
 
   // MONOBASS white-fill sweep overlay (during combo hold, 1.75s-4s)

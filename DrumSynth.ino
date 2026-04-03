@@ -24,7 +24,7 @@ static constexpr float D1_ATTACK_MS = 0.5f;  // 808-style instant punch — fixe
 // Full definition is in the button state machine section below.
 struct ButtonHandler;
 
-static constexpr const char* FIRMWARE_VERSION   = "1.0.1";
+static constexpr const char* FIRMWARE_VERSION   = "1.0.2";
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -37,7 +37,6 @@ enum Track : uint8_t {
 static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
 static constexpr uint16_t SHUFFLE_OVERLAY_DURATION_MS  = 800;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
-static constexpr uint16_t MONOBASS_DEBOUNCE_MS = 10;   // 10ms — reliable debounce with fast trill response
 static bool monoBassKeyEvent = false;                   // set by handleMonoBassButton() to skip next OLED frame
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
 static constexpr uint16_t BUTTON_DEBOUNCE_MS = 25;    // All other buttons: standard debounce
@@ -89,8 +88,14 @@ bool d2ChromaMode = false;
 // D3 chroma mode — toggled via X+D3 combo
 bool d3ChromaMode = false;
 
-// Wavefolder CHROMA mode — toggled via X+PLAY combo
-bool wfChromaMode = false;
+// D3 pitch-based volume compensation: boost 606/FM at low pitch to offset
+// perceived energy loss.  Updated by engineD3Pitch, read by engineD3VoiceMix.
+float d3PitchComp = 1.0f;
+// Cached voice-mix gains (before trim/comp) so pitch engine can re-apply mixer.
+float d3VmGain606 = 1.0f, d3VmGainFM = 0.0f, d3VmGainPerc = 0.0f;
+
+// Wavefolder is always chromatic (quantized to semitones)
+bool wfChromaMode = true;
 
 // Shuffle state (TR-909 style, 6 audible settings + OFF)
 // Delay ticks are on a 96-PPQN grid: each 16th = 24 ticks.
@@ -461,10 +466,11 @@ static inline float normalizeKnob(int rawKnobValue) {
 float d1BaseFreq = 100.0f;
 float d1FreqBeforeChroma = 100.0f;  // saved on D1 chroma entry, restored on exit
 
-// D1 chroma envelope filter state (snap knob repurposed, mirrors MONOBASS logic)
-float d1ChromaEnvFiltDepth = 0.0f;    // 0–1 from snap knob
+// D1 chroma envelope filter state (body knob repurposed, mirrors MONOBASS logic)
+float d1ChromaEnvFiltDepth = 0.0f;    // 0–1 from body knob
 float d1ChromaEnvFiltBaseHz = 100.0f; // resting cutoff cached from body knob
 uint32_t d1ChromaEnvFiltTrigger = 0;  // sysTickMs of last D1 trigger in chroma mode
+float d1EnvFiltTauMs = 60.0f;        // filter decay tau — scales with attack knob
 
 void applyD1Freq() {
   AudioNoInterrupts();
@@ -677,7 +683,7 @@ void applyD2Decay() {
   AudioInterrupts();
 
   // D2 clap family — use knob position directly for clap curves
-  float d2Norm = d2DecayNorm;
+  float d2Norm = constrain(d2DecayNorm, 0.0f, 1.0f);
   // Flat 93ms below 50%, then accelerating curve → 130ms at 75%, 225ms at 100%
   float clapDecayBase;
   if (d2Norm <= 0.5f) {
@@ -796,7 +802,7 @@ void setup() {
 
   // --- Audio system initialization ---
 
-  AudioMemory(1400);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
+  AudioMemory(1600);  // Delay at 1400ms needs ~483 blocks; 93 audio objects need the rest (RAM2 only, no CPU cost)
   sysTickTimer.begin(sysTickISR, 1000);
   audioInit();
   d1AmpEnv.attack(D1_ATTACK_MS);  // permanent value — not set in audioInit (D1_ATTACK_MS not yet visible there)
@@ -1096,7 +1102,7 @@ void playSequence() {
   // For 3+ steps, skip ahead — a missing step is less noticeable than
   // an off-beat one.
   if (toDo == 2) {
-    uint8_t firstStep = (targetStep - 1 + numSteps) % numSteps;
+    uint8_t firstStep = (targetStep + numSteps - 1) % numSteps;
     playSequenceCore(firstStep);   // fire first step
     playSequenceCore(targetStep);  // fire second step
   } else {
@@ -1434,6 +1440,12 @@ void updateStepButtons() {
   static bool btnLastState[stepButtonCount] = { false };
   static uint32_t stepPressTick[stepButtonCount] = { 0 };
 
+  // MONOBASS integrator debounce: count consecutive agreeing samples per key.
+  // Press fires when count reaches kMonoMax, release when count reaches 0.
+  static constexpr uint8_t kMonoMax = 5;  // ~5 scans ≈ 3-5ms at typical loop rate
+  static uint8_t monoIntegrator[stepButtonCount] = { 0 };
+  static bool monoStable[stepButtonCount] = { false };
+
   uint8_t* seq = sequenceForTrack(activeTrack);
 
   // single stable timebase for this whole scan
@@ -1447,16 +1459,34 @@ void updateStepButtons() {
     delayMicroseconds(5);
     bool rawPressed = !stepButtonsMux.read();  // no arg — use channel already set above
 
+    // --- MONOBASS: integrator debounce (no timing dependency) ---
+    if (monoBass.active) {
+      if (rawPressed) {
+        if (monoIntegrator[i] < kMonoMax) monoIntegrator[i]++;
+      } else {
+        if (monoIntegrator[i] > 0) monoIntegrator[i]--;
+      }
+      if (monoIntegrator[i] == kMonoMax && !monoStable[i]) {
+        monoStable[i] = true;
+        handleMonoBassButton(i, true);
+      } else if (monoIntegrator[i] == 0 && monoStable[i]) {
+        monoStable[i] = false;
+        handleMonoBassButton(i, false);
+      }
+      btnLastState[i] = rawPressed;
+      continue;
+    }
+
+    // --- Normal mode: timestamp debounce ---
     if (rawPressed != btnLastState[i]) {
       lastDebounceTick[i] = nowTick;
     }
 
-    uint16_t debounceMs = monoBass.active ? MONOBASS_DEBOUNCE_MS : STEP_DEBOUNCE_MS;
-    if ((uint32_t)(nowTick - lastDebounceTick[i]) > debounceMs && (rawPressed != btnState[i])) {
+    if ((uint32_t)(nowTick - lastDebounceTick[i]) > STEP_DEBOUNCE_MS && (rawPressed != btnState[i])) {
 
       btnState[i] = rawPressed;
 
-      // MONOBASS mode — buttons trigger D1 directly, skip all sequence editing
+      // Non-MONOBASS handleMonoBassButton check (for mode transition edge cases)
       if (handleMonoBassButton(i, btnState[i])) {
         btnLastState[i] = rawPressed;
         continue;
@@ -1616,7 +1646,7 @@ static inline float d2DecayCurve(int knobValue) {
 // D3 Filter curve: 1200–12000 Hz exponential (log-spaced for natural feel)
 static inline float d3FilterCurve(int knobValue) {
   float norm = normalizeKnob(knobValue);
-  return 1200.0f * expf(norm * 2.303f);  // ln(12000/1200) ≈ 2.303
+  return 3000.0f * expf(norm * 1.386f);  // ln(12000/3000) ≈ 1.386
 }
 
 // BPM curve: 60–300 (0–80% knob) then 800–999 (80–100% knob, hyperspeed), rounded to 0.5

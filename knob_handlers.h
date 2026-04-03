@@ -94,7 +94,6 @@ extern float extBpmDisplay;
 extern int chokeOffsetMs;
 extern int chokeDisplayPercent;
 extern float masterNominalGain;
-extern bool wfChromaMode;
 extern bool d1ChromaMode;
 extern bool d2ChromaMode;
 extern bool d3ChromaMode;
@@ -104,6 +103,8 @@ extern int8_t d3ChromaHeldStep;
 extern uint8_t d1ChromaNote[];
 extern uint8_t d2ChromaNote[];
 extern uint8_t d3ChromaNote[];
+extern float d3PitchComp;
+extern float d3VmGain606, d3VmGainFM, d3VmGainPerc;
 extern bool ppqnModeActive;
 extern bool patternDirty;
 static constexpr size_t kDisplayParamSize = 24;
@@ -240,7 +241,7 @@ static void displayD1Pitch(uint8_t idx, int knobValue) {
                "STEP %d", d1ChromaHeldStep + 1);
       snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
     } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP BUTTON");
+      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP");
       snprintf(displayParameter2, sizeof(displayParameter2), "THEN TURN");
     }
     return;
@@ -256,8 +257,29 @@ static void displayD1Volume(uint8_t idx, int knobValue) {
   displayMonoBassParam("D1 VOLUME", "VOLUME", knobValue);
 }
 
-// Case 5: D1 Snap (repurposed as envelope filter depth in MONOBASS and D1 chroma modes)
+// Case 5: D1 Snap — becomes ATTACK in chroma/MONOBASS modes
 static void displayD1Snap(uint8_t idx, int knobValue) {
+  (void)idx;
+  if (monoBass.active || d1ChromaMode) {
+    float norm = normalizeKnob(knobValue);
+    float attackMs = 0.5f + norm * 249.5f;  // 0.5–250 ms
+    if (monoBass.active) {
+      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "ATTACK");
+      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%.1f ms", attackMs);
+      monoBass.paramShowStart = sysTickMs;
+    } else {
+      snprintf(displayParameter1, sizeof(displayParameter1), "D1 ATTACK");
+      snprintf(displayParameter2, sizeof(displayParameter2), "%.1f ms", attackMs);
+    }
+    return;
+  }
+  snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
+  int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+  snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
+}
+
+// Case 6: D1 EQ/Body — becomes ENV FILTER in chroma/MONOBASS modes
+static void displayD1Body(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active || d1ChromaMode) {
     float norm = normalizeKnob(knobValue);
@@ -269,31 +291,6 @@ static void displayD1Snap(uint8_t idx, int knobValue) {
     } else {
       snprintf(displayParameter1, sizeof(displayParameter1), "D1 ENV FLT");
       snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
-    }
-    return;
-  }
-  // Normal drum mode — show snap transient level
-  snprintf(displayParameter1, sizeof(displayParameter1), "D1 SNAP");
-  int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-  snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
-}
-
-// Case 6: D1 EQ/Body — becomes FILTER in MONOBASS and D1 Chroma modes
-static void displayD1Body(uint8_t idx, int knobValue) {
-  (void)idx;
-  if (monoBass.active || d1ChromaMode) {
-    // Filter mode: compute cutoff (same formula as engine, without pitch tracking)
-    float norm = normalizeKnob(knobValue);
-    float cutoff = 40.0f * expf(norm * 4.605f);  // 40–4000 Hz
-    if (cutoff > 4000.0f) cutoff = 4000.0f;
-    if (cutoff < 40.0f)   cutoff = 40.0f;
-    if (monoBass.active) {
-      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "FILTER");
-      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d Hz", (int)cutoff);
-      monoBass.paramShowStart = sysTickMs;
-    } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "D1 FILTER");
-      snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoff);
     }
   } else {
     snprintf(displayParameter1, sizeof(displayParameter1), "D1 BODY");
@@ -321,7 +318,7 @@ static void displayD2Pitch(uint8_t idx, int knobValue) {
                "STEP %d", d2ChromaHeldStep + 1);
       snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
     } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP BUTTON");
+      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP");
       snprintf(displayParameter2, sizeof(displayParameter2), "THEN TURN");
     }
     return;
@@ -402,7 +399,7 @@ static void displayD3Pitch(uint8_t idx, int knobValue) {
                "STEP %d", d3ChromaHeldStep + 1);
       snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
     } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP BUTTON");
+      snprintf(displayParameter1, sizeof(displayParameter1), "HOLD STEP");
       snprintf(displayParameter2, sizeof(displayParameter2), "THEN TURN");
     }
     return;
@@ -491,45 +488,48 @@ static void displayMasterDelayTime(uint8_t idx, int knobValue) {
   }
 }
 
-// Case 25: Wavefold Frequency
+// Case 25: Wavefold Frequency (always chromatic — quantized to semitones)
 static void displayWfFreq(uint8_t idx, int knobValue) {
   (void)idx;
-  if (wfChromaMode) {
-    uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
-    char noteName[8];
-    formatChromaNote(midiNote, noteName);
-    if (monoBass.active) {
-      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WAVEFOLD");
-      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", noteName);
-      monoBass.paramShowStart = sysTickMs;
-    } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "WF CHROMA");
-      snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
-    }
+  uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
+  char noteName[8];
+  formatChromaNote(midiNote, noteName);
+  if (monoBass.active) {
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WAVEFOLD");
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", noteName);
+    monoBass.paramShowStart = sysTickMs;
   } else {
-    int percent = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
-    if (monoBass.active) {
-      snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "WF FREQ");
-      snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d%%", percent);
-      monoBass.paramShowStart = sysTickMs;
-    } else {
-      snprintf(displayParameter1, sizeof(displayParameter1), "WAVEFOLD FREQ");
-      snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", percent);
-    }
+    snprintf(displayParameter1, sizeof(displayParameter1), "WF FREQ");
+    snprintf(displayParameter2, sizeof(displayParameter2), "%s", noteName);
   }
 }
 
 // Case 26: Master Lowpass
 static void displayMasterLowpass(uint8_t idx, int knobValue) {
   (void)idx;
-  int freqHz = map(knobValue, 0, 1023, 1000, 7500);
+  static constexpr int kDeadLo = 460;
+  static constexpr int kDeadHi = 564;
+  const char* label;
+  char valueBuf[16];
+  if (knobValue < kDeadLo) {
+    int lpHz = map(knobValue, 0, kDeadLo, 2500, 7500);
+    label = "LOWPASS";
+    snprintf(valueBuf, sizeof(valueBuf), "%d Hz", lpHz);
+  } else if (knobValue > kDeadHi) {
+    int hpHz = map(knobValue, kDeadHi, 1023, 30, 350);
+    label = "HIGHPASS";
+    snprintf(valueBuf, sizeof(valueBuf), "%d Hz", hpHz);
+  } else {
+    label = "FILTER";
+    snprintf(valueBuf, sizeof(valueBuf), "OFF");
+  }
   if (monoBass.active) {
-    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "LOWPASS");
-    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%d Hz", freqHz);
+    snprintf(monoBass.paramLabel, sizeof(monoBass.paramLabel), "%s", label);
+    snprintf(monoBass.paramValue, sizeof(monoBass.paramValue), "%s", valueBuf);
     monoBass.paramShowStart = sysTickMs;
   } else {
-    snprintf(displayParameter1, sizeof(displayParameter1), "MASTER LOWPASS");
-    snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", freqHz);
+    snprintf(displayParameter1, sizeof(displayParameter1), "%s", label);
+    snprintf(displayParameter2, sizeof(displayParameter2), "%s", valueBuf);
   }
 }
 
@@ -743,20 +743,21 @@ static void engineD1Volume(uint8_t idx, int knobValue) {
   updateDrumDelayGains();
 }
 
-// Case 5: D1 Snap
+// Case 5: D1 Snap — becomes ATTACK in chroma/MONOBASS modes
 static void engineD1Snap(uint8_t idx, int knobValue) {
   (void)idx;
   float norm = normalizeKnob(knobValue);
 
-  if (monoBass.active) {
-    // Repurposed as envelope filter depth — square curve keeps sweet spot in mid-range
-    monoBass.envFiltDepth = norm * norm;
-    return;  // no direct audio change; updateMonoBassEnvFilter() drives the filter
-  }
-
-  if (d1ChromaMode) {
-    d1ChromaEnvFiltDepth = norm * norm;
-    return;  // updateD1ChromaEnvFilter() drives the filter
+  if (monoBass.active || d1ChromaMode) {
+    float attackMs = 0.5f + norm * 249.5f;  // 0.5–250 ms
+    // Scale envelope filter tau to match attack — fast attack = snappy 60ms zap,
+    // slow attack = long filter sweep that opens alongside the volume ramp.
+    d1EnvFiltTauMs = 60.0f + (attackMs - 0.5f) * (250.0f - 60.0f) / 249.5f;
+    if (monoBass.active) monoBass.envFiltTauMs = d1EnvFiltTauMs;
+    AudioNoInterrupts();
+    d1AmpEnv.attack(attackMs);
+    AudioInterrupts();
+    return;
   }
 
   // Pitch snap depth increases with knob
@@ -775,29 +776,40 @@ static void engineD1Body(uint8_t idx, int knobValue) {
   float norm = normalizeKnob(knobValue);
 
   if (monoBass.active || d1ChromaMode) {
-    // Moog-style LPF sweep: 40–4000 Hz exponential, with gentle pitch tracking.
-    // Uses d1LowPass (AudioFilterStateVariable) as the sweep filter.
-    float baseCutoff = 40.0f * expf(norm * 4.605f);  // ln(4000/40) ≈ 4.605
-    // Pitch tracking: shift cutoff proportionally to playing frequency
-    // so the filter opens with higher notes (classic Moog behavior).
-    // Softened ratio (0.6 + 0.4×) keeps low octaves usable.
-    float trackRatio = d1BaseFreq / 65.41f;  // ratio relative to C2
-    float cutoff = baseCutoff * (0.6f + 0.4f * trackRatio);
-    if (cutoff > 6000.0f) cutoff = 6000.0f;
-    if (cutoff < 20.0f)   cutoff = 20.0f;
-    if (monoBass.active) {
-      // Cache base Hz for envelope filter; skip setting filter if env filter is active
-      monoBass.envFiltBaseHz = cutoff;
-      if (monoBass.envFiltDepth > 0.01f && monoBass.topKey() >= 0) return;
+    // Envelope filter curve:
+    //   0–5%:   deadband — filter wide open, no coloration
+    //   5–30%:  crossfade — depth/cutoff blend smoothly from open to active
+    //   30–100%: full effect — depth 0→1, base cutoff 2000→500 Hz
+    static constexpr float kDead = 0.05f;
+    static constexpr float kFade = 0.30f;
+    float depth, baseHz;
+    if (norm <= kDead) {
+      depth = 0.0f;
+      baseHz = 8000.0f;
+      AudioNoInterrupts();
+      d1LowPass.frequency(8000.0f);
+      d1LowPass.resonance(1.5f);
+      AudioInterrupts();
+    } else if (norm <= kFade) {
+      // Crossfade: blend from open (8000 Hz, depth 0) to onset (2000 Hz, depth 0)
+      float blend = (norm - kDead) / (kFade - kDead);  // 0→1
+      depth = 0.0f;
+      baseHz = 8000.0f - 6000.0f * blend;  // 8000→2000 Hz
+      AudioNoInterrupts();
+      d1LowPass.frequency(baseHz);
+      d1LowPass.resonance(1.5f);
+      AudioInterrupts();
     } else {
-      // d1ChromaMode: cache base Hz; skip direct write only when env filter is actively decaying
-      d1ChromaEnvFiltBaseHz = cutoff;
-      if (d1ChromaEnvFiltDepth > 0.01f && d1ChromaEnvFiltTrigger != 0) return;
+      float scaled = (norm - kFade) / (1.0f - kFade);  // 0→1
+      depth = scaled;
+      baseHz = 2000.0f - 1500.0f * scaled;  // 2000→500 Hz
     }
-    AudioNoInterrupts();
-    d1LowPass.frequency(cutoff);
-    d1LowPass.resonance(1.5f);
-    AudioInterrupts();
+    d1ChromaEnvFiltDepth = depth;
+    d1ChromaEnvFiltBaseHz = baseHz;
+    if (monoBass.active) {
+      monoBass.envFiltDepth = depth;
+      monoBass.envFiltBaseHz = baseHz;
+    }
     return;
   }
 
@@ -1027,6 +1039,22 @@ static void engineD2Volume(uint8_t idx, int knobValue) {
   updateDrumDelayGains();
 }
 
+// Helper: apply D3 voice mixer gains from cached state + pitch compensation.
+// Called by both engineD3Pitch (when comp changes) and engineD3VoiceMix (when
+// mix changes).  Caller must NOT hold AudioNoInterrupts.
+static constexpr float kMixScale = 0.9f;
+static constexpr float kTrim606  = 6.0f;
+static constexpr float kTrimFM   = 3.5f;
+static constexpr float kTrimPerc = 0.15f;
+
+static void applyD3VoiceMixer() {
+  AudioNoInterrupts();
+  d3VoiceMixer.gain(0, d3VmGain606  * kMixScale * kTrim606  * d3PitchComp);
+  d3VoiceMixer.gain(1, d3VmGainFM   * kMixScale * kTrimFM   * d3PitchComp);
+  d3VoiceMixer.gain(2, d3VmGainPerc * kMixScale * kTrimPerc);
+  AudioInterrupts();
+}
+
 // Case 16: D3 Pitch
 static void engineD3Pitch(uint8_t idx, int knobValue) {
   (void)idx;
@@ -1045,9 +1073,10 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
     pitchBend = 0.60f + 0.40f * (blend * blend);
   }
 
-  // Gentle filter tracking -- shared by both modes (keeps volume steadier)
+  // Filter tracking -- shared by both modes
+  // 606 band-pass kept low to tame square-wave harshness, drops further at high pitch
   const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
-  const float bpfHz = 9800.0f * (1.0f + 0.05f * norm);
+  const float bpfHz = 7000.0f - 2000.0f * pitchBend;     // 7000->5000 Hz
   const float fmBpfHz = 4000.0f + 4000.0f * pitchBend;   // 4000->8000 Hz
   const float fmHpfHz = 1500.0f + 1500.0f * pitchBend;   // 1500->3000 Hz
 
@@ -1071,7 +1100,7 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
   } else {
     // --- NORMAL MODE: inharmonic 606, irrational FM ---
     // Precomputed log of constant ratio -- expf(x*log) is ~2x faster than powf on Cortex-M7
-    static const float LOG_HAT_RATIO  = logf(6000.0f / 400.0f);   // hatMax/hatMin
+    static const float LOG_HAT_RATIO  = logf(4000.0f / 400.0f);   // hatMax/hatMin
 
     const float hatCurve = pitchBend * pitchBend;
     const float hatBaseHz = 400.0f * expf(hatCurve * LOG_HAT_RATIO);
@@ -1117,6 +1146,12 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
 
     AudioInterrupts();
   }
+
+  // --- Pitch-based volume compensation for 606/FM ---
+  // Low pitchBend = low frequencies = less perceived energy.
+  // Boost linearly: 1.1× at pitchBend=0, 1.0× at pitchBend=1.
+  d3PitchComp = 1.0f + 0.1f * (1.0f - pitchBend);
+  applyD3VoiceMixer();
 }
 
 // Case 17: D3 Decay
@@ -1137,13 +1172,6 @@ static void engineD3VoiceMix(uint8_t idx, int knobValue) {
   static constexpr int kZone606Min  = int(1023 * 0.46f);
   static constexpr int kZone606Max  = int(1023 * 0.65f);
   static constexpr int kZonePercMin = int(1023 * 0.94f);
-
-  static constexpr float kMixScale = 0.9f;
-
-  // Voice level trims (matched so each voice solos at similar perceived level)
-  static constexpr float kTrim606  = 3.5f;
-  static constexpr float kTrimFM   = 2.5f;
-  static constexpr float kTrimPerc = 0.35f;
 
   float gain606  = 0.0f;
   float gainFM   = 0.0f;
@@ -1166,11 +1194,11 @@ static void engineD3VoiceMix(uint8_t idx, int knobValue) {
     gainPerc = 1.0f;
   }
 
-  AudioNoInterrupts();
-  d3VoiceMixer.gain(0, gain606  * kMixScale * kTrim606);
-  d3VoiceMixer.gain(1, gainFM   * kMixScale * kTrimFM);
-  d3VoiceMixer.gain(2, gainPerc * kMixScale * kTrimPerc);
-  AudioInterrupts();
+  // Cache gains for pitch compensation to re-apply when pitch changes
+  d3VmGain606 = gain606;
+  d3VmGainFM  = gainFM;
+  d3VmGainPerc = gainPerc;
+  applyD3VoiceMixer();
 }
 
 // Case 19: D3 Distort (sine-driven wavefolder)
@@ -1301,50 +1329,39 @@ static void engineMasterDelayTime(uint8_t idx, int knobValue) {
 // Case 25: Wavefold Frequency
 static void engineWfFreq(uint8_t idx, int knobValue) {
   (void)idx;
-  if (wfChromaMode) {
-    // Quantize wavefold frequency to chromatic notes (C2-C6, MIDI 36-84)
-    uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
-    float freq = midiToFreq(midiNote);
-    AudioNoInterrupts();
-    masterWfOscSine.frequency(freq);
-    masterWfOscSaw.frequency(freq);
-    AudioInterrupts();
-  } else {
-    float norm = normalizeKnob(knobValue);
-    // C2->C6 exponential: 4 octaves, every 25% = one octave
-    float baseFreq = 65.41f * expf(norm * 2.7725887f);
-
-    float sineFreq, sawFreq;
-
-    if (norm <= 0.5f) {
-      // 0-50%: sine at baseFreq, saw one octave below
-      sineFreq = baseFreq;
-      sawFreq  = baseFreq * 0.5f;
-    } else if (norm <= 0.75f) {
-      // 50-75%: saw locks to baseFreq, sine diverges up to 2x baseFreq
-      float blend = (norm - 0.5f) / 0.25f;
-      sawFreq  = baseFreq;
-      sineFreq = baseFreq * (1.0f + blend);
-    } else {
-      // 75-100%: sine locks to baseFreq, saw diverges up to 4x baseFreq
-      float blend = (norm - 0.75f) / 0.25f;
-      sineFreq = baseFreq;
-      sawFreq  = baseFreq * (1.0f + blend * 3.0f);
-    }
-
-    AudioNoInterrupts();
-    masterWfOscSine.frequency(sineFreq);
-    masterWfOscSaw.frequency(sawFreq);
-    AudioInterrupts();
-  }
+  // Always chromatic — quantize to semitones (C2-C6, MIDI 36-84)
+  uint8_t midiNote = map(knobValue, 0, 1023, 36, 84);
+  float freq = midiToFreq(midiNote);
+  AudioNoInterrupts();
+  masterWfOscSine.frequency(freq);
+  masterWfOscSaw.frequency(freq);
+  AudioInterrupts();
 }
 
-// Case 26: Master Lowpass Filter
+// Case 26: Master Filter — dual mode around noon
+//   CCW (0–460):   lowpass  — masterLowPass ladder 1000→7500 Hz
+//   Noon (460–564): off     — both filters wide open
+//   CW (564–1023):  highpass — masterHighPass SVF 30→500 Hz
 static void engineMasterLowpass(uint8_t idx, int knobValue) {
   (void)idx;
-  int freqHz = map(knobValue, 0, 1023, 1000, 7500);
+  static constexpr int kDeadLo = 460;
+  static constexpr int kDeadHi = 564;
   AudioNoInterrupts();
-  masterLowPass.frequency(freqHz);
+  if (knobValue < kDeadLo) {
+    // Lowpass: map 0→460 to 1000→7500 Hz (CCW = darker)
+    int lpHz = map(knobValue, 0, kDeadLo, 2500, 7500);
+    masterLowPass.frequency(lpHz);
+    masterHighPass.frequency(30.0f);    // HPF wide open
+  } else if (knobValue > kDeadHi) {
+    // Highpass: map 564→1023 to 30→500 Hz (CW = thinner)
+    int hpHz = map(knobValue, kDeadHi, 1023, 30, 350);
+    masterHighPass.frequency(hpHz);
+    masterLowPass.frequency(12000.0f);  // LPF wide open
+  } else {
+    // Deadband: both wide open
+    masterLowPass.frequency(12000.0f);
+    masterHighPass.frequency(30.0f);
+  }
   AudioInterrupts();
 }
 

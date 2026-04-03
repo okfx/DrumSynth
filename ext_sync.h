@@ -255,7 +255,7 @@ void externalClockISR() {
     // The (int32_t) cast makes the subtraction signed so >> 1 rounds toward zero.
     extIntervalEMA = (ema == 0)
         ? interval
-        : ema + (((int32_t)(interval - ema)) >> 1);
+        : ema + (((int32_t)interval - (int32_t)ema) >> 1);
 
     // Slow EMA for subdivision placement — doesn't chase jitter like the fast EMA.
     // At 80 BPM / 2 PPQN, 5 ms of pulse jitter shifts synthInterval by only 0.625 ms.
