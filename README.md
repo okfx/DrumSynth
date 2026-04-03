@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.1.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.2.
 
 ### [User Manual (PDF)](Documentation/DrumSynth_User_Manual.pdf)
 
@@ -24,7 +24,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **Shuffle** -- TR-909-style shuffle with 6 intensity levels. Hold X and press Step 16 to cycle through shuffle amounts.
 
-**Master Lowpass Filter** -- Ladder-style filter on the master bus.
+**Master Filter** -- Dual-mode master filter: low-pass below noon, off at noon (with deadband), high-pass above noon. Ladder-style LP (24 dB/oct), state-variable HP (12 dB/oct).
 
 **Audio Outputs** -- 1/4" and 1/8" line out, headphone out, and USB audio.
 
@@ -44,7 +44,7 @@ Toggle CHROMA on a per-channel basis by holding X and pressing D1, D2, D3, or �
 
 CHROMA turns the drum machine into a step-sequenced synthesizer. Any voice can be switched from its normal drum sound to a chromatic pitch mode, where each step in the sequence plays its own programmable note. Layer multiple CHROMA voices to build basslines, melodies, and tonal textures on top of (or instead of) the drum pattern.
 
-When D1 CHROMA is active, the Body knob becomes a low-pass filter and the Snap knob becomes envelope filter amount -- the same behavior as MONOBASS mode. Active CHROMA channels are indicated by small dots at the bottom of the OLED.
+When D1 CHROMA is active, the Snap knob becomes attack (0.5–250 ms) and the Body knob becomes envelope filter with a 3-zone curve: deadband at minimum, crossfade zone, then full envelope filter sweep -- the same behavior as MONOBASS mode. Attack time also controls the envelope filter sweep speed. Active CHROMA channels are indicated by square toggles at the bottom of the OLED.
 
 ## MONOBASS Mode
 
@@ -52,7 +52,7 @@ Hold X for several seconds to enter MONOBASS mode.
 
 MONOBASS turns the step buttons into a live monophonic keyboard for D1. 13 step buttons become chromatic keys covering one full octave (C to C); the pitch knob shifts octaves. D2 and D3 continue to play normally.
 
-As in D1 Chroma mode, the Body knob becomes a low-pass filter and the Snap knob becomes envelope filter amount. The oscilloscope remains visible.
+As in D1 Chroma mode, the Snap knob becomes attack and the Body knob becomes envelope filter. The oscilloscope remains visible. Save requires a double-press confirmation.
 
 ## Delay Line
 
@@ -83,6 +83,20 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
 | `Documentation/USB_AUDIO_MAC.md` | macOS USB audio clock drift fix |
+
+## Changes (v1.0.2)
+
+- **Envelope filter reworked** -- 3-zone curve: deadband at minimum (no effect), crossfade zone, then full envelope filter sweep. Eliminates premature sound darkening at low knob settings.
+- **Attack controls envelope filter sweep** -- Attack knob (Snap in normal mode) now also sets the envelope filter time constant. Slow attack = slow filter sweep for breathing wah effects.
+- **Dual-mode master filter** -- Master filter knob: low-pass below noon, off at noon (with deadband), high-pass above noon. LP floor 2500 Hz, HP max 350 Hz.
+- **D3 voice rebalancing** -- Pitch-based volume compensation boosts 606/FM at low tunings. 606 band-pass tracks pitch downward to tame square-wave harshness at high tunings. 606 max pitch capped at 4000 Hz. Voice trims rebalanced (606=6.0, FM=3.5, perc=0.20). D3 LPF floor raised to 3000 Hz.
+- **Save double-press confirmation** -- Save now requires pressing twice within 2 seconds. First press shows "PRESS AGAIN / TO SAVE".
+- **MONOBASS integrator debounce** -- Replaced timer-based debounce with 5-sample integrator for cleaner key response with no ghost triggers.
+- **MONOBASS grid shows once** -- Knob reference grid only displays on first entry per power cycle, then stays on unobstructed scope view.
+- **Knob ADC deadband** -- 3-count post-filter deadband suppresses residual ADC jitter that caused untouched knobs to ghost-move.
+- **Chroma toggle indicators** -- Larger 12x12 squares with black outlines, evenly spaced, rendered as a background layer. 120 ms toggle animation.
+- **Parameter overlay** -- Centered in oscilloscope window with solid 2px text outlines for readability.
+- **D1 attack range** -- 0.5–250 ms (was wider). Chroma entry snap reduced to 50%.
 
 ## Changes (v1.0.1)
 
