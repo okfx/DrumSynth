@@ -107,7 +107,6 @@ extern MonoAnimPhase monoAnimPhase;
 void enterMonoBassMode() {
   monoBass.active = true;
   monoBass.modeEnteredAt = sysTickMs;
-  saveMonoBassStatusToEEPROM(true);
   // wfChromaMode is always true — no save/restore needed
   // Stop transport if running
   noInterrupts();
@@ -118,6 +117,7 @@ void enterMonoBassMode() {
   pendingStepCount = 0;
   wantSwitchToExt = false;
   interrupts();
+  saveMonoBassStatusToEEPROM(true);  // after critical section — EEPROM writes are slow
   monoBass.heldCount = 0;  // heldKeys contents don't matter when heldCount == 0
   monoBass.showOctave = false;
   monoBass.noteShowStart = 0;

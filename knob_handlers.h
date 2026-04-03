@@ -1376,7 +1376,10 @@ static void engineMasterTempo(uint8_t idx, int knobValue) {
   // update() finishes the current interval, then applies the new period --
   // no gap, no stutter.  shuffledStepPeriodUs() handles shuffle + clamping.
   if (transportState == RUN_INT) {
-    stepTimer.update(shuffledStepPeriodUs(currentStep));
+    noInterrupts();
+    uint8_t step = currentStep;
+    interrupts();
+    stepTimer.update(shuffledStepPeriodUs(step));
   }
 }
 
