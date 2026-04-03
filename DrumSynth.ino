@@ -452,6 +452,12 @@ static int16_t knobBootValue[knobCount];   // ADC value at boot (after filter se
 static bool    knobUnlocked[knobCount];    // true once the user has moved this knob
 static constexpr int KNOB_UNLOCK_THRESHOLD = 10;  // ADC counts of intentional movement
 
+// Post-filter deadband: suppress ADC jitter after boot-lock is released.
+// Only apply a knob update if the value has moved >= this many counts from
+// the last applied value.  Kills residual ±1–2 LSB ghost drift.
+static int16_t knobLastApplied[knobCount];
+static constexpr int KNOB_DEADBAND = 3;
+
 // helpers
 static inline float mapFloat(int inputValue, int inMin, int inMax, float outMin, float outMax) {
   if (inMax == inMin) return outMin;  // guard: avoid divide-by-zero
@@ -1717,6 +1723,7 @@ void initKnobsFromHardware() {
     }
 
     knobBootValue[idx] = rawValue;
+    knobLastApplied[idx] = rawValue;
     knobUnlocked[idx] = false;
 
     applyKnobToEngine(idx, rawValue);
@@ -1773,6 +1780,12 @@ void updateKnobs() {
         if (diff < KNOB_UNLOCK_THRESHOLD) continue;
         knobUnlocked[idx] = true;
       }
+
+      // Post-filter deadband: suppress residual ±1–2 LSB jitter
+      int delta = knobValue - knobLastApplied[idx];
+      if (delta < 0) delta = -delta;
+      if (delta < KNOB_DEADBAND) continue;
+      knobLastApplied[idx] = knobValue;
 
       updateParameterDisplay(idx, knobValue);
       applyKnobToEngine(idx, knobValue);

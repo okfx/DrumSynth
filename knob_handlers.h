@@ -1045,7 +1045,7 @@ static void engineD2Volume(uint8_t idx, int knobValue) {
 static constexpr float kMixScale = 0.9f;
 static constexpr float kTrim606  = 6.0f;
 static constexpr float kTrimFM   = 3.5f;
-static constexpr float kTrimPerc = 0.15f;
+static constexpr float kTrimPerc = 0.20f;
 
 static void applyD3VoiceMixer() {
   AudioNoInterrupts();
