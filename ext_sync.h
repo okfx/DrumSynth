@@ -1,5 +1,4 @@
-#ifndef EXT_SYNC_H
-#define EXT_SYNC_H
+#pragma once
 // ============================================================================
 //  External Clock Sync — ext_sync.h
 //
@@ -61,7 +60,9 @@ extern volatile uint8_t currentStep;
 //    transportState            — uint8_t, atomic on ARM, safe for ISR to read
 //    sequencePlaying           — bool, atomic on ARM, safe for ISR to read
 //    armed                     — bool, atomic on ARM. Main loop sets (PLAY handler) and clears (resetExternalClockState), ISR clears (countdown complete → fires step 0).
-//    armPulseCountdown         — uint16_t, atomic on ARM (aligned LDRH/STRH). Main loop sets (PLAY handler) and clears (resetExternalClockState), ISR decrements.
+//    armPulseCountdown         — uint16_t. Main loop sets (PLAY handler) and clears (resetExternalClockState), ISR decrements.
+//                                Individual loads/stores are atomic (aligned LDRH/STRH), but the decrement is a non-atomic RMW (LDRH→SUB→STRH).
+//                                Safe because all ISRs share NVIC priority 128 — no preemption between ISRs, and main loop only writes when transport is stopped.
 //    ppqn                      — volatile uint8_t, main loop writes (PPQN mode), ISR reads. Atomic on ARM.
 //
 //  ISR writes, main loop reads:
@@ -508,4 +509,3 @@ void updateExtBpmDisplay() {
   }
 }
 
-#endif // EXT_SYNC_H

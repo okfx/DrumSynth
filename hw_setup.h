@@ -1,5 +1,4 @@
-#ifndef HW_SETUP_H
-#define HW_SETUP_H
+#pragma once
 
 // ============================================================================
 //  Hardware Pin Assignments and Peripheral Setup
@@ -48,4 +47,3 @@ static constexpr int stepButtonCount   = 16;  // 1 mux × 16 channels
 static constexpr int otherButtonsCount = 10;  // 1 mux, 10 of 16 channels used
 static constexpr int numSteps          = stepButtonCount;  // Sequencer step count
 
-#endif

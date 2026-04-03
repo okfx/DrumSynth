@@ -1,5 +1,4 @@
-#ifndef MONOBASS_H
-#define MONOBASS_H
+#pragma once
 // ============================================================================
 //  MONOBASS — monobass.h
 //
@@ -81,8 +80,8 @@ extern volatile bool wantSwitchToExt;
 extern float d1EffectiveDecay;
 extern float d1CachedHoldMs;
 extern RailMode activeRail;
-extern char displayParameter1[24];
-extern char displayParameter2[24];
+extern char displayParameter1[];
+extern char displayParameter2[];
 extern uint32_t parameterOverlayStartTick;
 extern ShiftRegister74HC595<2> ledShiftReg;
 // chroma.h is included before monobass.h — chroma vars/funcs are in scope.
@@ -458,4 +457,3 @@ void renderMonoBassScope(uint32_t nowMs) {
   renderMonoBassIdleGrid(nowMs);
 }
 
-#endif // MONOBASS_H

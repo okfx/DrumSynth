@@ -1,5 +1,4 @@
-#ifndef OSCILLOSCOPE_H
-#define OSCILLOSCOPE_H
+#pragma once
 // ============================================================================
 //  Oscilloscope — oscilloscope.h
 //
@@ -168,4 +167,3 @@ void drawScopeWaveform(int x, int y, int h) {
   }
 }
 
-#endif // OSCILLOSCOPE_H

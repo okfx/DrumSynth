@@ -1,5 +1,4 @@
-#ifndef EEPROM_H_DRUMACHINE
-#define EEPROM_H_DRUMACHINE
+#pragma once
 // ============================================================================
 //  EEPROM Persistence — eeprom.h
 //
@@ -62,8 +61,8 @@ extern volatile uint8_t ppqn;
 
 // UI overlay feedback (for "PATTERN LOADED" / "SAVED" messages)
 extern RailMode activeRail;
-extern char displayParameter1[24];
-extern char displayParameter2[24];
+extern char displayParameter1[];
+extern char displayParameter2[];
 extern uint32_t parameterOverlayStartTick;
 extern volatile uint32_t sysTickMs;
 
@@ -90,9 +89,9 @@ struct PatternStore {
 
 struct EepromSlot {
   uint16_t magic;
-  uint16_t seq;
+  uint16_t seq;          // monotonic write counter — detects newest slot on recovery
   PatternStore patterns;
-  uint8_t crc;  // CRC8 over PatternStore bytes — detects partial writes / corruption
+  uint8_t crc;           // CRC8 over PatternStore bytes — detects partial writes / corruption
 };
 
 static_assert(sizeof(PatternStore) == 97, "PatternStore layout changed — bump EEPROM_MAGIC");
@@ -332,4 +331,3 @@ void saveMonoBassStatusToEEPROM(bool active) {
   EEPROM.update(EEPROM_MONOBASS_ADDR + 1, active ? 1 : 0);
 }
 
-#endif // EEPROM_H_DRUMACHINE

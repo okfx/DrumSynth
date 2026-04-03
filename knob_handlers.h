@@ -1,5 +1,4 @@
-#ifndef KNOB_HANDLERS_H
-#define KNOB_HANDLERS_H
+#pragma once
 // ============================================================================
 //  KNOB HANDLERS — knob_handlers.h
 //
@@ -107,9 +106,8 @@ extern float d3PitchComp;
 extern float d3VmGain606, d3VmGainFM, d3VmGainPerc;
 extern bool ppqnModeActive;
 extern bool patternDirty;
-static constexpr size_t kDisplayParamSize = 24;
-extern char displayParameter1[kDisplayParamSize];
-extern char displayParameter2[kDisplayParamSize];
+extern char displayParameter1[];
+extern char displayParameter2[];
 extern uint32_t parameterOverlayStartTick;
 extern volatile uint32_t sysTickMs;
 extern RailMode activeRail;
@@ -1518,4 +1516,3 @@ static const KnobDescriptor knobTable[32] = {
   /* 31 Delay Mix     */ { displayMasterDelayMix,  engineMasterDelayMix  },
 };
 
-#endif // KNOB_HANDLERS_H

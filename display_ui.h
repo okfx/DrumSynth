@@ -72,9 +72,6 @@ void drawOutlinedText(int x, int y, const char* text) {
   static const int8_t offsets[][2] = {
     {-1, 0}, {1, 0}, {0,-1}, {0, 1},    // cardinal 1px
     {-1,-1}, {1,-1}, {-1,1}, {1, 1},    // diagonal 1px
-    {-2, 0}, {2, 0}, {0,-2}, {0, 2},    // cardinal 2px
-    {-2,-1}, {-2,1}, {2,-1}, {2, 1},    // mid offsets (fill gaps)
-    {-1,-2}, {1,-2}, {-1,2}, {1, 2},    // mid offsets (fill gaps)
   };
   display.setTextColor(0);
   for (auto& o : offsets) {

@@ -106,6 +106,9 @@ enum ShuffleMode : uint8_t {
   SHUFFLE_OFF = 0, SHUFFLE_1, SHUFFLE_2, SHUFFLE_3,
   SHUFFLE_4, SHUFFLE_5, SHUFFLE_6, SHUFFLE_7
 };
+// ISR reads via shuffledStepPeriodUs(), main loop writes via combo handler.
+// Benign TOCTOU: ISR may read stale shuffleMode for one step after a change —
+// musically imperceptible (one step with slightly wrong shuffle timing).
 static volatile ShuffleMode shuffleMode = SHUFFLE_OFF;
 static constexpr uint8_t kShuffleDelayTicks[8] = { 0, 0, 2, 4, 6, 8, 10, 12 };
 // Index 1 (SHUFFLE_1) is kept for EEPROM backward compat — identical to OFF (50%).
@@ -218,9 +221,10 @@ IntervalTimer sysTickTimer;
 IntervalTimer stepTimer;
 
 // Written by sysTickISR every 1ms, read by main loop.
-// Single aligned 32-bit reads are atomic on Cortex-M7, so a lone read is safe
-// without noInterrupts(). Use noInterrupts() only when snapshotting multiple
-// ISR variables that must be consistent together.
+// Convention: single aligned 32-bit reads (LDR on Cortex-M7) are atomic, so
+// lone reads do NOT need noInterrupts(). Use noInterrupts() only when
+// snapshotting multiple ISR variables that must be consistent together.
+// Both patterns appear throughout the codebase — this is intentional.
 volatile uint32_t sysTickMs = 0;
 
 static void cancelMonoAnim() {
@@ -337,8 +341,9 @@ float d1CachedHoldMs = 56.25f;               // scales with decay; see updateD1H
 // --- Display State (main-loop only, no ISR access) ---
 
 // Parameter overlay text
-char displayParameter1[24] = "";
-char displayParameter2[24] = "";
+static constexpr size_t kDisplayParamSize = 24;
+char displayParameter1[kDisplayParamSize] = "";
+char displayParameter2[kDisplayParamSize] = "";
 uint32_t parameterOverlayStartTick = 0;
 
 // Voice rail caret positions
@@ -576,7 +581,7 @@ MonoBassState monoBass;
 // display_ui.h (Phase 2 overlay in updateDisplay).
 bool splashDissolveActive = false;
 uint32_t splashDissolveStartMs = 0;
-uint8_t splashCapture[1024];  // captured splash framebuffer
+DMAMEM uint8_t splashCapture[1024];  // captured splash framebuffer (RAM2 — only used during boot dissolve)
 
 // Splash animation — version display with Bayer dissolve into idle UI.
 #include "splash.h"
@@ -945,6 +950,9 @@ void loop() {
     interrupts();
 
     if (needsReinit) {
+      // Safe because OLED_RST == -1 (no reset pin) — display.begin() only
+      // re-sends the init command sequence over SPI, no hardware reset pulse.
+      // If a reset pin were wired, the pulse timing could block ~100ms.
       display.begin(0, true);  // i2cAddr=0 unused for SPI, reset=true
       display.clearDisplay();
       playSequence();  // drain any pending steps before push
@@ -1015,6 +1023,9 @@ void loop() {
     // (A second guard, OLED_GUARD_US, protects the push-start inside
     // isSafeToPushOled() for cases where the step becomes imminent after
     // the build completes but before the push begins.)
+    // Benign TOCTOU: transportState and subdivTimerDueUs are read without a
+    // combined noInterrupts() guard.  Worst case: we skip one extra frame or
+    // fail to skip one — a single visual glitch, no functional consequence.
     bool skipForSubdiv = false;
     if (transportState == RUN_EXT && subdivTimerDueUs != 0) {
       uint32_t nowUs = micros();
@@ -1125,6 +1136,9 @@ void playSequence() {
 // so this function only fires audio — no step counter mutation.
 // Called from main loop context via playSequence().
 void playSequenceCore(uint8_t step) {
+#ifdef DEBUG
+  if (step >= numSteps) return;  // defensive — should never happen
+#endif
   // MONOBASS mode: entire sequencer suppressed — D1 is live keyboard only
   if (monoBass.active) return;
 

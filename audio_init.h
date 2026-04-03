@@ -1,5 +1,4 @@
-#ifndef AUDIO_INIT_H
-#define AUDIO_INIT_H
+#pragma once
 // ============================================================================
 //  Audio Init — audio_init.h
 //
@@ -425,4 +424,3 @@ void audioInit() {
   finalFilter.setHighShelf(3, 4500.0f, 0.7f, 2.5f);   // +2.5dB air above 4.5kHz
 }
 
-#endif
