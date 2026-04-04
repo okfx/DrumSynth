@@ -24,7 +24,7 @@ static constexpr float D1_ATTACK_MS = 0.5f;  // 808-style instant punch — fixe
 // Full definition is in the button state machine section below.
 struct ButtonHandler;
 
-static constexpr const char* FIRMWARE_VERSION   = "1.0.2";
+static constexpr const char* FIRMWARE_VERSION   = "1.0.3";
 
 // Track enum — declared early so Arduino auto-prototypes can reference it
 enum Track : uint8_t {
@@ -35,7 +35,7 @@ enum Track : uint8_t {
 
 // overlay and debounce timing
 static constexpr uint16_t PARAMETER_OVERLAY_DURATION_MS = 500;
-static constexpr uint16_t SHUFFLE_OVERLAY_DURATION_MS  = 800;
+static constexpr uint16_t SWING_OVERLAY_DURATION_MS    = 800;
 static constexpr uint16_t STEP_DEBOUNCE_MS = 10;        // 10ms — fast response for sync (step buttons only)
 static bool monoBassKeyEvent = false;                   // set by handleMonoBassButton() to skip next OLED frame
 static constexpr uint16_t PLAY_DEBOUNCE_MS = 2;       // Play button: minimal debounce for tight sync
@@ -97,26 +97,29 @@ float d3VmGain606 = 1.0f, d3VmGainFM = 0.0f, d3VmGainPerc = 0.0f;
 // Wavefolder is always chromatic (quantized to semitones)
 bool wfChromaMode = true;
 
-// Shuffle state (TR-909 style, 8 levels + OFF)
+// Swing state (TR-909 style, 14 levels + OFF)
 // Delay ticks are on a 96-PPQN grid: each 16th = 24 ticks.
-// Each level delays the even 16th note by kShuffleDelayTicks[mode] ticks,
+// Each level delays the even 16th note by kSwingDelayTicks[mode] ticks,
 // stretching the long gap and compressing the short gap while preserving
-// pair duration.  Levels 1–8 map to ticks 1–8, giving ~2% increments
-// from 52% to 67% (triplet).
-enum ShuffleMode : uint8_t {
-  SHUFFLE_OFF = 0,
-  SHUFFLE_1, SHUFFLE_2, SHUFFLE_3, SHUFFLE_4,
-  SHUFFLE_5, SHUFFLE_6, SHUFFLE_7, SHUFFLE_8
+// pair duration.  Levels 1–14 map to ticks 1–14, covering 52%–79%.
+enum SwingMode : uint8_t {
+  SWING_OFF = 0,
+  SWING_1, SWING_2, SWING_3, SWING_4, SWING_5, SWING_6, SWING_7,
+  SWING_8, SWING_9, SWING_10, SWING_11, SWING_12, SWING_13, SWING_14
 };
-static constexpr uint8_t SHUFFLE_COUNT = 9;  // OFF + 8 levels
-// ISR reads via shuffledStepPeriodUs(), main loop writes via combo handler.
-// Benign TOCTOU: ISR may read stale shuffleMode for one step after a change —
-// musically imperceptible (one step with slightly wrong shuffle timing).
-static volatile ShuffleMode shuffleMode = SHUFFLE_OFF;
-static constexpr uint8_t kShuffleDelayTicks[SHUFFLE_COUNT] = { 0, 1, 2, 3, 4, 5, 6, 7, 8 };
-static constexpr uint8_t kShufflePercent[SHUFFLE_COUNT]    = { 50, 52, 54, 56, 58, 60, 63, 65, 67 };
-static uint32_t shuffleOverlayStartTick = 0;   // big shuffle display trigger (0 = inactive)
-static char     shuffleOverlayText[16]  = "";   // cached label: "OFF" or "3 / 58%"
+static constexpr uint8_t SWING_COUNT = 15;  // OFF + 14 levels
+// ISR reads via swungStepPeriodUs(), main loop writes via combo handler.
+// Benign TOCTOU: ISR may read stale swingMode for one step after a change —
+// musically imperceptible (one step with slightly wrong swing timing).
+static volatile SwingMode swingMode = SWING_OFF;
+static constexpr uint8_t kSwingDelayTicks[SWING_COUNT] = {
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14
+};
+static constexpr uint8_t kSwingPercent[SWING_COUNT] = {
+  50, 52, 54, 56, 58, 60, 63, 65, 67, 69, 71, 73, 75, 77, 79
+};
+static uint32_t swingOverlayStartTick = 0;   // big swing display trigger (0 = inactive)
+static char     swingOverlayText[16]  = "";   // cached label: "OFF" or "58%"
 
 // Bayer 4×4 ordered dithering — returns true if pixel (x,y) should be ON
 // at the given density (0.0 = all off, 1.0 = all on).
@@ -261,7 +264,7 @@ void precomputeMonoMasks() {
   monoMasksReady = true;
 }
 
-// bpm: main-loop writes (knob handler), ISR reads via shuffledStepPeriodUs().
+// bpm: main-loop writes (knob handler), ISR reads via swungStepPeriodUs().
 // 32-bit float read is atomic on Cortex-M7 (single LDR).
 volatile float bpm = 120.0f;
 // currentStep: ISR-written (stepISR, externalClockISR, subdivTimerCallback),
@@ -485,6 +488,13 @@ float d1ChromaEnvFiltBaseHz = 100.0f; // resting cutoff cached from body knob
 uint32_t d1ChromaEnvFiltTrigger = 0;  // sysTickMs of last D1 trigger in chroma mode
 float d1EnvFiltTauMs = 60.0f;        // filter decay tau — scales with attack knob
 
+// D3 envelope filter state (always-on, replaces static lowpass)
+float d3EnvFiltDepth      = 0.0f;     // 0–1 from knob 21
+float d3EnvFiltBaseHz     = 12000.0f; // resting master cutoff from knob 21
+float d3EnvFiltPercBaseHz = 6000.0f;  // resting perc cutoff from knob 21
+uint32_t d3EnvFiltTrigger = 0;        // sysTickMs of last D3 trigger
+float d3EnvFiltTauMs      = 8.0f;    // tracks decay: tau = decay * 0.3
+
 void applyD1Freq() {
   AudioNoInterrupts();
   d1OscSine.frequency(d1BaseFreq);
@@ -568,6 +578,8 @@ bool isSafeToPushOled(uint32_t nowMs);
 
 // Shared constant: envelope filter ceiling used by both chroma and MONOBASS.
 static constexpr float kEnvFiltCeiling = 10000.0f;
+// D3 has more high-frequency energy — higher ceiling for more extreme sweep.
+static constexpr float kD3EnvFiltCeiling = 16000.0f;
 
 // Chroma — MIDI pitch tables, note conversion, envelope filter, dot animation.
 // Depends on: audiotool.h, chroma state vars (defined above).
@@ -915,6 +927,16 @@ void loop() {
     }
   }
 
+  // D3 envelope filter decay — runs every 2ms (faster than D1 for snappy hats).
+  // Always-on: no mode guard needed. updateD3EnvFilter() returns early if depth < 0.01.
+  {
+    static uint32_t lastD3EnvFiltTick = 0;
+    if ((uint32_t)(loopNowTick - lastD3EnvFiltTick) >= 2) {
+      lastD3EnvFiltTick = loopNowTick;
+      updateD3EnvFilter(loopNowTick);
+    }
+  }
+
   // Expire accent preview and restore normal LEDs
   if (accentPreview.active) {
     if ((uint32_t)(loopNowTick - accentPreview.startTick) >= ACCENT_PREVIEW_DURATION_MS) {
@@ -1253,6 +1275,22 @@ void triggerD3(uint8_t step) {
   d3FmAmpEnv.noteOn();
   d3606AmpEnv.noteOn();
   d3Perc.noteOn();
+  // Envelope filter: snap to peak frequency, tau tracks decay
+  if (d3EnvFiltDepth > 0.01f) {
+    d3EnvFiltTauMs = applyDecay * 0.3f;
+    if (d3EnvFiltTauMs < 3.0f) d3EnvFiltTauMs = 3.0f;  // floor at 3ms
+    d3EnvFiltTrigger = sysTickMs;
+    float peak = d3EnvFiltBaseHz
+               + d3EnvFiltDepth * (kD3EnvFiltCeiling - d3EnvFiltBaseHz);
+    if (peak > kD3EnvFiltCeiling) peak = kD3EnvFiltCeiling;
+    d3MasterFilter.frequency(peak);
+    d3MasterFilter.resonance(0.35f + 0.35f * d3EnvFiltDepth);
+    static constexpr float kPercFiltCeiling = 4000.0f;
+    float percPeak = d3EnvFiltPercBaseHz
+                   + d3EnvFiltDepth * (kPercFiltCeiling - d3EnvFiltPercBaseHz);
+    if (percPeak > kPercFiltCeiling) percPeak = kPercFiltCeiling;
+    d3PercFilter.frequency(percPeak);
+  }
   AudioInterrupts();
 }
 
@@ -1340,7 +1378,7 @@ void selectTrack(Track t) {
 void updateLEDs() {
   // Main-loop only — no ISR access to accentPreview*, no guards needed
 
-  // X-combo held — flash combo-active LEDs (0–9 = mem slots, 15 = shuffle).
+  // X-combo held — flash combo-active LEDs (0–9 = mem slots, 15 = swing).
   // ~1.7 Hz blink, same phase as OLED chroma labels and slotPending blink.
   // monoAnimPhase check: allow normal LED updates during MONOBASS animation.
   if (comboMod.held && !comboMod.comboFired
@@ -1514,7 +1552,7 @@ void updateStepButtons() {
         continue;
       }
 
-      // Combo+step: slot select (0-9), shuffle (15), or no-op (10-14)
+      // Combo+step: slot select (0-9), swing (15), or no-op (10-14)
       if (comboMod.held && btnState[i]) {
         cancelMonoAnim();
 
@@ -1531,13 +1569,13 @@ void updateStepButtons() {
         }
 
         if (i == 15) {
-          // Step 15: cycle shuffle mode (OFF → 1 → … → 7 → OFF).
+          // Step 15: cycle swing mode (OFF → 1 → … → 7 → OFF).
           // Keep comboFired=false so the overlay stays visible and the user can
           // keep holding X and pressing step 15 to cycle further.
           // Suppress MONOBASS entry (monoFired+monoAnimStarted) without clearing the overlay.
           comboMod.monoAnimStarted = true;
           comboMod.monoFired = true;
-          cycleShuffle(nowTick);
+          cycleSwing(nowTick);
         } else if (i <= 9) {
           // Steps 0-9: select memory slot (pending).
           // Does NOT load — user presses LOAD to commit.

@@ -28,8 +28,8 @@ extern float extBpmDisplay;
 extern volatile float bpm;
 extern volatile uint32_t sysTickMs;
 extern volatile TransportState transportState;
-extern uint32_t shuffleOverlayStartTick;
-extern char     shuffleOverlayText[];
+extern uint32_t swingOverlayStartTick;
+extern char     swingOverlayText[];
 extern bool     slotPending;
 extern volatile bool sequencePlaying;
 extern volatile bool armed;
@@ -516,21 +516,21 @@ void updateDisplay() {
     return;
   }
 
-  // Shuffle overlay active within 800 ms of last cycle.
-  // Computed early so X-combo overlay can yield to a fresh shuffle toggle.
-  // Once the 800 ms timer expires, clear the start tick so a stale shuffle
+  // Swing overlay active within 800 ms of last cycle.
+  // Computed early so X-combo overlay can yield to a fresh swing toggle.
+  // Once the 800 ms timer expires, clear the start tick so a stale swing
   // overlay doesn't re-activate every time X is held in the future.
-  bool shuffleOverlayActive = false;
-  if (shuffleOverlayStartTick) {
-    if ((uint32_t)(nowMs - shuffleOverlayStartTick) < SHUFFLE_OVERLAY_DURATION_MS) {
-      shuffleOverlayActive = true;
+  bool swingOverlayActive = false;
+  if (swingOverlayStartTick) {
+    if ((uint32_t)(nowMs - swingOverlayStartTick) < SWING_OVERLAY_DURATION_MS) {
+      swingOverlayActive = true;
     } else {
-      shuffleOverlayStartTick = 0;
+      swingOverlayStartTick = 0;
     }
   }
 
   // X-combo overlay flag — rendered after normal UI, before OLED push.
-  bool xComboOverlayActive = comboMod.held && !comboMod.comboFired && !shuffleOverlayActive
+  bool xComboOverlayActive = comboMod.held && !comboMod.comboFired && !swingOverlayActive
       && (nowMs - comboMod.pressTick) >= COMBO_OVERLAY_DELAY_MS
       && !ppqnModeActive && !monoBass.active && monoAnimPhase == MONO_ANIM_NONE;
 
@@ -581,7 +581,7 @@ void updateDisplay() {
 
   // Scope area: chroma note select > oscilloscope, then MONOBASS overlay on top
   bool noteSelectActive = renderChromaNoteSelect();
-  if (!noteSelectActive && !shuffleOverlayActive) {
+  if (!noteSelectActive && !swingOverlayActive) {
     drawScopeWaveform(2, 22, SCOPE_DISPLAY_HEIGHT);
   }
   renderMonoBassScope(nowMs);  // outlined overlay on top of scope
@@ -597,23 +597,23 @@ void updateDisplay() {
     }
   }
 
-  // Big shuffle overlay — centered text size 2.
-  if (shuffleOverlayActive) {
+  // Big swing overlay — centered text size 2.
+  if (swingOverlayActive) {
     display.setTextSize(2);
     display.setTextColor(1);
-    // "SHUFFLE" header — centered
+    // "SWING" header — centered
     {
       int16_t x1, y1; uint16_t w, h;
-      display.getTextBounds("SHUFFLE", 0, 0, &x1, &y1, &w, &h);
+      display.getTextBounds("SWING", 0, 0, &x1, &y1, &w, &h);
       display.setCursor(64 - w / 2, 24);
-      display.print("SHUFFLE");
+      display.print("SWING");
     }
     // Value line — centered below header
     {
       int16_t x1, y1; uint16_t w, h;
-      display.getTextBounds(shuffleOverlayText, 0, 0, &x1, &y1, &w, &h);
+      display.getTextBounds(swingOverlayText, 0, 0, &x1, &y1, &w, &h);
       display.setCursor(64 - w / 2, 44);
-      display.print(shuffleOverlayText);
+      display.print(swingOverlayText);
     }
     display.setTextSize(1);
   }
@@ -622,12 +622,12 @@ void updateDisplay() {
   // In MONOBASS, allow D1 voice rail through (D1 shape knob is still active).
   if (noteSelectActive) overlayActiveNow = false;
   // Chroma dots render first — parameter overlay and other text draw on top.
-  if (!shuffleOverlayActive) {
+  if (!swingOverlayActive) {
     renderChromaDots(nowMs);
   }
 
   if (monoBass.active && railSnap != RAIL_D1_SHAPE) overlayActiveNow = false;
-  if (shuffleOverlayActive) overlayActiveNow = false;
+  if (swingOverlayActive) overlayActiveNow = false;
   if (overlayActiveNow) {
     renderParameterOverlay(railSnap, param1Snap, param2Snap);
   }

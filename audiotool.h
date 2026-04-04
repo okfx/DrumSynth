@@ -5,101 +5,102 @@
 #include <SerialFlash.h>
 
 // GUItool: begin automatically generated code
-AudioSynthWaveform       d3606Osc3;      //xy=167.5,876.25
-AudioSynthWaveform       d3606Osc6;      //xy=167.5,1008.75
-AudioSynthWaveform       d3606Osc5;      //xy=168.75,958.75
-AudioSynthWaveform       d3606Osc4;      //xy=171.25,917.5
-AudioSynthWaveform       d3606Osc2;      //xy=172.5,838.75
-AudioSynthWaveform       d3606Osc1;      //xy=173.75,800
-AudioSynthWaveformDc     d1PitchDC;      //xy=180,120
-AudioSynthWaveformModulated d2Osc;          //xy=180,370
-AudioSynthNoiseWhite     d2Noise;        //xy=180,420
-AudioSynthNoiseWhite     clapNoise1;     //xy=180,650
-AudioSynthNoiseWhite     clapNoise2;     //xy=180,720
-AudioSynthWaveform       d3FmMod2;       //xy=177.5,1433.75
-AudioSynthWaveform       d3FmMod1;       //xy=186.25,1362.5
-AudioSynthWaveformModulated d3FmCarrier2;   //xy=369.9999694824219,1443.75
-AudioEffectEnvelope      d1PitchEnv;     //xy=380,150
-AudioEffectEnvelope      d2AmpEnv;       //xy=380,370
-AudioEffectEnvelope      d2NoiseEnv;     //xy=380,420
-AudioSynthSimpleDrum     d2ClickTransient; //xy=380,480
-AudioEffectEnvelope      clapAmpEnv1;    //xy=380,650
-AudioEffectEnvelope      clapAmpEnv2;    //xy=380,720
-AudioSynthWaveformModulated d3FmCarrier1;   //xy=377.4999694824219,1375
-AudioMixer4              d3606OscMixer1; //xy=541.25,803.75
-AudioMixer4              d3606OscMixer2; //xy=547.5,891.25
-AudioSynthWaveformModulated d1OscSine;      //xy=580,110
-AudioSynthWaveformModulated d1OscSaw;       //xy=580,160
-AudioSynthWaveformModulated d1OscSquare;    //xy=580,210
-AudioSynthSimpleDrum     d2Body;         //xy=580,370
-AudioFilterStateVariable d2NoiseFilter;  //xy=580,420
-AudioFilterStateVariable d2ClickFilter;  //xy=580,480
-AudioFilterStateVariable clapFilter1;    //xy=580,650
-AudioFilterStateVariable clapFilter2;    //xy=580,720
-AudioMixer4              d3FmCarrierMixer; //xy=593.75,1300
-AudioMixer4              d3FmBusMixer;   //xy=721.2500305175781,1145
-AudioMixer4              d1OscMixer;     //xy=780,160
-AudioMixer4              d2VoiceMixer;   //xy=780,410
-AudioMixer4              d3606BusMixer;  //xy=778.7500305175781,823.75
-AudioEffectDelay         clapDelay1;     //xy=780,650
-AudioEffectDelay         clapDelay2;     //xy=780,720
-AudioFilterStateVariable d3FmBandPass;   //xy=918.75,1153.75
-AudioEffectEnvelope      d1AmpEnv;       //xy=980,160
-AudioFilterStateVariable d3606HighPass;  //xy=977.5000610351562,897.5
-AudioFilterStateVariable d2VoiceHighPass; //xy=980,410
-AudioMixer4              clapMixer1;     //xy=980,650
-AudioMixer4              clapMixer2;     //xy=980,720
-AudioFilterStateVariable d3FmHighPass;   //xy=1123.75,1076.25
-AudioFilterStateVariable d1LowPass;      //xy=1180,160
-AudioSynthWaveformDc     d1WfDrive;      //xy=1180,250
-AudioMixer4              clapBusMixer;   //xy=1180,680
-AudioFilterStateVariable d3606BandPass;  //xy=1180,900
-AudioSynthSimpleDrum     d3Perc;         //xy=1228.75,1140
-AudioEffectEnvelope      d3FmAmpEnv;     //xy=1365,1072.5
-AudioEffectEnvelope      d3606AmpEnv;    //xy=1372.5,902.5
-AudioSynthSimpleDrum     d1Snap;         //xy=1380,100
-AudioEffectWaveFolder    d1Wavefolder;   //xy=1380,230
-AudioFilterStateVariable clapMasterFilter; //xy=1380,680
-AudioFilterStateVariable d3PercFilter;        //xy=1385,1146.25
-AudioAmplifier           d1SnapAmp;      //xy=1580,100
-AudioMixer4              d1VoiceMixer;   //xy=1580,180
-AudioSynthWaveformSine   d2WfSineOsc;    //xy=1580,500
-AudioAmplifier           clapAmp;        //xy=1580,680
-AudioMixer4              d3VoiceMixer;   //xy=1580,1120
-AudioSynthWaveform       d3WfOsc;        //xy=1580,1210
-AudioFilterStateVariable d1HighPass;     //xy=1780,180
-AudioEffectWaveFolder    d3Wavefolder;   //xy=1776.2500610351562,1205
-AudioMixer4              snareClapMixer; //xy=1780,410
-AudioAmplifier           d2WfAmp;        //xy=1780,500
-AudioEffectEnvelope      clapMasterEnv;  //xy=1780,680
-AudioFilterBiquad        d1EQ;           //xy=1980,180
-AudioEffectFreeverb      d2Reverb;       //xy=1980,350
-AudioEffectWaveFolder    d2Wavefolder;   //xy=1980,500
-AudioMixer4              d3MasterMixer;  //xy=1980,1150
-AudioAmplifier           d1Amp;          //xy=2180,180
-AudioMixer4              d2MasterMixer;  //xy=2180,400
-AudioFilterStateVariable d2WfLowPass;    //xy=2180,500
-AudioFilterLadder        d3MasterFilter; //xy=2180,1150
-AudioSynthWaveform       masterWfOscSine; //xy=2180,1380
-AudioSynthWaveform       masterWfOscSaw; //xy=2180,1430
-AudioMixer4              drumMixer;      //xy=2380,1330
-AudioMixer4              masterWfInputMixer; //xy=2380,1410
-AudioEffectWaveFolder    masterWavefolder; //xy=2580,1360
-AudioMixer4              masterMixer;    //xy=2780,1360
-AudioMixer4              delaySendMixer; //xy=2780,1500
-AudioRecordQueue         scopeQueue;     //xy=2980,1300
-AudioFilterStateVariable masterHighPass; //xy=2980,1360
-AudioAmplifier           delayAmp;       //xy=2980,1450
-AudioEffectDelay         masterDelay;    //xy=2980,1560
-AudioFilterLadder        masterLowPass;  //xy=3180,1360
-AudioFilterStateVariable delayFilter;    //xy=3180,1560
-AudioFilterStateVariable masterBandPass; //xy=3380,1360
-AudioAmplifier           masterAmp;      //xy=3580,1360
-AudioFilterBiquad        finalFilter;    //xy=3780,1360
-AudioAmplifier           finalAmp;       //xy=3980,1360
-AudioAmplifier           usbTrim;        //xy=4100,1290
-AudioOutputUSB           usb1;           //xy=4180,1290
-AudioOutputI2S           i2s1;           //xy=4180,1360
+AudioSynthWaveform       d3606Osc3;      //xy=170,941
+AudioSynthWaveform       d3606Osc6;      //xy=170,1073
+AudioSynthWaveform       d3606Osc5;      //xy=171,1023
+AudioSynthWaveform       d3606Osc4;      //xy=174,982
+AudioSynthWaveform       d3606Osc2;      //xy=175,903
+AudioSynthWaveform       d3606Osc1;      //xy=176,865
+AudioSynthWaveformDc     d1PitchDC;      //xy=183,185
+AudioSynthWaveformModulated d2Osc;          //xy=183,435
+AudioSynthNoiseWhite     d2Noise;        //xy=183,485
+AudioSynthNoiseWhite     clapNoise1;     //xy=183,715
+AudioSynthWaveform       d3FmMod2;       //xy=180,1498
+AudioSynthNoiseWhite     clapNoise2;     //xy=183,785
+AudioSynthWaveform       d3FmMod1;       //xy=189,1427
+AudioSynthWaveformModulated d3FmCarrier2;   //xy=372,1508
+AudioEffectEnvelope      d1PitchEnv;     //xy=383,215
+AudioEffectEnvelope      d2AmpEnv;       //xy=383,435
+AudioEffectEnvelope      d2NoiseEnv;     //xy=383,485
+AudioSynthSimpleDrum     d2ClickTransient; //xy=383,545
+AudioSynthWaveformModulated d3FmCarrier1;   //xy=380,1440
+AudioEffectEnvelope      clapAmpEnv1;    //xy=383,715
+AudioEffectEnvelope      clapAmpEnv2;    //xy=383,785
+AudioMixer4              d3606OscMixer1; //xy=544,868
+AudioMixer4              d3606OscMixer2; //xy=550,956
+AudioSynthWaveformModulated d1OscSine;      //xy=583,175
+AudioSynthWaveformModulated d1OscSaw;       //xy=583,225
+AudioSynthWaveformModulated d1OscSquare;    //xy=583,275
+AudioSynthSimpleDrum     d2Body;         //xy=583,435
+AudioFilterStateVariable d2NoiseFilter;  //xy=583,485
+AudioFilterStateVariable d2ClickFilter;  //xy=583,545
+AudioFilterStateVariable clapFilter1;    //xy=583,715
+AudioFilterStateVariable clapFilter2;    //xy=583,785
+AudioMixer4              d3FmCarrierMixer; //xy=596,1365
+AudioMixer4              d3FmBusMixer;   //xy=724,1210
+AudioMixer4              d1OscMixer;     //xy=783,225
+AudioMixer4              d3606BusMixer;  //xy=781,888
+AudioMixer4              d2VoiceMixer;   //xy=783,475
+AudioEffectDelay         clapDelay1;     //xy=783,715
+AudioEffectDelay         clapDelay2;     //xy=783,785
+AudioFilterStateVariable d3FmBandPass;   //xy=921,1218
+AudioFilterStateVariable d3606HighPass;  //xy=980,962
+AudioEffectEnvelope      d1AmpEnv;       //xy=983,225
+AudioFilterStateVariable d2VoiceHighPass; //xy=983,475
+AudioMixer4              clapMixer1;     //xy=983,715
+AudioMixer4              clapMixer2;     //xy=983,785
+AudioFilterStateVariable d3FmHighPass;   //xy=1126,1141
+AudioFilterStateVariable d1LowPass;      //xy=1183,225
+AudioSynthWaveformDc     d1WfDrive;      //xy=1183,315
+AudioMixer4              clapBusMixer;   //xy=1183,745
+AudioFilterStateVariable d3606BandPass;  //xy=1183,965
+AudioSynthSimpleDrum     d3Perc;         //xy=1231,1205
+AudioEffectEnvelope      d3FmAmpEnv;     //xy=1368,1137
+AudioEffectEnvelope      d3606AmpEnv;    //xy=1375,967
+AudioSynthSimpleDrum     d1Snap;         //xy=1383,165
+AudioEffectWaveFolder    d1Wavefolder;   //xy=1383,295
+AudioFilterStateVariable clapMasterFilter; //xy=1383,745
+AudioFilterStateVariable d3PercFilter;   //xy=1388,1211
+AudioAmplifier           d1SnapAmp;      //xy=1583,165
+AudioMixer4              d1VoiceMixer;   //xy=1583,245
+AudioSynthWaveformSine   d2WfSineOsc;    //xy=1583,565
+AudioAmplifier           clapAmp;        //xy=1583,745
+AudioMixer4              d3VoiceMixer;   //xy=1583,1185
+AudioSynthWaveform       d3WfOsc;        //xy=1583,1275
+AudioFilterStateVariable d1HighPass;     //xy=1783,245
+AudioEffectWaveFolder    d3Wavefolder;   //xy=1779,1270
+AudioMixer4              snareClapMixer; //xy=1783,475
+AudioAmplifier           d2WfAmp;        //xy=1783,565
+AudioEffectEnvelope      clapMasterEnv;  //xy=1783,745
+AudioFilterBiquad        d1EQ;           //xy=1983,245
+AudioEffectFreeverb      d2Reverb;       //xy=1983,415
+AudioEffectWaveFolder    d2Wavefolder;   //xy=1983,565
+AudioMixer4              d3MasterMixer;  //xy=1983,1215
+AudioAmplifier           d1Amp;          //xy=2183,245
+AudioMixer4              d2MasterMixer;  //xy=2183,465
+AudioFilterStateVariable d2WfLowPass;    //xy=2183,565
+AudioFilterLadder        d3MasterFilter; //xy=2183,1215
+AudioSynthWaveform       masterWfOscSine; //xy=2183,1445
+AudioSynthWaveform       masterWfOscSaw; //xy=2183,1495
+AudioMixer4              drumMixer;      //xy=2383,1395
+AudioMixer4              masterWfInputMixer; //xy=2383,1475
+AudioEffectWaveFolder    masterWavefolder; //xy=2583,1425
+AudioMixer4              masterMixer;    //xy=2783,1425
+AudioMixer4              delaySendMixer; //xy=2783,1565
+AudioRecordQueue         scopeQueue;     //xy=2983,1365
+AudioFilterStateVariable masterHighPass; //xy=2983,1425
+AudioAmplifier           delayAmp;       //xy=2983,1515
+AudioEffectDelay         masterDelay;    //xy=2983,1625
+AudioFilterLadder        masterLowPass;  //xy=3183,1425
+AudioFilterStateVariable delayFilter;    //xy=3183,1625
+AudioFilterStateVariable masterBandPass; //xy=3383,1425
+AudioAmplifier           masterAmp;      //xy=3583,1425
+AudioFilterBiquad        finalFilter;    //xy=3783,1425
+AudioFilterBiquad        masterRolloff;        //xy=3913.3334789276123,1335.0000190734863
+AudioAmplifier           finalAmp;       //xy=3983,1425
+AudioAmplifier           usbTrim;        //xy=4103,1355
+AudioOutputUSB           usb1;           //xy=4183,1355
+AudioOutputI2S           i2s1;           //xy=4183,1425
 AudioConnection          patchCord1(d3606Osc3, 0, d3606OscMixer1, 2);
 AudioConnection          patchCord2(d3606Osc6, 0, d3606OscMixer2, 1);
 AudioConnection          patchCord3(d3606Osc5, 0, d3606OscMixer2, 0);
@@ -110,8 +111,8 @@ AudioConnection          patchCord7(d1PitchDC, d1PitchEnv);
 AudioConnection          patchCord8(d2Osc, d2AmpEnv);
 AudioConnection          patchCord9(d2Noise, d2NoiseEnv);
 AudioConnection          patchCord10(clapNoise1, clapAmpEnv1);
-AudioConnection          patchCord11(clapNoise2, clapAmpEnv2);
-AudioConnection          patchCord12(d3FmMod2, 0, d3FmCarrier2, 0);
+AudioConnection          patchCord11(d3FmMod2, 0, d3FmCarrier2, 0);
+AudioConnection          patchCord12(clapNoise2, clapAmpEnv2);
 AudioConnection          patchCord13(d3FmMod1, 0, d3FmCarrier1, 0);
 AudioConnection          patchCord14(d3FmCarrier2, 0, d3FmCarrierMixer, 1);
 AudioConnection          patchCord15(d1PitchEnv, 0, d1OscSine, 0);
@@ -121,9 +122,9 @@ AudioConnection          patchCord18(d2AmpEnv, 0, d2VoiceMixer, 0);
 AudioConnection          patchCord19(d2AmpEnv, 0, masterWfInputMixer, 3);
 AudioConnection          patchCord20(d2NoiseEnv, 0, d2NoiseFilter, 0);
 AudioConnection          patchCord21(d2ClickTransient, 0, d2ClickFilter, 0);
-AudioConnection          patchCord22(clapAmpEnv1, 0, clapFilter1, 0);
-AudioConnection          patchCord23(clapAmpEnv2, 0, clapFilter2, 0);
-AudioConnection          patchCord24(d3FmCarrier1, 0, d3FmCarrierMixer, 0);
+AudioConnection          patchCord22(d3FmCarrier1, 0, d3FmCarrierMixer, 0);
+AudioConnection          patchCord23(clapAmpEnv1, 0, clapFilter1, 0);
+AudioConnection          patchCord24(clapAmpEnv2, 0, clapFilter2, 0);
 AudioConnection          patchCord25(d3606OscMixer1, 0, d3606BusMixer, 0);
 AudioConnection          patchCord26(d3606OscMixer2, 0, d3606BusMixer, 1);
 AudioConnection          patchCord27(d1OscSine, 0, d1OscMixer, 0);
@@ -137,8 +138,8 @@ AudioConnection          patchCord34(clapFilter2, 1, clapDelay2, 0);
 AudioConnection          patchCord35(d3FmCarrierMixer, 0, d3FmBusMixer, 0);
 AudioConnection          patchCord36(d3FmBusMixer, 0, d3FmBandPass, 0);
 AudioConnection          patchCord37(d1OscMixer, d1AmpEnv);
-AudioConnection          patchCord38(d2VoiceMixer, 0, d2VoiceHighPass, 0);
-AudioConnection          patchCord39(d3606BusMixer, 0, d3606HighPass, 0);
+AudioConnection          patchCord38(d3606BusMixer, 0, d3606HighPass, 0);
+AudioConnection          patchCord39(d2VoiceMixer, 0, d2VoiceHighPass, 0);
 AudioConnection          patchCord40(clapDelay1, 0, clapMixer1, 0);
 AudioConnection          patchCord41(clapDelay1, 1, clapMixer1, 1);
 AudioConnection          patchCord42(clapDelay1, 2, clapMixer1, 2);
@@ -148,9 +149,9 @@ AudioConnection          patchCord45(clapDelay2, 1, clapMixer2, 1);
 AudioConnection          patchCord46(clapDelay2, 2, clapMixer2, 2);
 AudioConnection          patchCord47(clapDelay2, 3, clapMixer2, 3);
 AudioConnection          patchCord48(d3FmBandPass, 1, d3FmHighPass, 0);
-AudioConnection          patchCord49(d1AmpEnv, 0, d1LowPass, 0);
-AudioConnection          patchCord50(d1AmpEnv, 0, masterWfInputMixer, 2);
-AudioConnection          patchCord51(d3606HighPass, 2, d3606BandPass, 0);
+AudioConnection          patchCord49(d3606HighPass, 2, d3606BandPass, 0);
+AudioConnection          patchCord50(d1AmpEnv, 0, d1LowPass, 0);
+AudioConnection          patchCord51(d1AmpEnv, 0, masterWfInputMixer, 2);
 AudioConnection          patchCord52(d2VoiceHighPass, 2, snareClapMixer, 0);
 AudioConnection          patchCord53(clapMixer1, 0, clapBusMixer, 0);
 AudioConnection          patchCord54(clapMixer2, 0, clapBusMixer, 1);
@@ -166,7 +167,7 @@ AudioConnection          patchCord63(d3606AmpEnv, 0, d3VoiceMixer, 0);
 AudioConnection          patchCord64(d1Snap, d1SnapAmp);
 AudioConnection          patchCord65(d1Wavefolder, 0, d1VoiceMixer, 3);
 AudioConnection          patchCord66(clapMasterFilter, 2, clapAmp, 0);
-AudioConnection          patchCord67(d3PercFilter, 0, d3VoiceMixer, 2);
+AudioConnection          patchCord67(d3PercFilter, 1, d3VoiceMixer, 2);
 AudioConnection          patchCord68(d1SnapAmp, 0, d1VoiceMixer, 1);
 AudioConnection          patchCord69(d1VoiceMixer, 0, d1HighPass, 0);
 AudioConnection          patchCord70(d2WfSineOsc, d2WfAmp);
@@ -209,11 +210,12 @@ AudioConnection          patchCord106(delayFilter, 0, delaySendMixer, 3);
 AudioConnection          patchCord107(delayFilter, 0, delayAmp, 0);
 AudioConnection          patchCord108(masterBandPass, 1, masterAmp, 0);
 AudioConnection          patchCord109(masterAmp, finalFilter);
-AudioConnection          patchCord110(finalFilter, finalAmp);
-AudioConnection          patchCord111(finalAmp, 0, i2s1, 0);
-AudioConnection          patchCord112(finalAmp, 0, i2s1, 1);
-AudioConnection          patchCord113(finalAmp, usbTrim);
-AudioConnection          patchCord114(usbTrim, 0, usb1, 0);
-AudioConnection          patchCord115(usbTrim, 0, usb1, 1);
-AudioControlSGTL5000     sgtl5000_1;     //xy=4180,1450
+AudioConnection          patchCord110(finalFilter, masterRolloff);
+AudioConnection          patchCord111(masterRolloff, finalAmp);
+AudioConnection          patchCord112(finalAmp, 0, i2s1, 0);
+AudioConnection          patchCord113(finalAmp, 0, i2s1, 1);
+AudioConnection          patchCord114(finalAmp, usbTrim);
+AudioConnection          patchCord115(usbTrim, 0, usb1, 0);
+AudioConnection          patchCord116(usbTrim, 0, usb1, 1);
+AudioControlSGTL5000     sgtl5000_1;     //xy=4183,1515
 // GUItool: end automatically generated code

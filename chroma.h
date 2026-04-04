@@ -26,6 +26,15 @@ extern float d1EnvFiltTauMs;
 extern float d1EffectiveDecay;
 extern volatile uint32_t sysTickMs;
 
+// --- Extern: D3 envelope filter state (defined in .ino) ---
+extern AudioFilterLadder        d3MasterFilter;
+extern AudioFilterStateVariable d3PercFilter;
+extern float    d3EnvFiltDepth;
+extern float    d3EnvFiltBaseHz;
+extern float    d3EnvFiltPercBaseHz;
+extern uint32_t d3EnvFiltTrigger;
+extern float    d3EnvFiltTauMs;
+
 // --- Extern: chroma animation state (defined in .ino) ---
 extern int8_t chromaAnimDot;
 extern uint32_t chromaAnimStart;
@@ -219,5 +228,54 @@ static inline void updateD1ChromaEnvFilter(uint32_t nowMs) {
   AudioNoInterrupts();
   d1LowPass.frequency(cutoff);
   d1LowPass.resonance(resonance);
+  AudioInterrupts();
+}
+
+// --- D3 envelope filter ---
+
+// Per-frame envelope filter update for D3 (hi-hat).
+// Always active (not mode-gated). Drives d3MasterFilter + d3PercFilter
+// from exponential decay triggered on each D3 hit.
+static inline void updateD3EnvFilter(uint32_t nowMs) {
+  if (d3EnvFiltDepth < 0.01f) return;
+
+  if (d3EnvFiltTrigger == 0) {
+    // No trigger yet — hold at resting cutoff so knob moves are heard
+    AudioNoInterrupts();
+    d3MasterFilter.frequency(d3EnvFiltBaseHz);
+    d3MasterFilter.resonance(0.35f);
+    d3PercFilter.frequency(d3EnvFiltPercBaseHz);
+    d3PercFilter.resonance(2.5f);
+    AudioInterrupts();
+    return;
+  }
+
+  uint32_t elapsed = nowMs - d3EnvFiltTrigger;
+  float decay = expf(-(float)elapsed / d3EnvFiltTauMs);
+
+  // Master filter sweep: peak → base (D3 uses higher ceiling than D1)
+  float peak = d3EnvFiltBaseHz
+             + d3EnvFiltDepth * (kD3EnvFiltCeiling - d3EnvFiltBaseHz);
+  if (peak > kD3EnvFiltCeiling) peak = kD3EnvFiltCeiling;
+  float cutoff = d3EnvFiltBaseHz + (peak - d3EnvFiltBaseHz) * decay;
+  if (cutoff < 20.0f) cutoff = 20.0f;
+
+  // Master resonance bump for acid character
+  float resonance = 0.35f + 0.35f * d3EnvFiltDepth * decay;
+
+  // Perc filter sweep — low range to intersect perc energy (440–1760 Hz)
+  // Ceiling at 4000 Hz, base tracks knob (down to 600 Hz at full depth)
+  static constexpr float kPercFiltCeiling = 4000.0f;
+  float percPeak = d3EnvFiltPercBaseHz
+                 + d3EnvFiltDepth * (kPercFiltCeiling - d3EnvFiltPercBaseHz);
+  if (percPeak > kPercFiltCeiling) percPeak = kPercFiltCeiling;
+  float percCutoff = d3EnvFiltPercBaseHz + (percPeak - d3EnvFiltPercBaseHz) * decay;
+  if (percCutoff < 20.0f) percCutoff = 20.0f;
+
+  AudioNoInterrupts();
+  d3MasterFilter.frequency(cutoff);
+  d3MasterFilter.resonance(resonance);
+  d3PercFilter.frequency(percCutoff);
+  d3PercFilter.resonance(2.5f + 8.0f * d3EnvFiltDepth * decay);
   AudioInterrupts();
 }

@@ -54,7 +54,7 @@ extern MonoAnimPhase monoAnimPhase;
 extern uint32_t monoAnimStart;
 extern MonoBassState monoBass;
 
-extern volatile ShuffleMode shuffleMode;
+extern volatile SwingMode swingMode;
 
 // --- Extern: functions (defined in .ino or earlier headers) ---
 extern void selectTrack(Track t);
@@ -157,11 +157,11 @@ static void comboChromaD3() {
 }
 
 
-// Reset all pattern state to blank defaults (sequences, chroma notes, chroma modes, shuffle).
+// Reset all pattern state to blank defaults (sequences, chroma notes, chroma modes, swing).
 // Called when loading an empty or corrupt EEPROM slot.
-// shuffleMode write is intentionally unguarded: the ISR reads it via shuffledStepPeriodUs()
+// swingMode write is intentionally unguarded: the ISR reads it via swungStepPeriodUs()
 // but the caller (btnLoadPress / combo+step) always also calls stepTimer.update() which
-// re-arms the timer with the new shuffle setting, so a torn read is harmless.
+// re-arms the timer with the new swing setting, so a torn read is harmless.
 static void clearPatternState() {
   for (int s = 0; s < numSteps; s++) {
     d1Sequence[s] = 0; d2Sequence[s] = 0; d3Sequence[s] = 0;
@@ -169,31 +169,31 @@ static void clearPatternState() {
   }
   d1ChromaMode = false; d2ChromaMode = false;
   d3ChromaMode = false;
-  shuffleMode = SHUFFLE_OFF;
+  swingMode = SWING_OFF;
 }
 
-// Cycle shuffle mode: OFF → 1 → 2 → … → 8 → OFF.
-// Shows overlay "SHUFFLE OFF" or "SHUFFLE N / xx%".
+// Cycle swing mode: OFF → 1 → 2 → … → 14 → OFF.
+// Shows overlay "SWING OFF" or "SWING xx%".
 // Live-updates the step timer if internal clock is running.
-static void cycleShuffle(uint32_t nowTick) {
-  uint8_t next = (uint8_t)shuffleMode + 1;
-  shuffleMode = (next > SHUFFLE_8) ? SHUFFLE_OFF : (ShuffleMode)next;
+static void cycleSwing(uint32_t nowTick) {
+  uint8_t next = (uint8_t)swingMode + 1;
+  swingMode = (next > SWING_14) ? SWING_OFF : (SwingMode)next;
   patternDirty = true;
-  // Big centered shuffle overlay (800 ms) instead of standard small overlay
-  if (shuffleMode == SHUFFLE_OFF) {
-    snprintf(shuffleOverlayText, sizeof(shuffleOverlayText), "OFF");
+  // Big centered swing overlay (800 ms) instead of standard small overlay
+  if (swingMode == SWING_OFF) {
+    snprintf(swingOverlayText, sizeof(swingOverlayText), "OFF");
   } else {
-    snprintf(shuffleOverlayText, sizeof(shuffleOverlayText),
-             "%u / %u%%", (unsigned)shuffleMode, (unsigned)kShufflePercent[shuffleMode]);
+    snprintf(swingOverlayText, sizeof(swingOverlayText),
+             "%u%%", (unsigned)kSwingPercent[swingMode]);
   }
-  shuffleOverlayStartTick = nowTick;
-  // Live-update timer so shuffle takes effect immediately.
+  swingOverlayStartTick = nowTick;
+  // Live-update timer so swing takes effect immediately.
   // Snapshot currentStep under noInterrupts — stepISR can advance it mid-read.
   if (transportState == RUN_INT && sequencePlaying) {
     noInterrupts();
     uint8_t step = currentStep;
     interrupts();
-    stepTimer.update(shuffledStepPeriodUs(step));
+    stepTimer.update(swungStepPeriodUs(step));
   }
 }
 
