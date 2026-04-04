@@ -60,6 +60,10 @@ extern AudioSynthSimpleDrum     d3Perc;
 extern AudioSynthWaveform       d3WfOsc;
 extern AudioMixer4              d3MasterMixer;
 extern AudioFilterLadder        d3MasterFilter;
+extern AudioFilterStateVariable d3PercFilter;
+extern float    d3EnvFiltDepth;
+extern float    d3EnvFiltBaseHz;
+extern float    d3EnvFiltPercBaseHz;
 extern AudioMixer4              d3VoiceMixer;
 extern AudioMixer4              drumMixer;
 extern AudioEffectDelay         masterDelay;
@@ -446,14 +450,13 @@ static void displayD3DelaySend(uint8_t idx, int knobValue) {
   displaySimplePercent("D3 DELAY SEND", knobValue);
 }
 
-// Case 21: D3 Filter
+// Case 21: D3 Envelope Filter
 static void displayD3Filter(uint8_t idx, int knobValue) {
   (void)idx;
   if (displayDisabledInMonoBass()) return;
-  float cutoffHz = d3FilterCurve(knobValue);
-
-  snprintf(displayParameter1, sizeof(displayParameter1), "D3 LOWPASS");
-  snprintf(displayParameter2, sizeof(displayParameter2), "%d Hz", (int)cutoffHz);
+  int pct = (int)(normalizeKnob(knobValue) * 100.0f + 0.5f);
+  snprintf(displayParameter1, sizeof(displayParameter1), "D3 ENV FILT");
+  snprintf(displayParameter2, sizeof(displayParameter2), "%d%%", pct);
 }
 
 // Case 22: D3 Accent Pattern
@@ -1043,7 +1046,7 @@ static void engineD2Volume(uint8_t idx, int knobValue) {
 static constexpr float kMixScale = 0.9f;
 static constexpr float kTrim606  = 6.0f;
 static constexpr float kTrimFM   = 3.5f;
-static constexpr float kTrimPerc = 0.20f;
+static constexpr float kTrimPerc = 0.29f;
 
 static void applyD3VoiceMixer() {
   AudioNoInterrupts();
@@ -1074,7 +1077,7 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
   // Filter tracking -- shared by both modes
   // 606 band-pass kept low to tame square-wave harshness, drops further at high pitch
   const float hpfHz = 6800.0f * (1.0f + 0.06f * norm);
-  const float bpfHz = 7000.0f - 2000.0f * pitchBend;     // 7000->5000 Hz
+  const float bpfHz = 7000.0f - 3500.0f * pitchBend;     // 7000->3500 Hz (tames harshness at high pitch)
   const float fmBpfHz = 4000.0f + 4000.0f * pitchBend;   // 4000->8000 Hz
   const float fmHpfHz = 1500.0f + 1500.0f * pitchBend;   // 1500->3000 Hz
 
@@ -1138,9 +1141,9 @@ static void engineD3Pitch(uint8_t idx, int knobValue) {
     d3606HighPass.frequency(hpfHz);
     d3606BandPass.frequency(bpfHz);
 
-    // PERC voice -- A4(440) -> A6(1760), independent of FM carriers
-    static const float LOG_NOISE_RATIO = logf(1760.0f / 440.0f);  // A4->A6
-    d3Perc.frequency(440.0f * expf(pitchBend * LOG_NOISE_RATIO));
+    // PERC voice -- A5(880) -> A6(1760), independent of FM carriers
+    static const float LOG_PERC_RATIO = logf(1760.0f / 880.0f);  // A5->A6
+    d3Perc.frequency(880.0f * expf(pitchBend * LOG_PERC_RATIO));
 
     AudioInterrupts();
   }
@@ -1254,25 +1257,59 @@ static void engineD3DelaySend(uint8_t idx, int knobValue) {
   updateDrumDelayGains();
 }
 
-// Case 21: D3 Filter
+// Case 21: D3 Envelope Filter
+//   0–5%:   deadband — filter wide open, no envelope (clean hats)
+//   5–100%: envelope active — depth and base cutoff ramp together
 static void engineD3Filter(uint8_t idx, int knobValue) {
   (void)idx;
   if (monoBass.active) return;
   float norm = normalizeKnob(knobValue);
-  float cutoffHz = d3FilterCurve(knobValue);
 
-  // Resonance: gentle bump at low cutoffs for volume compensation, clean when open
-  float resonance = 0.35f + 0.15f * (1.0f - norm);  // 0.50 -> 0.35
+  //   0–5%:   deadband — filter wide open, no envelope
+  //   5–25%:  darken — static cutoff sweeps down, no envelope yet
+  //   25–100%: envelope active — depth ramps 0→1, base continues down
+  //   Perc: own 5% deadband, then gentle 6000→5600 Hz across 5–100%
+  static constexpr float kDead = 0.05f;
+  static constexpr float kFade = 0.25f;
 
-  // Perc voice filter: 400–6000 Hz to suit A4–A6 pitch range
-  float percCutoff = 400.0f * expf(norm * 2.708f);  // ln(6000/400) ≈ 2.708
+  // Perc base: sweep into the perc's energy range (440–1760 Hz)
+  if (norm <= kDead) {
+    d3EnvFiltPercBaseHz = 3000.0f;
+  } else {
+    float percBlend = (norm - kDead) / (1.0f - kDead);  // 0→1 across 5–100%
+    d3EnvFiltPercBaseHz = 3000.0f - 2400.0f * percBlend;  // 3000→600 Hz
+  }
 
-  AudioNoInterrupts();
-  d3MasterFilter.frequency(cutoffHz);
-  d3MasterFilter.resonance(resonance);
-  d3PercFilter.frequency(percCutoff);
-  d3PercFilter.resonance(1.2f);  // slight resonance bump for definition
-  AudioInterrupts();
+  if (norm <= kDead) {
+    d3EnvFiltDepth = 0.0f;
+    d3EnvFiltBaseHz = 12000.0f;
+    AudioNoInterrupts();
+    d3MasterFilter.frequency(12000.0f);
+    d3MasterFilter.resonance(0.35f);
+    d3PercFilter.frequency(3000.0f);
+    d3PercFilter.resonance(2.5f);
+    AudioInterrupts();
+    return;
+  }
+
+  if (norm <= kFade) {
+    // Darken zone: static cutoff, no envelope
+    float blend = (norm - kDead) / (kFade - kDead);  // 0→1
+    d3EnvFiltDepth = 0.0f;
+    d3EnvFiltBaseHz = 12000.0f - 9000.0f * blend;  // 12000→3000 Hz
+    AudioNoInterrupts();
+    d3MasterFilter.frequency(d3EnvFiltBaseHz);
+    d3MasterFilter.resonance(0.35f);
+    d3PercFilter.frequency(d3EnvFiltPercBaseHz);
+    d3PercFilter.resonance(2.5f);
+    AudioInterrupts();
+    return;
+  }
+
+  // Envelope zone: depth ramps, master base continues down
+  float scaled = (norm - kFade) / (1.0f - kFade);  // 0→1
+  d3EnvFiltDepth  = scaled;
+  d3EnvFiltBaseHz = 3000.0f - 2000.0f * scaled;   // 3000→1000 Hz
 }
 
 // Case 22: D3 Accent Pattern
@@ -1374,12 +1411,12 @@ static void engineMasterTempo(uint8_t idx, int knobValue) {
 
   // If internal clock is currently running, adjust period without restarting.
   // update() finishes the current interval, then applies the new period --
-  // no gap, no stutter.  shuffledStepPeriodUs() handles shuffle + clamping.
+  // no gap, no stutter.  swungStepPeriodUs() handles swing + clamping.
   if (transportState == RUN_INT) {
     noInterrupts();
     uint8_t step = currentStep;
     interrupts();
-    stepTimer.update(shuffledStepPeriodUs(step));
+    stepTimer.update(swungStepPeriodUs(step));
   }
 }
 

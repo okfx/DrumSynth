@@ -1,8 +1,8 @@
-// xcombo_overlay.h — X-combo overlay: large "X" over scope + chroma status.
+// xcombo_overlay.h — X-combo overlay: large "X" over scope + chroma/swing status.
 //
-// Instead of a full-screen takeover, this renders a large outlined "X" over
-// the normal idle UI, with D1/D2/D3/WF chroma status below it. The labels
-// flash in sync with the combo-active step LEDs (~1.7 Hz).
+// Renders a large outlined "X" over the normal idle UI with D1/D2/D3 chroma
+// labels below (inverted when active). Small swing % in the top-right corner
+// when swing is on.
 //
 // Depends on: hw_setup.h (display), display_ui.h (drawOutlinedText),
 //             isSafeToPushOled() (forward-declared in .ino above this include).
@@ -13,31 +13,28 @@ extern Adafruit_SH1106G display;
 extern bool d1ChromaMode;
 extern bool d2ChromaMode;
 extern bool d3ChromaMode;
-extern volatile ShuffleMode shuffleMode;
+extern volatile SwingMode swingMode;
 static void renderXComboOverlay(uint32_t nowMs, uint32_t pressTick) {
   // Flash phase — shared with LED flashing in updateLEDs().
   // Offset from pressTick so first phase is always "on".
   bool flashOn = ((nowMs - pressTick) / 400) % 2 == 0;
 
-  // Large outlined "X" centered over scope area (same size as "MONOBASS").
-  // Scope area is roughly y=18..54, x=0..127.
+  // Large outlined "X" centered over scope area.
   display.setTextSize(2);
   drawOutlinedText(55, 22, "X");
   display.setTextSize(1);
 
-  // Shuffle indicator — top-right, always visible (not flashed).
-  // Shows "SHUFFLE x" when active, nothing when off.
-  if (shuffleMode != SHUFFLE_OFF) {
+  // Small swing indicator in top-right corner (always visible when swing active).
+  if (swingMode != SWING_OFF) {
     display.setFont(NULL);
-    display.setTextSize(2);
-    char sBuf[10];
-    snprintf(sBuf, sizeof(sBuf), "SHFL %d", (int)shuffleMode);
-    drawOutlinedText(13, 40, sBuf);
     display.setTextSize(1);
+    char sBuf[5];
+    snprintf(sBuf, sizeof(sBuf), "%u%%", (unsigned)kSwingPercent[swingMode]);
+    int sw = (int)strlen(sBuf) * 6;
+    drawOutlinedText(127 - sw, 19, sBuf);
   }
 
-  // Chroma status labels below the X, evenly spaced across the display.
-  // WF is always chromatic so not shown here — only D1/D2/D3 toggle.
+  // D1/D2/D3 chroma status — always shown, flashing.
   if (flashOn) {
     display.setFont(NULL);
     display.setTextSize(1);

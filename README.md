@@ -1,6 +1,6 @@
 # DrumSynth
 
-A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.2.
+A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Designed for hands-on use -- capable of classic drum machine sounds, but with wide-open parameter ranges that push into expressive, experimental territory. Firmware v1.0.3.
 
 ### [User Manual (PDF)](Documentation/DrumSynth_User_Manual.pdf)
 
@@ -22,7 +22,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 **10 Memory Slots**
 
-**Shuffle** -- TR-909-style shuffle with 6 intensity levels. Hold X and press Step 16 to cycle through shuffle amounts.
+**Swing** -- TR-909-style swing with 14 intensity levels (52%--79%). Hold X and press Step 16 to cycle through swing amounts. Pair duration is preserved so downbeats stay anchored.
 
 **Master Filter** -- Dual-mode master filter: low-pass below noon, off at noon (with deadband), high-pass above noon. Ladder-style LP (24 dB/oct), state-variable HP (12 dB/oct).
 
@@ -36,7 +36,7 @@ A 3-voice drum synthesizer with delay line and effects, built on Teensy 4.0. Des
 
 Hold X and press step buttons 1–10 to select a slot, then use SAVE/LOAD to write or recall.
 
-Each slot stores the drum pattern, CHROMA notes and mode state, and shuffle setting.
+Each slot stores the drum pattern, CHROMA notes and mode state, and swing setting.
 
 ## CHROMA Mode
 
@@ -79,10 +79,25 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 | `ext_sync.h` | External clock sync -- ISRs, glitch filter, lock-in, subdivisions |
 | `eeprom.h` | Pattern save/load, CHROMA notes + PPQN persistence |
 | `knob_handlers.h` | Table-driven knob dispatch -- 32 display + 32 engine functions |
+| `chroma.h` | Chromatic pitch tables, envelope filters, dot animation |
 | `monobass.h` | MONOBASS live keyboard mode -- entry/exit, button handler, scope |
+| `buttons.h` | Button state machine, X-combo dispatch |
+| `display_ui.h` | OLED rendering -- top bar, scope, overlays, updateDisplay() |
+| `xcombo_overlay.h` | X-combo help overlay |
 | `oscilloscope.h` | Scrolling waveform display (decimation, auto-scale) |
 | `bitmaps.h` | OLED transport icons (play/stop) |
+| `splash.h` | Boot splash + dissolve animation |
 | `Documentation/USB_AUDIO_MAC.md` | macOS USB audio clock drift fix |
+
+## Changes (v1.0.3)
+
+- **Shuffle renamed to Swing** -- All references updated across firmware and UI. Display now shows percentage (e.g. "58%") instead of level numbers.
+- **Swing expanded to 14 levels** -- Covers 52%--79% in ~2% increments. Triplet feel (67%) at level 8, heavy swing up to 79%.
+- **D3 envelope filter** -- Replaces the static low-pass filter on D3 (hi-hat). Exponential decay sweep triggered per-hit, with tau tracking the decay knob (fast hats = fast filter). 3-zone knob: deadband at minimum, darken zone (5--25%), envelope filter (25--100%). Separate sweep ranges for master filter (up to 16 kHz) and perc bandpass (up to 4 kHz).
+- **D3 perc voice retuned** -- Pitch range narrowed to A5--A6 (880--1760 Hz) so the full knob range is audible through the filters. Perc filter switched from low-pass to bandpass for more pronounced envelope sweep. Volume boosted ~45%.
+- **606 hat harshness tamed** -- Bandpass tracking drops more aggressively at high pitch (7000--3500 Hz, was 7000--5000 Hz) to reduce harsh square-wave energy at the top of the pitch knob.
+- **Master hiss rolloff** -- 2-stage biquad cascade at 9.5 kHz (-24 dB/oct) reduces high-frequency hiss without affecting musical content.
+- **X-combo overlay cleaned up** -- Holding X always shows D1/D2/D3 chroma status regardless of swing state. Swing percentage shown in top-right corner only (no more large flashing swing label competing with chroma indicators).
 
 ## Changes (v1.0.2)
 
@@ -101,10 +116,10 @@ Rhythmically synced delay with knobs for timing and feedback/mix. Each track has
 ## Changes (v1.0.1)
 
 - **MONOBASS keyboard extended to 13 keys** -- Step buttons now cover a full octave C-to-C (was C-to-B, 12 keys). Button 13 plays the octave's high C. 13 LEDs light as usable-key indicators.
-- **X-combo overlay redesigned** -- Holding X no longer takes over the entire screen with a dense diagram. Instead, the normal idle UI stays visible with a large outlined "X" overlaid on the scope area. D1/D2/D3/WF chroma status labels appear below, with active modes shown inverted. Combo-active LEDs (memory slots 0-9 and shuffle) now flash at ~1.7 Hz instead of static-on, synced with the OLED labels.
+- **X-combo overlay redesigned** -- Holding X no longer takes over the entire screen with a dense diagram. Instead, the normal idle UI stays visible with a large outlined "X" overlaid on the scope area. D1/D2/D3/WF chroma status labels appear below, with active modes shown inverted. Combo-active LEDs (memory slots 0-9 and swing) now flash at ~1.7 Hz instead of static-on, synced with the OLED labels.
 - **Boot overlay suppression improved** -- Knob scanning skipped entirely during splash dissolve, with 8-cycle post-splash settling to prevent ADC drift from falsely unlocking boot-locked knobs.
-- **EEPROM dirty flag for chroma/shuffle** -- Toggling chroma modes (D1/D2/D3/WF) or cycling shuffle now correctly marks the pattern dirty so SAVE works without showing "NOTHING TO SAVE".
-- **Shuffle overlay stale tick fix** -- `shuffleOverlayStartTick` now clears on timer expiry so subsequent X holds go straight to the combo overlay instead of briefly flashing stale shuffle text.
+- **EEPROM dirty flag for chroma/swing** -- Toggling chroma modes (D1/D2/D3/WF) or cycling swing now correctly marks the pattern dirty so SAVE works without showing "NOTHING TO SAVE".
+- **Swing overlay stale tick fix** -- `swingOverlayStartTick` now clears on timer expiry so subsequent X holds go straight to the combo overlay instead of briefly flashing stale swing text.
 - **D3 accent pattern: ALL** -- New accent mode with all 16 steps active.
 
 ## Changes (v1.0.0)

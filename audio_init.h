@@ -334,12 +334,12 @@ void audioInit() {
   // --- D3 "PERC" voice: noise-based percussion ---
 
   d3Perc.pitchMod(0.5f);
-  d3Perc.frequency(440.0f);   // A4 — matches pitch knob minimum
+  d3Perc.frequency(880.0f);   // A5 — matches pitch knob minimum
   d3Perc.length(15.0f);
 
   // Perc dedicated low-pass filter (AudioFilterStateVariable, lowpass output)
-  d3PercFilter.frequency(6000.0f);   // open at boot — knob overrides from EEPROM
-  d3PercFilter.resonance(1.2f);      // slight bump for definition
+  d3PercFilter.frequency(3000.0f);   // open at boot — knob overrides from EEPROM
+  d3PercFilter.resonance(2.5f);      // bandpass — high Q for audible sweep
 
   // --- D3 output mixing ---
 
@@ -348,7 +348,7 @@ void audioInit() {
   // D3 voice mixer (606 + FM + PERC) — feeds both dry path and wavefolder
   d3VoiceMixer.gain(0, 0.18f);  // 606 voice
   d3VoiceMixer.gain(1, 0.25f);  // FM voice
-  d3VoiceMixer.gain(2, 0.10f);  // PERC voice
+  d3VoiceMixer.gain(2, 0.80f);  // PERC voice (boosted to compensate for bandpass)
 
   // D3 final mixer (dry + wavefolder)
   d3MasterMixer.gain(0, 0.70f);  // d3VoiceMixer (dry) — parity with D1 (0.7) and D2 (0.7)
@@ -357,7 +357,7 @@ void audioInit() {
 
   // D3 master filter (1200–12000 Hz range, controlled by D3 Filter knob)
   d3MasterFilter.frequency(12000.0f);  // open at boot (knob overrides from EEPROM)
-  d3MasterFilter.resonance(0.4f);
+  d3MasterFilter.resonance(0.35f);
 
   // ============================================================================
   // MASTER EFFECTS AND ROUTING
@@ -422,5 +422,10 @@ void audioInit() {
   finalFilter.setNotch(1, 400.0f, 1.0f);              // gentle cut around 400Hz
   finalFilter.setNotch(2, 2500.0f, 2.0f);             // mild cut around 2.5kHz
   finalFilter.setHighShelf(3, 4500.0f, 0.7f, 2.5f);   // +2.5dB air above 4.5kHz
+
+  // Gentle hiss rolloff after EQ — 2-pole LPF at 13kHz.
+  // Preserves cymbal sparkle (6–12kHz) while attenuating DAC/codec noise floor above 14kHz.
+  masterRolloff.setLowpass(0, 9500.0f, 0.707f);
+  masterRolloff.setLowpass(1, 9500.0f, 0.707f);  // 2-stage cascade: -24dB/oct for cleaner rolloff
 }
 

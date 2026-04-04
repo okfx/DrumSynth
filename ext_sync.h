@@ -134,14 +134,14 @@ float extBpmDisplay = 0.0f;
 //  ISR Functions
 // ============================================================================
 
-// Compute step period (µs) with TR-909 shuffle applied.
+// Compute step period (µs) with TR-909 swing applied.
 // Even steps (0,2,4…) are shortened; odd steps (1,3,5…) are lengthened.
 // The total time per pair remains constant (no tempo drift).
 // Safe to call from ISR — uses float division (same as rearmStepTimer).
-static inline uint32_t shuffledStepPeriodUs(uint8_t stepJustPlayed) {
+static inline uint32_t swungStepPeriodUs(uint8_t stepJustPlayed) {
   float basePeriod = 60000000.0f / (STEPS_PER_BEAT * bpm);
   if (basePeriod < 500.0f) basePeriod = 500.0f;
-  uint8_t s = kShuffleDelayTicks[shuffleMode];
+  uint8_t s = kSwingDelayTicks[swingMode];
   if (s == 0) return (uint32_t)basePeriod;
   // stepJustPlayed is the step that just fired.
   // Next step = stepJustPlayed + 1.
@@ -171,7 +171,7 @@ void stepISR() {
     if (pendingStepCount < 255) {
       currentStep = (currentStep + 1) % numSteps;
       pendingStepCount++;
-      uint32_t period = shuffledStepPeriodUs(currentStep);
+      uint32_t period = swungStepPeriodUs(currentStep);
       stepTimer.update(period);
       lastStepFiredUs = micros();
       intStepPeriodUs = period;
@@ -403,10 +403,10 @@ void externalClockISR() {
 //  Helper Functions
 // ============================================================================
 
-// (Re)start the internal clock timer based on current BPM + shuffle
+// (Re)start the internal clock timer based on current BPM + swing
 void rearmStepTimer() {
   stepTimer.end();
-  uint32_t period = shuffledStepPeriodUs(currentStep);
+  uint32_t period = swungStepPeriodUs(currentStep);
   stepTimer.begin(stepISR, period);
   lastStepFiredUs = micros();
   intStepPeriodUs = period;
