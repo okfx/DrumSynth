@@ -24,14 +24,14 @@ static void renderXComboOverlay(uint32_t nowMs, uint32_t pressTick) {
   drawOutlinedText(55, 22, "X");
   display.setTextSize(1);
 
-  // Small swing indicator in top-right corner (always visible when swing active).
+  // Small swing indicator in top-right corner (immediate, no flash gating).
   if (swingMode != SWING_OFF) {
     display.setFont(NULL);
     display.setTextSize(1);
-    char sBuf[5];
-    snprintf(sBuf, sizeof(sBuf), "%u%%", (unsigned)kSwingPercent[swingMode]);
+    char sBuf[10];
+    snprintf(sBuf, sizeof(sBuf), "S=%u%%", (unsigned)kSwingPercent[swingMode]);
     int sw = (int)strlen(sBuf) * 6;
-    drawOutlinedText(127 - sw, 19, sBuf);
+    drawOutlinedText(127 - sw, 21, sBuf);
   }
 
   // D1/D2/D3 chroma status — always shown, flashing.
