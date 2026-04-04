@@ -1569,7 +1569,7 @@ void updateStepButtons() {
         }
 
         if (i == 15) {
-          // Step 15: cycle swing mode (OFF → 1 → … → 7 → OFF).
+          // Step 15: cycle swing mode (OFF → 1 → … → 14 → OFF).
           // Keep comboFired=false so the overlay stays visible and the user can
           // keep holding X and pressing step 15 to cycle further.
           // Suppress MONOBASS entry (monoFired+monoAnimStarted) without clearing the overlay.

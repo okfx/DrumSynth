@@ -70,6 +70,7 @@ extern AudioEffectDelay         masterDelay;
 extern AudioSynthWaveform       masterWfOscSine;
 extern AudioSynthWaveform       masterWfOscSaw;
 extern AudioFilterLadder        masterLowPass;
+extern AudioFilterStateVariable masterHighPass;
 extern AudioMixer4              masterWfInputMixer;
 extern AudioMixer4              masterMixer;
 extern AudioAmplifier           delayAmp;
@@ -1374,9 +1375,9 @@ static void engineWfFreq(uint8_t idx, int knobValue) {
 }
 
 // Case 26: Master Filter — dual mode around noon
-//   CCW (0–460):   lowpass  — masterLowPass ladder 1000→7500 Hz
+//   CCW (0–460):   lowpass  — masterLowPass ladder 2500→7500 Hz
 //   Noon (460–564): off     — both filters wide open
-//   CW (564–1023):  highpass — masterHighPass SVF 30→500 Hz
+//   CW (564–1023):  highpass — masterHighPass SVF 30→350 Hz
 static void engineMasterLowpass(uint8_t idx, int knobValue) {
   (void)idx;
   static constexpr int kDeadLo = 460;
